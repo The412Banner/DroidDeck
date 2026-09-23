@@ -161,9 +161,9 @@ def install_art(acct, games):
             name = appid + suffix + ext
             dst = os.path.join(grid, name)
             size = os.path.getsize(src)
-            wanted[name] = size
             if os.path.exists(dst) and name not in manifest:
-                continue  # the user's own choice inside the client
+                continue  # the user's own choice inside the client; never ours to touch
+            wanted[name] = size
             if os.path.exists(dst) and manifest.get(name) == size:
                 continue
             try:
