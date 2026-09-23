@@ -190,7 +190,7 @@ object SessionPrefs {
      * client's CEF is the heaviest thing in a session and above 1080p it costs frames for nothing
      * a handheld panel can show. Read once, when the session's display is sized.
      */
-    fun resolutionCap(context: Context, mode: String): Int = prefs(context).getInt("resolutionCap.$mode", 1080)
+    fun resolutionCap(context: Context, mode: String): Int = prefs(context).getInt("resolutionCap.$mode", 900)
 
     fun setResolutionCap(context: Context, mode: String, cap: Int) {
         prefs(context).edit().putInt("resolutionCap.$mode", cap).apply()
