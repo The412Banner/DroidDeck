@@ -57,7 +57,7 @@ PA_MODULE_USAGE(
         "performance_mode=<0 none, 1 low latency, 2 power saving> "
         "adaptive=<let the relay grow its buffer after underruns: 0 or 1>");
 
-#define DEFAULT_SINK_NAME "AAudioSink"
+#define DEFAULT_SINK_NAME "DirectAudio"
 #define RECONNECT_USEC (500 * PA_USEC_PER_MSEC)
 #define OFFLINE_TICK_USEC (20 * PA_USEC_PER_MSEC)
 #define STATS_EVERY_USEC (30 * PA_USEC_PER_SEC)

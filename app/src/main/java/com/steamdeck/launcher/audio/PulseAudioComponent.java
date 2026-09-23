@@ -122,12 +122,15 @@ public class PulseAudioComponent extends SessionPart {
                 + socket().getAbsolutePath() + "\"");
         // volume=1.0 is not optional: with no volume argument module-aaudio-sink defaults
         // the sink to 0% and the session plays silence.
+        // The sink's name is what the client's Audio settings show as the output device, so it
+        // says which road the sound takes.
         if (relaySocketPath != null && !relaySocketPath.isEmpty()) {
-            config.add("load-module module-directaudio-sink socket=\"" + relaySocketPath + "\" performance_mode=1 adaptive=1 volume=1.0");
+            config.add("load-module module-directaudio-sink sink_name=DirectAudio socket=\"" + relaySocketPath + "\" performance_mode=1 adaptive=1 volume=1.0");
+            config.add("set-default-sink DirectAudio");
         } else {
-            config.add("load-module module-aaudio-sink performance_mode=1 adaptive=1 volume=1.0");
+            config.add("load-module module-aaudio-sink sink_name=AAudioSink performance_mode=1 adaptive=1 volume=1.0");
+            config.add("set-default-sink AAudioSink");
         }
-        config.add("set-default-sink AAudioSink");
         if (micFifoPath != null && !micFifoPath.isEmpty()) {
             // The format is the helper's, fixed at s16le/48000/mono: it resamples when the device
             // grants another input rate, so the daemon is never told a rate the bytes are not.
