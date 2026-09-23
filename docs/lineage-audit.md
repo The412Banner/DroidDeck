@@ -1,4 +1,22 @@
-# Lineage audit — what in this repo is Winlator's, and what it would take to leave the lineage
+# Lineage audit — what in this repo was Winlator's, and how it left the lineage
+
+> **Done, 2026-09-23 (branch `feat/armada-and-lineage`).** Everything §4 asked for is in:
+> - the five inherited files are gone, replaced by fresh ones with different shapes:
+>   `core/SessionPart.java` (attach/start/stop), `core/HostEnvironment.kt`, `core/HostProcess.kt`
+>   (Consumer callbacks), `input/PadState.kt` (named fields, `press`/`isDown`), and plain
+>   `java.util.function.Consumer` where a one-method callback was used;
+> - the AAudio sink is the app's own: `tools/aaudio-sink/module-aaudio-sink.c`, a blocking-write
+>   design against upstream PulseAudio 13 headers, compiled by the APK build into the audio bundle
+>   (`build.yml`), the committed bundle carrying no sink at all. Same module arguments, so the
+>   daemon's config line did not change. Device-proven: sink RUNNING, two client streams, latency
+>   reported from the stream's timestamp;
+> - `cpp/winlator/` is `cpp/framegen/`, the log tags are `SteamDeck_*`, the rumble socket is
+>   `steamdeck-rumble` and is now actually served (`session/RumbleComponent.kt` drives the
+>   vibrator); the two Bannerlator design notes are deleted; README and the credits dialog no
+>   longer name Winlator. What remains is the name of the catalog repo (`winlator-contents`), which
+>   is a URL, and the release notes already published.
+>
+> The rest of this document is the audit as it was made, kept for the record.
 
 Audited 2026-09-23 against Winlator upstream (brunodev85's commits in the Bannerlator history) with
 a text-similarity measure, not by trusting the comments. Everything below is verifiable with
