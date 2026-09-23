@@ -22,6 +22,7 @@ import com.steamdeck.launcher.core.FileUtils
 import com.steamdeck.launcher.gpu.FrameGen
 import com.steamdeck.launcher.gpu.LinuxVulkanDriver
 import com.steamdeck.launcher.gpu.LinuxVulkanDriverManager
+import com.steamdeck.launcher.gpu.QualcommAndroidDriver
 import com.steamdeck.launcher.gpu.QualcommLinuxDriver
 import com.steamdeck.launcher.gpu.TurnipDriver
 import com.steamdeck.launcher.gpu.LsfgNative
@@ -108,6 +109,8 @@ class MainActivity : ComponentActivity() {
     /** The Runtime driver menu's Qualcomm entry: its label, or null once the driver is installed. */
     private var qcomDownload by mutableStateOf<String?>(null)
     private var qcomDownloading = false
+    private var qcomAndroidDownload by mutableStateOf<String?>(null)
+    private var qcomAndroidDownloading = false
     private var linuxSteam by mutableStateOf("")
     private var linuxDesktop by mutableStateOf("")
     private var androidRows by mutableStateOf<List<DriverRow>>(emptyList())
@@ -439,6 +442,7 @@ class MainActivity : ComponentActivity() {
                 addedGames = if (mode == SessionService.MODE_STEAM) addedGames else emptyList(),
                 addedGamesArt = addedGamesArt,
                 qcomDownload = qcomDownload,
+                qcomAndroidDownload = qcomAndroidDownload,
             ),
             ModeSettingsActions(
                 onResolution = { cap -> SessionPrefs.setResolutionCap(this, mode, cap); resolutionCap = cap },
@@ -448,7 +452,8 @@ class MainActivity : ComponentActivity() {
                 onSelectLinux = { id -> SessionPrefs.setLinuxDriver(this, mode, id); refreshDrivers() },
                 onImportLinux = { pickLinuxDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a Linux runtime driver (-Linux zip)")) },
                 onRemoveLinux = { id -> LinuxVulkanDriverManager(this).removeDriver(id); refreshDrivers() },
-                onDownloadQcom = { downloadQualcommDriver() },
+                onDownloadQcom = { downloadQualcommDriver(forAndroid = false) },
+                onDownloadQcomAndroid = { downloadQualcommDriver(forAndroid = true) },
                 onSelectAndroid = { id -> SessionPrefs.setAndroidDriver(this, id); refreshDrivers() },
                 onImportAndroid = { pickAndroidDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a display driver (AdrenoTools zip)")) },
                 onRemoveAndroid = { id -> TurnipDriver(this).remove(id); refreshDrivers() },
@@ -599,6 +604,7 @@ class MainActivity : ComponentActivity() {
             for (id in td.enumerateImported()) add(DriverRow(id, td.displayName(id), "imported" + td.driverVersion(id).let { if (it.isEmpty()) "" else " · $it" }, true))
         }
         androidSelected = SessionPrefs.androidDriver(this)
+        if (!qcomAndroidDownloading) qcomAndroidDownload = if (td.isInstalled(QualcommAndroidDriver.ID)) null else QCOM_ANDROID_LABEL
     }
 
     /**
@@ -629,24 +635,27 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Qualcomm's own Linux driver, fetched from Valve and checked against its pinned sha256
-     * (QualcommLinuxDriver). The menu entry shows the progress; when it lands it is a normal row in
-     * the Runtime driver list, chosen like any other.
+     * Qualcomm's own drivers, fetched from Valve and checked against a pinned sha256: the Linux
+     * build for the Runtime driver menu (QualcommLinuxDriver), the Android one for the Display
+     * driver menu (QualcommAndroidDriver). The menu entry shows the progress; once installed each
+     * is an ordinary row in its list.
      */
-    private fun downloadQualcommDriver() {
-        if (qcomDownloading) return
-        qcomDownloading = true
-        qcomDownload = "Downloading Qualcomm driver…"
+    private fun downloadQualcommDriver(forAndroid: Boolean) {
+        if (if (forAndroid) qcomAndroidDownloading else qcomDownloading) return
+        fun label(text: String?) { if (forAndroid) qcomAndroidDownload = text else qcomDownload = text }
+        if (forAndroid) qcomAndroidDownloading = true else qcomDownloading = true
+        label("Downloading Qualcomm driver…")
         Thread({
             var last = -1
-            val problem = try {
-                QualcommLinuxDriver.install(this) { done, total ->
-                    val pct = if (total > 0) (done * 100 / total).toInt() else 0
-                    if (pct != last) {
-                        last = pct
-                        ui.post { qcomDownload = "Downloading Qualcomm driver… $pct%" }
-                    }
+            val progress = QualcommLinuxDriver.Progress { done, total ->
+                val pct = if (total > 0) (done * 100 / total).toInt() else 0
+                if (pct != last) {
+                    last = pct
+                    ui.post { label("Downloading Qualcomm driver… $pct%") }
                 }
+            }
+            val problem = try {
+                if (forAndroid) QualcommAndroidDriver.install(this, progress) else QualcommLinuxDriver.install(this, progress)
                 null
             } catch (e: IllegalArgumentException) {
                 e.message
@@ -655,9 +664,11 @@ class MainActivity : ComponentActivity() {
                 "Download failed: ${e.message}"
             }
             ui.post {
-                qcomDownloading = false
+                if (forAndroid) qcomAndroidDownloading = false else qcomDownloading = false
                 android.widget.Toast.makeText(
-                    this, problem ?: "Qualcomm driver installed - pick it under Runtime driver",
+                    this,
+                    problem ?: (if (forAndroid) "Qualcomm driver installed - pick it under Display driver"
+                                else "Qualcomm driver installed - pick it under Runtime driver"),
                     android.widget.Toast.LENGTH_LONG,
                 ).show()
                 refreshDrivers()
@@ -780,5 +791,6 @@ class MainActivity : ComponentActivity() {
         /** What the picker offers for a driver zip; some file apps label a zip as a plain stream. */
         private val ZIP_EXT = listOf("zip")
         private const val QCOM_LABEL = "Download Qualcomm driver (Linux, experimental, 13 MB)…"
+        private const val QCOM_ANDROID_LABEL = "Download Qualcomm driver v786 (Android, experimental, 12 MB)…"
     }
 }

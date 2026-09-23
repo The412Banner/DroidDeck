@@ -51,6 +51,8 @@ class ModeSettings(
     val addedGamesArt: Boolean = true,
     /** The Runtime driver menu's download entry for Qualcomm's Linux driver; null hides it (installed). */
     val qcomDownload: String? = null,
+    /** The same for the Display driver menu's Android build. */
+    val qcomAndroidDownload: String? = null,
 )
 
 /** One added game as the settings page shows it: its folder, the chosen .exe, the other .exe files it could be. */
@@ -69,6 +71,7 @@ class ModeSettingsActions(
     val onSelectAndroid: (String) -> Unit,
     val onImportAndroid: () -> Unit,
     val onRemoveAndroid: (String) -> Unit,
+    val onDownloadQcomAndroid: () -> Unit = {},
     val onTouch: (String) -> Unit,
     val onSuspendPolicy: (String) -> Unit,
     val onOsc: (String) -> Unit,
@@ -141,6 +144,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 "Used by the compositor in both modes. Restart the app to apply.",
                 s.androidRows, s.androidSelected, importLabel = "Import an AdrenoTools zip…",
                 onSelect = a.onSelectAndroid, onRemove = a.onRemoveAndroid, onImport = a.onImportAndroid,
+                extraLabel = s.qcomAndroidDownload, onExtra = a.onDownloadQcomAndroid,
             )
         }
         SettingsGroup(if (steam) "Touch & controls" else "Touch") {

@@ -4,19 +4,11 @@ import android.content.Context;
 import android.util.Log;
 
 import com.steamdeck.launcher.core.FileUtils;
-import com.steamdeck.launcher.core.TarZst;
 
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.security.MessageDigest;
 
 /**
  * Qualcomm's own Adreno Vulkan driver for glibc Linux, the one Valve ships for the Steam Frame
@@ -96,18 +88,9 @@ public final class QualcommLinuxDriver {
         File tmp = new File(m.getDriverDir(ID).getParentFile(), ".tmp-qcom-" + System.currentTimeMillis());
         boolean keep = false;
         try {
-            download(cache, progress);
-            String actual = sha256(cache);
-            if (!SHA256.equalsIgnoreCase(actual)) {
-                throw new IllegalArgumentException("The download does not match the pinned Qualcomm driver "
-                        + "(sha256 " + actual.substring(0, 12) + "…). Valve may have replaced it; nothing was installed.");
-            }
             File unpacked = new File(tmp, "pkg");
-            boolean ok;
-            try (InputStream in = new FileInputStream(cache)) {
-                ok = TarZst.extract(in, unpacked);
-            }
-            if (!ok) throw new IOException("could not unpack the driver package");
+            ValvePackage.fetch(URL_STRING, SHA256, SIZE, cache, unpacked,
+                    progress == null ? null : progress::onProgress);
 
             File srcLibs = new File(unpacked, "usr/lib/adreno");
             File so = new File(srcLibs, LIB_NAME);
@@ -168,42 +151,5 @@ public final class QualcommLinuxDriver {
         if (kids == null) return false;
         for (File k : kids) if (!k.renameTo(new File(to, k.getName()))) return false;
         return true;
-    }
-
-    private static void download(File target, Progress progress) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(URL_STRING).openConnection();
-        c.setConnectTimeout(20_000);
-        c.setReadTimeout(60_000);
-        try {
-            int code = c.getResponseCode();
-            if (code != 200) throw new IOException("Valve's server answered HTTP " + code);
-            long total = c.getContentLengthLong() > 0 ? c.getContentLengthLong() : SIZE;
-            try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(target)) {
-                byte[] buf = new byte[1 << 16];
-                long done = 0;
-                int r;
-                while ((r = in.read(buf)) > 0) {
-                    out.write(buf, 0, r);
-                    done += r;
-                    if (progress != null) progress.onProgress(done, total);
-                }
-            }
-        } finally {
-            c.disconnect();
-        }
-    }
-
-    private static String sha256(File f) throws IOException {
-        try (InputStream in = new FileInputStream(f)) {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] buf = new byte[1 << 16];
-            int r;
-            while ((r = in.read(buf)) > 0) md.update(buf, 0, r);
-            StringBuilder sb = new StringBuilder();
-            for (byte b : md.digest()) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IOException(e);
-        }
     }
 }
