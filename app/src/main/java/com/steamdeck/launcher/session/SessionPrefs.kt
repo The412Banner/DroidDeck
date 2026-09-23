@@ -233,18 +233,27 @@ object SessionPrefs {
         prefs(context).edit().putString("steamChannel", id).apply()
     }
 
-    /** The folder of the user's own Windows games (one subfolder each), "" = none. */
-    fun addedGamesDir(context: Context): String = prefs(context).getString("addedGamesDir", "") ?: ""
-
-    fun setAddedGamesDir(context: Context, path: String) {
-        prefs(context).edit().putString("addedGamesDir", path).apply()
+    /**
+     * The folders of the user's own Windows games (one game per subfolder), any number of them
+     * from anywhere on the device. The single folder an earlier build kept is carried in.
+     */
+    fun addedGamesDirs(context: Context): List<String> {
+        val p = prefs(context)
+        val list = p.getString("addedGamesDirs", null)
+        if (list != null) return list.split('\n').filter { it.isNotEmpty() }
+        val old = p.getString("addedGamesDir", "") ?: ""
+        return if (old.isEmpty()) emptyList() else listOf(old)
     }
 
-    /** The .exe the user chose for one game folder (by folder name), "" = the scanner's pick. */
-    fun addedGameExe(context: Context, folderName: String): String = prefs(context).getString("addedExe:$folderName", "") ?: ""
+    fun setAddedGamesDirs(context: Context, dirs: List<String>) {
+        prefs(context).edit().putString("addedGamesDirs", dirs.distinct().joinToString("\n")).remove("addedGamesDir").apply()
+    }
 
-    fun setAddedGameExe(context: Context, folderName: String, path: String) {
-        prefs(context).edit().putString("addedExe:$folderName", path).apply()
+    /** The .exe the user chose for one game folder (by its path), "" = the scanner's pick. */
+    fun addedGameExe(context: Context, folderPath: String): String = prefs(context).getString("addedExe:$folderPath", "") ?: ""
+
+    fun setAddedGameExe(context: Context, folderPath: String, path: String) {
+        prefs(context).edit().putString("addedExe:$folderPath", path).apply()
     }
 
     /** The app's colour theme (ui/Themes ids); Paper on black unless chosen otherwise. */

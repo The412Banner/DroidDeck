@@ -396,13 +396,14 @@ class SessionService : Service() {
         }
         // The user's own games folder (the Steam cog's "Added games"), bound at a fixed place so
         // the shortcuts the app writes point somewhere whatever storage the folder is on.
-        val games = SessionPrefs.addedGamesDir(this).takeIf { it.isNotEmpty() }?.let { File(it) }
-        if (games != null && games.isDirectory && games.canRead()) {
-            File(home, "Games").mkdirs()
-            binds.add(games.path + ":" + com.steamdeck.launcher.frontend.AddedGames.GUEST_DIR)
-            Log.i(TAG, "added games: $games -> ${com.steamdeck.launcher.frontend.AddedGames.GUEST_DIR}")
-        } else if (games != null) {
-            Log.w(TAG, "added games: $games is not a readable folder this session")
+        for (root in com.steamdeck.launcher.frontend.AddedGames.roots(this)) {
+            if (root.host.isDirectory && root.host.canRead()) {
+                File(LinuxRuntime.rootDir(this), root.guest.removePrefix("/")).mkdirs()
+                binds.add(root.host.path + ":" + root.guest)
+                Log.i(TAG, "added games: ${root.host} -> ${root.guest}")
+            } else {
+                Log.w(TAG, "added games: ${root.host} is not a readable folder this session")
+            }
         }
         val roms = SessionPrefs.romsDir(this).takeIf { it.isNotEmpty() }?.let { File(it) }
         if (roms != null && roms.isDirectory && roms.canRead()) {

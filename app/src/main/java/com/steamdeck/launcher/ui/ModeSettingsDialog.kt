@@ -45,12 +45,13 @@ class ModeSettings(
     /** Steam only: the client branch forced on the command line. */
     val steamChannel: String? = null,
     /** Steam only: the user's own games folder and what was found in it. */
-    val addedGamesDir: String? = null,
+    /** The chosen Games folders (null = not a Steam page). */
+    val addedGamesDirs: List<String>? = null,
     val addedGames: List<AddedGameRow> = emptyList(),
 )
 
 /** One added game as the settings page shows it: its folder, the chosen .exe, the other .exe files it could be. */
-class AddedGameRow(val folderName: String, val exePath: String, val exeName: String, val candidates: List<Pair<String, String>>)
+class AddedGameRow(val folderPath: String, val folderName: String, val exePath: String, val exeName: String, val candidates: List<Pair<String, String>>)
 
 class ModeSettingsActions(
     val onResolution: (Int) -> Unit,
@@ -72,9 +73,9 @@ class ModeSettingsActions(
     val onFexPreset: (String) -> Unit = {},
     val onSteamChannel: (String) -> Unit = {},
     val onPickAddedGamesDir: () -> Unit = {},
-    val onClearAddedGamesDir: () -> Unit = {},
-    val onAddedGameExe: (folderName: String, path: String) -> Unit = { _, _ -> },
-    val onPickAddedGameExe: (folderName: String) -> Unit = {},
+    val onForgetAddedGamesDir: (path: String) -> Unit = {},
+    val onAddedGameExe: (folderPath: String, path: String) -> Unit = { _, _ -> },
+    val onPickAddedGameExe: (folderPath: String) -> Unit = {},
     val onDismiss: () -> Unit,
 )
 
@@ -158,20 +159,24 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 onPick = a.onSteamChannel,
             )
         }
-        if (steam && s.addedGamesDir != null) SettingsGroup("Added games") {
+        if (steam && s.addedGamesDirs != null) SettingsGroup("Added games") {
+            for (dir in s.addedGamesDirs) {
+                val n = s.addedGames.count { it.folderPath.startsWith("$dir/") }
+                ActionRow(
+                    dir.substringAfterLast('/').ifEmpty { dir }, dir + " · " + (if (n == 0) "no game folders with a .exe found" else "$n game${if (n == 1) "" else "s"}") + ". Forget: the games leave the client's library at the next session start; nothing on disk is touched.",
+                    "Forget", onClick = { a.onForgetAddedGamesDir(dir) },
+                )
+            }
             ActionRow(
-                "Games folder",
-                if (s.addedGamesDir.isEmpty()) "Your own Windows games, one subfolder each, anywhere on internal storage, in the ROMs folder or on the SD-card library. Each goes into the client's library as a non-Steam game under the ARM64 Proton, at the next session start."
-                else s.addedGamesDir + " · " + (if (s.addedGames.isEmpty()) "no game folders with a .exe found" else "${s.addedGames.size} game${if (s.addedGames.size == 1) "" else "s"}"),
-                if (s.addedGamesDir.isEmpty()) "Choose…" else "Change…",
-                onClick = a.onPickAddedGamesDir,
+                if (s.addedGamesDirs.isEmpty()) "Games folder" else "Another games folder",
+                "Your own Windows games, one subfolder each, anywhere: internal storage, the SD card, a USB drive. As many folders as you like. Each game goes into the client's library as a non-Steam game under the ARM64 Proton, at the next session start.",
+                "Add…", onClick = a.onPickAddedGamesDir,
             )
-            if (s.addedGamesDir.isNotEmpty()) ActionRow("Forget the folder", "The games leave the client's library at the next session start; nothing on disk is touched.", "Forget", onClick = a.onClearAddedGamesDir)
             for (g in s.addedGames) ChoiceRow(
-                host, "added:" + g.folderName, g.folderName, "Launches ${g.exeName}",
+                host, "added:" + g.folderPath, g.folderName, "Launches ${g.exeName}" + (if (s.addedGamesDirs.size > 1) " · in " + g.folderPath.substringBeforeLast('/').substringAfterLast('/') else ""),
                 g.candidates + ("__pick__" to "Choose another file…"), g.exePath,
                 note = "The .exe files found in the game's folder; the one named after the folder, else the largest, is picked unless you choose.",
-                onPick = { path -> if (path == "__pick__") a.onPickAddedGameExe(g.folderName) else a.onAddedGameExe(g.folderName, path) },
+                onPick = { path -> if (path == "__pick__") a.onPickAddedGameExe(g.folderPath) else a.onAddedGameExe(g.folderPath, path) },
             )
         }
         if (steam && s.fexPreset != null) SettingsGroup("Games") {

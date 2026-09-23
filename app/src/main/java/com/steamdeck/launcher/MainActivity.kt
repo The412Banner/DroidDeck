@@ -116,8 +116,8 @@ class MainActivity : ComponentActivity() {
     }
     private val pickAddedGamesDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
-            SessionPrefs.setAddedGamesDir(this, path)
-            addedGamesDir = path
+            SessionPrefs.setAddedGamesDirs(this, addedGamesDirs + path)
+            addedGamesDirs = SessionPrefs.addedGamesDirs(this)
             refreshAddedGames()
             refresh()
         }
@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
             refresh()
         }
     }
-    private var addedGamesDir by mutableStateOf("")
+    private var addedGamesDirs by mutableStateOf<List<String>>(emptyList())
     private var addedGames by mutableStateOf<List<com.steamdeck.launcher.ui.AddedGameRow>>(emptyList())
     private val pickRomsDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
@@ -392,7 +392,7 @@ class MainActivity : ComponentActivity() {
                 storageOptions = storageOptions,
                 fexPreset = if (mode == SessionService.MODE_STEAM) fexPreset else null,
                 steamChannel = if (mode == SessionService.MODE_STEAM) steamChannel else null,
-                addedGamesDir = if (mode == SessionService.MODE_STEAM) addedGamesDir else null,
+                addedGamesDirs = if (mode == SessionService.MODE_STEAM) addedGamesDirs else null,
                 addedGames = if (mode == SessionService.MODE_STEAM) addedGames else emptyList(),
             ),
             ModeSettingsActions(
@@ -424,12 +424,12 @@ class MainActivity : ComponentActivity() {
                 },
                 onFexPreset = { id -> SessionPrefs.setFexPreset(this, id); fexPreset = id },
                 onSteamChannel = { id -> SessionPrefs.setSteamChannel(this, id); steamChannel = id },
-                onPickAddedGamesDir = { pickAddedGamesDir.launch(InAppFilePicker.buildDirIntent(this, "Choose the folder of your own games", addedGamesDir.ifEmpty { null })) },
-                onClearAddedGamesDir = { SessionPrefs.setAddedGamesDir(this, ""); addedGamesDir = ""; addedGames = emptyList(); refresh() },
+                onPickAddedGamesDir = { pickAddedGamesDir.launch(InAppFilePicker.buildDirIntent(this, "Choose a folder of your own games", addedGamesDirs.lastOrNull())) },
+                onForgetAddedGamesDir = { dir -> SessionPrefs.setAddedGamesDirs(this, addedGamesDirs - dir); addedGamesDirs = SessionPrefs.addedGamesDirs(this); refreshAddedGames(); refresh() },
                 onAddedGameExe = { folder, path -> SessionPrefs.setAddedGameExe(this, folder, path); refreshAddedGames(); refresh() },
                 onPickAddedGameExe = { folder ->
                     pendingAddedGame = folder
-                    pickAddedGameExe.launch(InAppFilePicker.buildIntent(this, listOf("exe"), "Choose the game's .exe", File(addedGamesDir, folder).path))
+                    pickAddedGameExe.launch(InAppFilePicker.buildIntent(this, listOf("exe"), "Choose the game's .exe", folder))
                 },
                 onDismiss = { settingsMode = null },
             ),
@@ -467,7 +467,7 @@ class MainActivity : ComponentActivity() {
     /** The added games as the settings page lists them; a scan of the folder, on this thread (one level, small). */
     private fun refreshAddedGames() {
         addedGames = com.steamdeck.launcher.frontend.AddedGames.scan(this).map { g ->
-            com.steamdeck.launcher.ui.AddedGameRow(g.folderName(), g.exe.path, g.exe.name, g.candidates.map { c -> c.path to c.name }.distinctBy { it.first })
+            com.steamdeck.launcher.ui.AddedGameRow(g.folder.path, g.folderName(), g.exe.path, g.exe.name, g.candidates.map { c -> c.path to c.name }.distinctBy { it.first })
         }
     }
 
@@ -476,7 +476,7 @@ class MainActivity : ComponentActivity() {
         resolutionCap = SessionPrefs.resolutionCap(this, mode)
         fexPreset = SessionPrefs.fexPreset(this)
         steamChannel = SessionPrefs.steamChannel(this)
-        addedGamesDir = SessionPrefs.addedGamesDir(this)
+        addedGamesDirs = SessionPrefs.addedGamesDirs(this)
         refreshAddedGames()
         shapeMode = SessionPrefs.shapeMode(this)
         hdrOn = SessionPrefs.hdr(this, mode)
