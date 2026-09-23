@@ -260,7 +260,9 @@ class SessionService : Service() {
         // Qualcomm's own Linux driver draws X11 windows only through its implicit layer (the client's
         // UI is X11); the session script adds the manifests to the loader's search and enables it.
         val linuxDrivers = LinuxVulkanDriverManager(this)
+        // fixSearchPath also repairs a driver installed by a build that did not patch it yet.
         val qcomLibs = QualcommLinuxDriver.bindDir(linuxDrivers, linuxDriverId)
+            ?.also { QualcommLinuxDriver.fixSearchPath(it) }
         QualcommLinuxDriver.layerDir(linuxDrivers, linuxDriverId)
             ?.takeIf { qcomLibs != null }
             ?.let { guest.add("BL_QCOM_LAYERS=" + it.path) }

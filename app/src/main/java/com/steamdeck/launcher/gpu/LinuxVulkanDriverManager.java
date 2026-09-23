@@ -262,6 +262,7 @@ public class LinuxVulkanDriverManager {
             throw new IllegalArgumentException(QualcommLinuxDriver.LIB_NAME + " is not a glibc AArch64 library - "
                     + "the Android build of Qualcomm's driver belongs under the display driver instead.");
         }
+        QualcommLinuxDriver.fixSearchPath(new File(tmpDir, "adreno"));
         String id = QualcommLinuxDriver.ID;
         if (isInstalled(id)) removeDriver(id);
         JSONObject icd = new JSONObject();

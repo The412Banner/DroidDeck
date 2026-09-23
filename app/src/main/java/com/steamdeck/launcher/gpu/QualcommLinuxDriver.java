@@ -101,6 +101,7 @@ public final class QualcommLinuxDriver {
             if (!dir.mkdirs() || !srcLibs.renameTo(new File(dir, ADRENO_DIR))) {
                 throw new IOException("could not place the driver's libraries");
             }
+            fixSearchPath(new File(dir, ADRENO_DIR));
             // The layers' manifests already name /usr/lib/adreno/wsi_*.so, the bound path.
             File srcLayers = new File(unpacked, "usr/share/vulkan/implicit_layer.d");
             File layers = new File(dir, LAYER_DIR);
@@ -143,6 +144,51 @@ public final class QualcommLinuxDriver {
             cache.delete();
             if (!keep) Log.w(TAG, "install of " + ID + " did not complete");
         }
+    }
+
+    /**
+     * The search path Valve's build of {@code libvulkan_adreno.so} carries -
+     * {@code $ORIGIN/../../llvm-glnext:$ORIGIN/../../adreno_utils:$ORIGIN/../../gsl:} - names
+     * folders of their build tree, not /usr/lib/adreno where its companions sit, so six of them are
+     * "not found" and the Vulkan loader drops the driver (gamescope: vkCreateInstance -9). On the
+     * Frame an ld.so.conf entry covers it; here the runtime is not ours to change, so the DT_RPATH
+     * string is overwritten in place with {@code $ORIGIN} (NUL-padded to the same length): the
+     * libraries beside it. Proven on the Pocket FIT: 0 missing, vulkaninfo lists the device.
+     * Idempotent - a patched or different build is left alone.
+     */
+    public static void fixSearchPath(File adrenoDir) {
+        File so = new File(adrenoDir, LIB_NAME);
+        try {
+            byte[] b = java.nio.file.Files.readAllBytes(so.toPath());
+            byte[] old = OLD_RPATH.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            int at = indexOf(b, old);
+            if (at < 0) return;
+            byte[] repl = "$ORIGIN".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            System.arraycopy(repl, 0, b, at, repl.length);
+            java.util.Arrays.fill(b, at + repl.length, at + old.length, (byte) 0);
+            File staged = new File(adrenoDir, LIB_NAME + ".staged");
+            java.nio.file.Files.write(staged.toPath(), b);
+            if (!staged.renameTo(so)) {
+                //noinspection ResultOfMethodCallIgnored
+                staged.delete();
+                Log.e(TAG, "could not replace " + so + " with its patched copy");
+                return;
+            }
+            Log.i(TAG, "search path of " + so + " set to $ORIGIN");
+        } catch (IOException e) {
+            Log.e(TAG, "could not patch " + so, e);
+        }
+    }
+
+    private static final String OLD_RPATH = "$ORIGIN/../../llvm-glnext:$ORIGIN/../../adreno_utils:$ORIGIN/../../gsl:";
+
+    private static int indexOf(byte[] hay, byte[] needle) {
+        outer:
+        for (int i = 0; i + needle.length <= hay.length; i++) {
+            for (int j = 0; j < needle.length; j++) if (hay[i + j] != needle[j]) continue outer;
+            return i;
+        }
+        return -1;
     }
 
     private static boolean moveChildren(File from, File to) {
