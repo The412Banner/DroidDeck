@@ -150,10 +150,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/src/main/assets/linuxfs
-          key: preloads-${{ env.PRELOAD_CACHE_VERSION }}-${{ hashFiles('app/src/main/cpp/fakeinput_steam.cpp', 'tools/linuxfs/preload/*.c', 'tools/linuxfs/overlay/usr/local/bin/*', 'tools/linuxfs/overlay/usr/bin/**', 'tools/linuxfs/desktop/*') }}
+          key: preloads-${{ env.PRELOAD_CACHE_VERSION }}-${{ hashFiles('app/src/main/cpp/fakeinput_steam.cpp', 'tools/linuxfs/preload/*.c', 'tools/linuxfs/overlay/usr/local/bin/*', 'tools/linuxfs/overlay/usr/bin/**', 'tools/linuxfs/desktop/*', 'tools/gamescope/release.env') }}
 
       - name: Build libfakeinput.so and libblsession.so (glibc aarch64)
         if: steps.preloads.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -182,7 +184,8 @@ jobs:
           # names the release and the archive's sha256); see tools/gamescope/PATCHES.md.
           if [ -f tools/gamescope/release.env ]; then
             . tools/gamescope/release.env
-            curl -fsSL -o gamescope.tzst "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GAMESCOPE_TAG}/gamescope.tzst"
+            # Through the API: the repository is private, so the plain download URL answers 404.
+            gh release download "${GAMESCOPE_TAG}" -R "${GITHUB_REPOSITORY}" -p gamescope.tzst -O gamescope.tzst
             echo "${GAMESCOPE_SHA256}  gamescope.tzst" | sha256sum -c -
             tar --use-compress-program=unzstd -xf gamescope.tzst -C "$D"
             test -f "$D/usr/local/bin/gamescope"
