@@ -108,8 +108,9 @@ class MainActivity : ComponentActivity() {
     /** The latest Banners-Turnip release as each driver menu offers it (see [refreshReleaseRows]). */
     private var linuxDownloads by mutableStateOf<List<com.steamdeck.launcher.ui.DownloadRow>>(emptyList())
     private var androidDownloads by mutableStateOf<List<com.steamdeck.launcher.ui.DownloadRow>>(emptyList())
-    private var releaseStatus by mutableStateOf("Check for new drivers (Banners-Turnip, WinNative)")
-    private var releaseChecking = false
+    private var releaseStatus by mutableStateOf("Not checked yet - tap refresh to look for new drivers")
+    private var releaseChecking by mutableStateOf(false)
+    private var canRestoreBundled by mutableStateOf(false)
     /** Asset name -> download percent, while it downloads. */
     private val releaseProgress = HashMap<String, Int>()
     private var linuxSteam by mutableStateOf("")
@@ -479,6 +480,7 @@ class MainActivity : ComponentActivity() {
                 addedGames = if (mode == SessionService.MODE_STEAM) addedGames else emptyList(),
                 addedGamesArt = addedGamesArt,
                 linuxDownloads = linuxDownloads, androidDownloads = androidDownloads, releaseStatus = releaseStatus,
+                releaseChecking = releaseChecking, canRestoreBundled = canRestoreBundled,
             ),
             ModeSettingsActions(
                 onResolution = { cap -> SessionPrefs.setResolutionCap(this, mode, cap); resolutionCap = cap },
@@ -490,6 +492,7 @@ class MainActivity : ComponentActivity() {
                 onRemoveLinux = { id -> deleteDriver(id, linux = true) },
                 onRefreshReleases = { checkLatestTurnip() },
                 onDownloadDriver = { name -> downloadReleaseDriver(name) },
+                onRestoreBundled = { TurnipDriver(this).restoreBundled(); refreshDrivers() },
                 onSelectAndroid = { id -> SessionPrefs.setAndroidDriver(this, id); refreshDrivers() },
                 onImportAndroid = { pickAndroidDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a display driver (AdrenoTools zip)")) },
                 onRemoveAndroid = { id -> deleteDriver(id, linux = false) },
@@ -614,6 +617,7 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshDrivers() {
         val lm = LinuxVulkanDriverManager(this)
+        fun origin(id: String) = if (TurnipReleases.isDownloaded(this, id)) DriverRow.DOWNLOADED else DriverRow.IMPORTED
         linuxRows = LinuxVulkanDriver.optionValues(this).map { id ->
             if (id.isEmpty()) DriverRow("", "Runtime default", "the Turnip built into the runtime", false)
             else DriverRow(
@@ -621,8 +625,8 @@ class MainActivity : ComponentActivity() {
                 listOfNotNull(
                     lm.getDriverVersion(id).takeIf { it.isNotEmpty() },
                     lm.getMinGlibc(id).takeIf { it.isNotEmpty() }?.let { "glibc $it+" },
-                ).joinToString(" · ").ifEmpty { "imported" },
-                true,
+                ).joinToString(" · "),
+                true, origin(id),
             )
         }
         linuxSteam = SessionPrefs.linuxDriver(this, SessionService.MODE_STEAM)
@@ -635,9 +639,10 @@ class MainActivity : ComponentActivity() {
                 if (auto == "system") "system Vulkan: no bundled build for this GPU" else "${td.displayName(auto)} (bundled)",
                 false,
             ))
-            for (id in TurnipDriver.BUNDLED) add(DriverRow(id, td.displayName(id), "bundled" + td.driverVersion(id).let { if (it.isEmpty()) "" else " · $it" }, false))
-            for (id in td.enumerateImported()) add(DriverRow(id, td.displayName(id), "imported" + td.driverVersion(id).let { if (it.isEmpty()) "" else " · $it" }, true))
+            for (id in td.visibleBundled()) add(DriverRow(id, td.displayName(id), td.driverVersion(id), true, DriverRow.BUNDLED))
+            for (id in td.enumerateImported()) add(DriverRow(id, td.displayName(id), td.driverVersion(id), true, origin(id)))
         }
+        canRestoreBundled = td.hiddenBundled().isNotEmpty()
         androidSelected = SessionPrefs.androidDriver(this)
         refreshReleaseRows()
     }
@@ -681,7 +686,8 @@ class MainActivity : ComponentActivity() {
                 if (SessionPrefs.linuxDriver(this, mode) == id) SessionPrefs.setLinuxDriver(this, mode, "")
             }
         } else {
-            TurnipDriver(this).remove(id)
+            val td = TurnipDriver(this)
+            if (id in TurnipDriver.BUNDLED) td.hideBundled(id) else td.remove(id)
             if (SessionPrefs.androidDriver(this) == id) SessionPrefs.setAndroidDriver(this, TurnipDriver.AUTO)
         }
         TurnipReleases.forget(this, id)
@@ -699,18 +705,15 @@ class MainActivity : ComponentActivity() {
             .filter { a -> TurnipReleases.installedId(this, a) { id -> if (linux) lm.isInstalled(id) else td.isInstalled(id) } == null }
             .map { a ->
                 val mb = "%.1f MB".format(a.size / 1_048_576.0)
-                com.steamdeck.launcher.ui.DownloadRow(
-                    a.name, "Download ${a.source} ${a.tag}",
-                    releaseProgress[a.name]?.let { "${a.label} · downloading $it%" } ?: "${a.label} · $mb",
-                )
+                com.steamdeck.launcher.ui.DownloadRow(a.name, "${a.source} ${a.tag}", "${a.label} · $mb", releaseProgress[a.name])
             }
         linuxDownloads = rows(linux = true)
         androidDownloads = rows(linux = false)
         if (!releaseChecking) releaseStatus = when (check) {
-            null -> "Check for new drivers (Banners-Turnip, WinNative)"
+            null -> "Not checked yet - tap refresh to look for new drivers"
             else -> "Latest: " + check.latest.joinToString(" · ") { "${it.first} ${it.second}" } +
                 (if (check.failed.isEmpty()) "" else " · ${check.failed.joinToString()} unreachable") +
-                " · checked ${ago(check.checkedAt)} · tap to refresh"
+                " · checked ${ago(check.checkedAt)}"
         }
     }
 
@@ -736,7 +739,7 @@ class MainActivity : ComponentActivity() {
             ui.post {
                 releaseChecking = false
                 refreshReleaseRows()
-                if (problem != null) releaseStatus = "Couldn't check: $problem · tap to retry"
+                if (problem != null) releaseStatus = "Couldn't check: $problem"
             }
         }, "turnip-release-check").start()
     }

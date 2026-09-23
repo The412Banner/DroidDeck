@@ -280,6 +280,8 @@ fun SettingsPage(
     onBack: () -> Unit,
     eyebrow: String? = null,
     lede: String? = null,
+    /** A small control at the right of the title (the driver pages' refresh button). */
+    action: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -297,7 +299,12 @@ fun SettingsPage(
                 }
             }
         }
-        Rise(1) { Title(title) }
+        Rise(1) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { Title(title) }
+                if (action != null) action()
+            }
+        }
         if (lede != null) Rise(2) { Lede(lede) }
         Rise(3, Modifier.weight(1f).fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxSize().graphicsLayer { alpha = dim }.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) { content() }

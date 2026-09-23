@@ -146,6 +146,12 @@ object TurnipReleases {
     fun installedId(context: Context, asset: Asset, isInstalled: (String) -> Boolean): String? =
         downloads(context).optString(asset.name, "").takeIf { it.isNotEmpty() && isInstalled(it) }
 
+    /** True when [id] came from a release download rather than a zip picked by hand. */
+    fun isDownloaded(context: Context, id: String): Boolean {
+        val d = downloads(context)
+        return d.keys().asSequence().any { d.optString(it) == id }
+    }
+
     fun recordDownload(context: Context, asset: Asset, id: String) {
         prefs(context).edit().putString(KEY_DOWNLOADS, downloads(context).put(asset.name, id).toString()).apply()
     }

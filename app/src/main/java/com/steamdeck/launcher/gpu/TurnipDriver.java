@@ -52,6 +52,9 @@ public final class TurnipDriver {
     public static final List<String> BUNDLED = Collections.unmodifiableList(Arrays.asList(DRIVER_A7XX, DRIVER_A8XX));
     /** Overrides the pick, for a device we cannot reach: a7xx, a8xx or system. */
     private static final String OVERRIDE_FILE = "Download/steamdeck-driver";
+    /** Bundled drivers the user deleted: hidden from the list, their unpacked copy removed. */
+    private static final String PREFS = "graphics_driver";
+    private static final String KEY_HIDDEN = "hiddenBundled";
     /** Stored choice meaning "pick by GPU" - the default, and what a removed import falls back to. */
     public static final String AUTO = "";
 
@@ -109,6 +112,37 @@ public final class TurnipDriver {
     public boolean isInstalled(String driverId) {
         String library = libraryName(driverId);
         return library != null && !library.isEmpty() && new File(new File(contentDir, driverId), library).isFile();
+    }
+
+    /**
+     * The bundled drivers the list shows: {@link #BUNDLED} minus the ones the user deleted. A deleted
+     * one still lives in the apk and Auto still unpacks it on a GPU that needs it, so deleting can
+     * never leave a device without a driver; it only leaves the list.
+     */
+    public List<String> visibleBundled() {
+        java.util.Set<String> hidden = hiddenBundled();
+        ArrayList<String> out = new ArrayList<>();
+        for (String id : BUNDLED) if (!hidden.contains(id)) out.add(id);
+        return out;
+    }
+
+    public java.util.Set<String> hiddenBundled() {
+        return new java.util.HashSet<>(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getStringSet(KEY_HIDDEN, java.util.Collections.<String>emptySet()));
+    }
+
+    /** "Delete" for a bundled driver: remove its unpacked copy and hide it from the list. */
+    public void hideBundled(String driverId) {
+        if (!BUNDLED.contains(driverId)) return;
+        FileUtils.delete(new File(contentDir, driverId));
+        java.util.Set<String> hidden = hiddenBundled();
+        hidden.add(driverId);
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putStringSet(KEY_HIDDEN, hidden).apply();
+        Log.i(TAG, "bundled driver " + driverId + " hidden by the user");
+    }
+
+    public void restoreBundled() {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_HIDDEN).apply();
     }
 
     /** Imported drivers only - the bundled two are listed by {@link #BUNDLED}. */

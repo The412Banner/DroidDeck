@@ -3,10 +3,6 @@ package com.steamdeck.launcher.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,10 +17,17 @@ import com.steamdeck.launcher.core.FexPreset
 import com.steamdeck.launcher.session.SessionPrefs
 import com.steamdeck.launcher.session.SessionService
 
-class DriverRow(val id: String, val name: String, val detail: String, val removable: Boolean)
+/** [tag] is shown beside the name: [BUNDLED], [DOWNLOADED], [IMPORTED], or "" for Auto / Runtime default. */
+class DriverRow(val id: String, val name: String, val detail: String, val removable: Boolean, val tag: String = "") {
+    companion object {
+        const val BUNDLED = "BUNDLED"
+        const val DOWNLOADED = "DOWNLOADED"
+        const val IMPORTED = "IMPORTED"
+    }
+}
 
 /** A release driver (Banners-Turnip, WinNative) that is not installed yet; [key] is its asset name. */
-class DownloadRow(val key: String, val label: String, val detail: String)
+class DownloadRow(val key: String, val label: String, val detail: String, val progress: Int? = null)
 
 class ModeSettings(
     val mode: String,
@@ -59,7 +62,10 @@ class ModeSettings(
     /** Latest Banners-Turnip release: what each driver menu offers to download, and the refresh line. */
     val linuxDownloads: List<DownloadRow> = emptyList(),
     val androidDownloads: List<DownloadRow> = emptyList(),
-    val releaseStatus: String = "Check for new drivers (Banners-Turnip, WinNative)",
+    val releaseStatus: String = "Not checked yet - tap refresh to look for new drivers",
+    val releaseChecking: Boolean = false,
+    /** A bundled display driver was deleted: the page offers to restore it. */
+    val canRestoreBundled: Boolean = false,
 )
 
 /** One added game as the settings page shows it: its folder, the chosen .exe, the other .exe files it could be. */
@@ -77,6 +83,7 @@ class ModeSettingsActions(
     val onRefreshReleases: () -> Unit = {},
     /** Asset name of the release driver to download. */
     val onDownloadDriver: (String) -> Unit = {},
+    val onRestoreBundled: () -> Unit = {},
     val onSelectAndroid: (String) -> Unit,
     val onImportAndroid: () -> Unit,
     val onRemoveAndroid: (String) -> Unit,
@@ -103,6 +110,34 @@ class ModeSettingsActions(
 fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
     val steam = s.mode == SessionService.MODE_STEAM
     val host = rememberMenuHost()
+    // The two driver lists open as full pages over this one ("rt" = runtime, "panel" = display).
+    var driverPage by remember { mutableStateOf<String?>(null) }
+    when (driverPage) {
+        "rt" -> {
+            DriverPage(
+                title = "Runtime driver",
+                hint = (if (steam) "Used by Steam and games." else "Used by desktop apps.") + " Applies next session.",
+                rows = s.linuxRows, selected = s.linuxSelected, downloads = s.linuxDownloads,
+                status = s.releaseStatus, checking = s.releaseChecking, importLabel = "Import Turnip zip…", canRestore = false,
+                onSelect = a.onSelectLinux, onDelete = a.onRemoveLinux, onRefresh = a.onRefreshReleases,
+                onDownload = a.onDownloadDriver, onImport = a.onImportLinux, onRestore = {}, onBack = { driverPage = null },
+            )
+            return
+        }
+        "panel" -> {
+            DriverPage(
+                title = "Display driver",
+                hint = "Used by the compositor in both modes. Restart the app to apply.",
+                rows = s.androidRows, selected = s.androidSelected, downloads = s.androidDownloads,
+                status = s.releaseStatus, checking = s.releaseChecking, importLabel = "Import an AdrenoTools zip…",
+                canRestore = s.canRestoreBundled,
+                onSelect = a.onSelectAndroid, onDelete = a.onRemoveAndroid, onRefresh = a.onRefreshReleases,
+                onDownload = a.onDownloadDriver, onImport = a.onImportAndroid, onRestore = a.onRestoreBundled,
+                onBack = { driverPage = null },
+            )
+            return
+        }
+    }
     SettingsPage(
         host,
         title = if (steam) "Steam session" else "Desktop session",
@@ -140,22 +175,12 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
             )
         }
         SettingsGroup("Drivers") {
-            DriverRowMenu(
-                host, "rt", "Runtime driver",
-                (if (steam) "Used by Steam and games." else "Used by desktop apps.") + " Applies next session.",
-                s.linuxRows, s.linuxSelected, importLabel = "Import Turnip zip…",
-                onSelect = a.onSelectLinux, onRemove = a.onRemoveLinux, onImport = a.onImportLinux,
-                downloads = s.linuxDownloads, releaseStatus = s.releaseStatus,
-                onRefresh = a.onRefreshReleases, onDownload = a.onDownloadDriver,
-            )
-            DriverRowMenu(
-                host, "panel", "Display driver",
-                "Used by the compositor in both modes. Restart the app to apply.",
-                s.androidRows, s.androidSelected, importLabel = "Import an AdrenoTools zip…",
-                onSelect = a.onSelectAndroid, onRemove = a.onRemoveAndroid, onImport = a.onImportAndroid,
-                downloads = s.androidDownloads, releaseStatus = s.releaseStatus,
-                onRefresh = a.onRefreshReleases, onDownload = a.onDownloadDriver,
-            )
+            SettingsRow("Runtime driver", (if (steam) "Used by Steam and games." else "Used by desktop apps.") + " Applies next session.") {
+                ValueChip(s.linuxRows.firstOrNull { it.id == s.linuxSelected }?.name ?: "Runtime default", open = false) { driverPage = "rt" }
+            }
+            SettingsRow("Display driver", "Used by the compositor in both modes. Restart the app to apply.") {
+                ValueChip(s.androidRows.firstOrNull { it.id == s.androidSelected }?.name ?: "Auto - picked by GPU", open = false) { driverPage = "panel" }
+            }
         }
         SettingsGroup(if (steam) "Touch & controls" else "Touch") {
             ChoiceRow(
@@ -274,55 +299,6 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 note = "GLES2 and Vulkan require a DRM render node, unavailable on most devices.", onPick = a.onRenderer,
             )
         }
-    }
-}
-
-@Composable
-private fun DriverRowMenu(
-    host: MenuHost, key: String, label: String, hint: String, rows: List<DriverRow>, selected: String, importLabel: String,
-    onSelect: (String) -> Unit, onRemove: (String) -> Unit, onImport: () -> Unit,
-    downloads: List<DownloadRow> = emptyList(), releaseStatus: String? = null,
-    onRefresh: () -> Unit = {}, onDownload: (String) -> Unit = {},
-) {
-    val open = host.open == key
-    val colors = MaterialTheme.colorScheme
-    var confirmDelete by remember { mutableStateOf<DriverRow?>(null) }
-    SettingsRow(label, hint, highlighted = open) {
-        androidx.compose.foundation.layout.Box {
-            ValueChip(rows.firstOrNull { it.id == selected }?.name ?: rows.firstOrNull()?.name ?: "-", open) { host.open = if (open) null else key }
-            AnchoredMenu(open, onDismiss = { if (host.open == key) host.open = null }, title = label) {
-                for (row in rows) MenuItem(
-                    row.name, checked = row.id == selected, detail = row.detail.ifEmpty { null },
-                    trailing = if (row.removable) ({
-                        androidx.compose.material3.Icon(
-                            Icons.Outlined.Delete, contentDescription = "Delete ${row.name}",
-                            tint = colors.onSurfaceVariant,
-                            modifier = Modifier.size(32.dp).clickable { confirmDelete = row }.padding(6.dp),
-                        )
-                    }) else null,
-                ) { onSelect(row.id); host.open = null }
-                // The latest Banners-Turnip release: what is not installed yet, then the refresh line.
-                // Tapping either keeps the menu open, so the progress and the result show in place.
-                for (d in downloads) MenuItem(
-                    d.label, checked = false, detail = d.detail,
-                    leading = { androidx.compose.material3.Icon(Icons.Outlined.Download, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp)) },
-                ) { onDownload(d.key) }
-                if (releaseStatus != null) MenuItem(
-                    releaseStatus, checked = false,
-                    leading = { androidx.compose.material3.Icon(Icons.Outlined.Refresh, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp)) },
-                ) { onRefresh() }
-                MenuItem(importLabel, checked = false) { host.open = null; onImport() }
-            }
-        }
-    }
-    confirmDelete?.let { row ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { confirmDelete = null },
-            title = { Text("Delete ${row.name}?") },
-            text = { Text("Its files are removed from the app. If it is the driver in use, the default takes its place.", fontSize = 13.sp) },
-            confirmButton = { androidx.compose.material3.TextButton(onClick = { confirmDelete = null; onRemove(row.id) }) { Text("Delete") } },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
-        )
     }
 }
 
