@@ -66,6 +66,8 @@ class BatteryComponent(val dir: File) : SessionPart() {
             val energyFullUwh = chargeFullUah * voltageUv / 1_000_000L
             val powerNowUw = abs(currentNowUa) * voltageUv / 1_000_000L
             val timeToEmptyS = if (discharging && chargeNowUah > 0 && abs(currentAvgUa) > 0) chargeNowUah * 3600L / abs(currentAvgUa) else 0L
+            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING
+            val timeToFullS = if (charging && chargeFullUah > chargeNowUah && abs(currentAvgUa) > 0) (chargeFullUah - chargeNowUah) * 3600L / abs(currentAvgUa) else 0L
             val statusText = when (status) {
                 BatteryManager.BATTERY_STATUS_CHARGING -> "Charging"
                 BatteryManager.BATTERY_STATUS_DISCHARGING -> "Discharging"
@@ -101,6 +103,8 @@ class BatteryComponent(val dir: File) : SessionPart() {
                     "power_now" to powerNowUw.toString(),
                     "time_to_empty_now" to timeToEmptyS.toString(),
                     "time_to_empty_avg" to timeToEmptyS.toString(),
+                    "time_to_full_now" to timeToFullS.toString(),
+                    "time_to_full_avg" to timeToFullS.toString(),
                     "temp" to tempDeci.toString(),
                     "model_name" to android.os.Build.MODEL.replace(' ', '_'),
                     "manufacturer" to android.os.Build.MANUFACTURER.replace(' ', '_'),
