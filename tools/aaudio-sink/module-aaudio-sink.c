@@ -55,7 +55,8 @@ PA_MODULE_USAGE(
         "buffer_frames=<initial buffer size in frames, 0 = two bursts> "
         "max_buffer_frames=<largest the buffer may grow to, 0 = the stream's capacity>");
 
-#define DEFAULT_SINK_NAME "aaudio_output"
+/* The name the app's daemon config addresses (set-default-sink). */
+#define DEFAULT_SINK_NAME "AAudioSink"
 /* A write that blocks longer than this has lost the device underneath it. */
 #define WRITE_TIMEOUT_NS (500LL * 1000 * 1000)
 /* Underruns are polled every so many writes, not every write. */
@@ -305,6 +306,9 @@ static void thread_func(void *userdata) {
         int ret;
 
         if (PA_SINK_IS_OPENED(u->sink->thread_info.state) && u->started) {
+            /* Nothing written can be taken back from the device, so a rewind is just acknowledged. */
+            if (u->sink->thread_info.rewind_requested)
+                pa_sink_process_rewind(u->sink, 0);
             if (write_one_burst(u) < 0)
                 goto fail;
         }
