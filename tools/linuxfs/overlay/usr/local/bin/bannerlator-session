@@ -60,13 +60,15 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
     /*) ;;
     ?*) bl_icd_lib="$(dirname "$BL_VK_DRIVER")/$bl_icd_lib" ;;
   esac
-  if [ -n "${BL_QCOM_LAYERS:-}" ] && [ -z "${BL_INSIDE:-}" ] && [ "${BL_QCOM_GAMESCOPE:-0}" != 1 ]; then
-    # Qualcomm's own Linux driver, first pass: this is gamescope's environment. The driver claims
-    # DRM format modifiers but lists none for any format, and gamescope asserts on that
-    # (rendervulkan.cpp: modifiers.size() > 0) - seen on the Pocket FIT. So the compositor keeps the
-    # runtime's Turnip; the second pass, inside gamescope, hands the client and every game Qualcomm's.
-    # BL_QCOM_GAMESCOPE=1 gives gamescope Qualcomm's too, to retry that on a later driver.
-    echo "== vulkan driver: gamescope keeps the runtime's Turnip (Qualcomm's lists no DRM format modifiers); the client and games get Qualcomm's"
+  if [ -n "${BL_QCOM_LAYERS:-}" ] && [ "${BL_QCOM_EVERYWHERE:-0}" != 1 ]; then
+    # Qualcomm's own Linux driver (v720, 2023) is for GAMES ONLY. On the Pocket FIT it cannot be
+    # gamescope's - it lists no DRM format modifiers and gamescope asserts (rendervulkan.cpp:
+    # modifiers.size() > 0) - nor the client's: Zink will not start on it ("failed to load driver:
+    # zink"), so the client has no GLX and exits (surface_linux.cpp glXChooseVisual). Both keep the
+    # runtime's Turnip; the Proton wrappers (bannerlator-steam-compat, bl_game_driver) point each
+    # game at this driver. BL_QCOM_EVERYWHERE=1 applies it to the whole session, to retry that.
+    export BL_QCOM_GAME_ICD="$BL_VK_DRIVER"
+    [ -z "${BL_INSIDE:-}" ] && echo "== vulkan driver: Qualcomm's for games only; gamescope and the client keep the runtime's Turnip"
   elif [ -r "$BL_VK_DRIVER" ] && [ -n "$bl_icd_lib" ] && [ -r "$bl_icd_lib" ]; then
     export VK_DRIVER_FILES="$BL_VK_DRIVER"
     # Loaders older than 1.3.207 only know the old name; both are harmless together.

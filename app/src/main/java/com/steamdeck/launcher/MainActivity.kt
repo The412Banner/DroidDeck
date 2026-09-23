@@ -790,7 +790,7 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "MainActivity"
         /** What the picker offers for a driver zip; some file apps label a zip as a plain stream. */
         private val ZIP_EXT = listOf("zip")
-        private const val QCOM_LABEL = "Download Qualcomm driver (Linux, experimental, 13 MB)…"
+        private const val QCOM_LABEL = "Download Qualcomm driver (Linux, games only, experimental, 13 MB)…"
         private const val QCOM_ANDROID_LABEL = "Download Qualcomm driver v786 (Android, experimental, 12 MB)…"
     }
 }

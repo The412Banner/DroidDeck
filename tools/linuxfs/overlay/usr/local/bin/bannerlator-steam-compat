@@ -87,6 +87,28 @@ bl_game_cpus() {
 }
 """
 
+# Qualcomm's own Linux driver, when the session's pick is it: games only (see bannerlator-session -
+# gamescope and the client cannot run on it). The app binds its libraries at /usr/lib/adreno. Its
+# surfaces come from two implicit layers, both on here: a game's swapchain reaches gamescope over
+# Wayland through gamescope's WSI layer, and X11 through Xwayland. BL_QCOM_GAME_WAYLAND_LAYER=0 /
+# BL_QCOM_GAME_XCB_LAYER=0 turn either off.
+BL_GAME_DRIVER_SETUP = """
+bl_game_driver() {
+  [ -n "${BL_QCOM_GAME_ICD:-}" ] || return 0
+  if [ ! -r "$BL_QCOM_GAME_ICD" ] || [ ! -r /usr/lib/adreno/libvulkan_adreno.so ]; then
+    echo "bannerlator-proton: Qualcomm driver not usable here (manifest or /usr/lib/adreno missing); the game keeps Turnip" >&2
+    return 0
+  fi
+  export VK_DRIVER_FILES="$BL_QCOM_GAME_ICD" VK_ICD_FILENAMES="$BL_QCOM_GAME_ICD"
+  if [ -n "${BL_QCOM_LAYERS:-}" ] && [ -d "$BL_QCOM_LAYERS" ]; then
+    export VK_ADD_IMPLICIT_LAYER_PATH="$BL_QCOM_LAYERS${VK_ADD_IMPLICIT_LAYER_PATH:+:$VK_ADD_IMPLICIT_LAYER_PATH}"
+    [ "${BL_QCOM_GAME_XCB_LAYER:-1}" = 1 ] && export ENABLE_VULKAN_ADRENO_XCB_LAYER_ENABLE=1
+    [ "${BL_QCOM_GAME_WAYLAND_LAYER:-1}" = 1 ] && export ENABLE_VULKAN_ADRENO_WAYLAND_LAYER_ENABLE=1
+  fi
+  echo "bannerlator-proton: game uses Qualcomm's driver ($BL_QCOM_GAME_ICD; xcb layer ${BL_QCOM_GAME_XCB_LAYER:-1}, wayland layer ${BL_QCOM_GAME_WAYLAND_LAYER:-1})" >&2
+}
+"""
+
 BL_DIRECTAUDIO_SETUP = """
 bl_directaudio() {
   base=$1
@@ -152,6 +174,7 @@ for name in %s; do
   if [ -d "$depot/files/bin-arm64" ] && [ -x "$depot/proton" ]; then
     bl_directaudio "$depot"
     bl_game_cpus
+    bl_game_driver
     exec ${BL_TASKSET:-} "$depot/proton" "$verb" "$@"
   fi
 done
@@ -162,7 +185,7 @@ exit 1
 # and a % format would eat that into a single %, leaving a shell expansion that silently does
 # something else.
 LAUNCHER_SH = LAUNCHER_SH.replace(
-    "verb=$1; shift", "verb=$1; shift\n" + BL_DIRECTAUDIO_SETUP + BL_GAME_CPUS_SETUP, 1)
+    "verb=$1; shift", "verb=$1; shift\n" + BL_DIRECTAUDIO_SETUP + BL_GAME_CPUS_SETUP + BL_GAME_DRIVER_SETUP, 1)
 
 # A third-party Proton dropped into compatibilitytools.d - GE-Proton, proton-cachyos, anything of
 # that shape - is adopted rather than used as shipped, for the same two reasons Valve's ARM64 depot
@@ -196,6 +219,7 @@ if [ -f "$fake" ]; then
 fi
 bl_directaudio "$here"
 bl_game_cpus
+bl_game_driver
 # Proton takes its base directory from dirname(sys.argv[0]) without resolving it, so it has to be
 # started from its own tree.
 exec ${BL_TASKSET:-} "$here/%s" "$verb" "$@"
@@ -357,7 +381,7 @@ def adopt_extras(tools):
             # ${major%%.*} of its own, and putting it through the format would eat both.
             body = (EXTRA_WRAPPER_SH % entry_point).replace(
                     'here=$(dirname "$0")',
-                    'here=$(dirname "$0")\n' + BL_DIRECTAUDIO_SETUP + BL_GAME_CPUS_SETUP, 1)
+                    'here=$(dirname "$0")\n' + BL_DIRECTAUDIO_SETUP + BL_GAME_CPUS_SETUP + BL_GAME_DRIVER_SETUP, 1)
             with open(wrapper, "w", encoding="utf-8") as f:
                 f.write(body)
             os.chmod(wrapper, 0o755)

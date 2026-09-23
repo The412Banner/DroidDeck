@@ -37,7 +37,7 @@ public final class QualcommLinuxDriver {
     private static final String TAG = "QualcommLinuxDriver";
 
     public static final String ID = "qualcomm-kgsl-linux-20260908.2";
-    public static final String NAME = "Qualcomm Adreno (Linux)";
+    public static final String NAME = "Qualcomm Adreno (Linux, games only)";
     public static final String VERSION = "20260908.2";
     public static final String FLAVOR = "qualcomm-kgsl";
     public static final String URL_STRING = "https://holo-packages.steamos.cloud/archlinux-deckard-hotfixes/release/0.4.x/"
