@@ -394,6 +394,16 @@ class SessionService : Service() {
         } else {
             Log.i(TAG, "game storage: internal only")
         }
+        // The user's own games folder (the Steam cog's "Added games"), bound at a fixed place so
+        // the shortcuts the app writes point somewhere whatever storage the folder is on.
+        val games = SessionPrefs.addedGamesDir(this).takeIf { it.isNotEmpty() }?.let { File(it) }
+        if (games != null && games.isDirectory && games.canRead()) {
+            File(home, "Games").mkdirs()
+            binds.add(games.path + ":" + com.steamdeck.launcher.frontend.AddedGames.GUEST_DIR)
+            Log.i(TAG, "added games: $games -> ${com.steamdeck.launcher.frontend.AddedGames.GUEST_DIR}")
+        } else if (games != null) {
+            Log.w(TAG, "added games: $games is not a readable folder this session")
+        }
         val roms = SessionPrefs.romsDir(this).takeIf { it.isNotEmpty() }?.let { File(it) }
         if (roms != null && roms.isDirectory && roms.canRead()) {
             File(home, "ROMs").mkdirs()

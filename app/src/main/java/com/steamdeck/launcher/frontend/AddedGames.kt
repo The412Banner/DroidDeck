@@ -39,8 +39,17 @@ object AddedGames {
     )
 
     /** Where a host path appears inside the session, or null when the session cannot see it. */
+    /** Where the chosen Games folder itself is bound inside the session, wherever it is on the device. */
+    const val GUEST_DIR = "/root/Games"
+
     fun guestPath(context: Context, host: File): String? {
         val path = host.absolutePath
+        // The Games folder is bound on its own, so a folder anywhere - an SD card, a USB drive -
+        // works without being inside one of the other binds.
+        SessionPrefs.addedGamesDir(context).takeIf { it.isNotEmpty() }?.let { dir ->
+            if (path == dir) return GUEST_DIR
+            if (path.startsWith("$dir/")) return "$GUEST_DIR/" + path.removePrefix("$dir/")
+        }
         val storage = Environment.getExternalStorageDirectory().absolutePath
         if (path.startsWith("$storage/")) return "/root/Storage/" + path.removePrefix("$storage/")
         SessionPrefs.romsDir(context).takeIf { it.isNotEmpty() }?.let { roms ->
