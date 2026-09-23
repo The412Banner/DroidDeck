@@ -307,6 +307,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        // Added games' art (a store lookup for what the folders lack) starts here, not only when
+        // the cog opens.
+        refreshAddedGames()
         if (!busy) Thread({ checkCatalog() }, "catalog").start()
     }
 

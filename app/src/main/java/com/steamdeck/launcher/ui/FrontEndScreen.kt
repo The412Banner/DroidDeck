@@ -43,6 +43,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.key
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -57,9 +58,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -830,17 +828,26 @@ private fun Poster(art: File?, name: String, modifier: Modifier) {
 @Composable
 private fun ArtGrid(tiles: List<Tile>, wide: Boolean = false) {
     val square = tiles.isNotEmpty() && tiles.all { it.art == null && it.iconRes != null }
-    LazyVerticalGrid(
-        // Thumbnails to recognise a game by, not posters; icon tiles are squares.
-        columns = GridCells.Adaptive(minSize = if (square) 64.dp else if (wide) 92.dp else 70.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(top = 6.dp, bottom = 14.dp, start = 4.dp, end = 4.dp),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        items(tiles, key = { it.key }) { t ->
-            val src = remember { MutableInteractionSource() }
-            val hot = rememberHot(src)
-            Box(modifier = Modifier.animateItemPlacement().zIndex(if (hot) 1f else 0f)) { GameTile(t, wide, square, src, hot) }
+    // Thumbnails to recognise a game by, not posters; icon tiles are squares.
+    val minSize = if (square) 64.dp else if (wide) 92.dp else 70.dp
+    val gap = 8.dp
+    // Laid out whole, not lazily: the pad's focus search only finds tiles that exist, and a lazy
+    // grid composes only the rows on screen, so a press towards the next row bounced back among
+    // the visible tiles. A few hundred tiles lay out fine; the scroll follows the focused one.
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val avail = maxWidth - 8.dp
+        val cols = ((avail + gap) / (minSize + gap)).toInt().coerceAtLeast(1)
+        val tileWidth = (avail - gap * (cols - 1)) / cols
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 6.dp, bottom = 14.dp, start = 4.dp, end = 4.dp)) {
+            for (row in tiles.chunked(cols)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(gap), modifier = Modifier.fillMaxWidth().padding(bottom = gap)) {
+                    for (t in row) key(t.key) {
+                        val src = remember { MutableInteractionSource() }
+                        val hot = rememberHot(src)
+                        Box(modifier = Modifier.width(tileWidth).zIndex(if (hot) 1f else 0f)) { GameTile(t, wide, square, src, hot) }
+                    }
+                }
+            }
         }
     }
 }
