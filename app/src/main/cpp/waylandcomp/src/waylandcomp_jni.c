@@ -38,6 +38,7 @@ extern volatile int g_output_w, g_output_h;
 #define TAG "BannerWayland"
 
 static JavaVM *g_jvm;
+static volatile pid_t g_comp_tid;    /* the compositor thread, for the app's ADPF hint session */
 static jclass g_compositor_cls;      /* global ref */
 static jmethodID g_on_first_frame;   /* static void onFirstFramePresented() */
 static jmethodID g_on_game_surface;  /* static void onGameSurface(String, String) */
@@ -183,6 +184,7 @@ static void *comp_thread(void *arg) {
      * thread that started it had. Never lowered: a thread that already runs hotter keeps its value. */
     pthread_setname_np(pthread_self(), "wl-compositor");
     const id_t tid = (id_t)gettid();
+    g_comp_tid = (pid_t)tid;
     errno = 0;
     const int before = getpriority(PRIO_PROCESS, tid);
     int refused = 0;
@@ -215,6 +217,14 @@ static void start_thread(void) {
         pthread_detach(t);
     else
         __android_log_print(ANDROID_LOG_ERROR, TAG, "pthread_create failed");
+}
+
+/* The compositor thread's tid, or 0 before it starts. The app opens a PerformanceHintManager session
+ * on it and reports each presented frame's interval, so the governor sees a frame that ran long. */
+JNIEXPORT jint JNICALL
+Java_com_steamdeck_launcher_wayland_WaylandCompositor_nativeCompositorTid(JNIEnv *env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)g_comp_tid;
 }
 
 /* Headless start (no output window) — used for bring-up tests. */

@@ -18,14 +18,29 @@ on:
       - '**/*.md'
       - 'LICENSE'
       - '.gitignore'
+  # A pull request against main builds by itself: the contributor's branch, as it would be once
+  # merged onto main, comes back as an apk on the run without anyone here pressing a button.
+  # Every push to the pull request rebuilds it and cancels the build it replaces; a draft waits
+  # until it is marked ready. pull_request_target rather than pull_request: GitHub does not run
+  # the latter at all while a pull request conflicts with main, and saying what conflicts is the
+  # point. The workflow file is always main's; the pull request's own code is checked out below.
+  pull_request_target:
+    branches: [ main ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
   workflow_dispatch:
 
 permissions:
   contents: read
+  # The pull-request report below is one comment on the pull request, kept up to date.
+  pull-requests: write
 
 # A newer push makes the running build pointless; stop paying for it.
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -34,10 +49,78 @@ env:
 
 jobs:
   build:
+    if: ${{ github.event_name != 'pull_request_target' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
+      # A pull request is checked out at its own head with full history, not at GitHub's merge
+      # ref: that ref does not exist while the pull request conflicts with main, and the point of
+      # the next step is to say so and show where.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          # Full history: the merge below needs it (a shallow clone refuses to merge at all).
+          fetch-depth: 0
+
+      # The pull request as it would be once merged onto main is what gets built. When it cannot
+      # be merged, the conflicting files and the conflicting hunks go into the run summary and the
+      # pull-request comment, and the job stops here: there is nothing coherent to build.
+      - name: Merge onto main, or say what conflicts
+        if: github.event_name == 'pull_request_target'
+        run: |
+          set -uo pipefail
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git fetch --no-tags origin main
+          BASE=$(git rev-parse --short origin/main)
+          HEAD=$(git rev-parse --short HEAD)
+          if git merge --no-ff --no-edit origin/main >/tmp/merge.out 2>&1; then
+            {
+              echo "### ✅ Mergeable"
+              echo
+              echo "\`$HEAD\` merges cleanly onto main (\`$BASE\`). What follows was built from the merged result."
+            } > /tmp/pr-merge.md
+            cat /tmp/pr-merge.md >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          FILES=$(git diff --name-only --diff-filter=U)
+          if [ -z "$FILES" ]; then
+            # The merge did not even start (git said why): quote it rather than list nothing.
+            {
+              echo "### ❌ Could not merge onto main (\`$BASE\`)"
+              echo
+              echo '```'
+              cat /tmp/merge.out
+              echo '```'
+            } > /tmp/pr-merge.md
+            cat /tmp/pr-merge.md >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::git could not merge main: $(head -3 /tmp/merge.out | tr '\n' ' ')"
+            exit 1
+          fi
+          {
+            echo "### ❌ Not mergeable — conflicts with main (\`$BASE\`)"
+            echo
+            echo "Files that conflict:"
+            echo
+            for f in $FILES; do echo "- \`$f\`"; done
+            echo
+            echo "Each conflicting hunk, as git leaves it: \`<<<<<<< HEAD\` is this pull request, \`>>>>>>> origin/main\` is main."
+            echo
+            for f in $FILES; do
+              echo "<details><summary><code>$f</code></summary>"
+              echo
+              echo '```'
+              awk '/^<<<<<<< /{p=1} p{print} /^>>>>>>> /{p=0}' "$f" | head -300
+              echo '```'
+              echo "</details>"
+              echo
+            done
+            echo "Not built: rebase or merge main into the branch and push again."
+          } > /tmp/pr-merge.md
+          cat /tmp/pr-merge.md >> "$GITHUB_STEP_SUMMARY"
+          git merge --abort || true
+          echo "::error::the pull request conflicts with main: $(echo $FILES | tr '\n' ' ')"
+          exit 1
 
       - uses: actions/setup-java@v4
         with:
@@ -142,8 +225,12 @@ jobs:
 
       # Release, not debug: AGP quietly drops v1 (JAR) signing from a debug build once minSdk is
       # 24 or higher, and the apk has to carry all three schemes. Nothing is minified either way.
+      # The whole log is kept so a failed build's errors can be quoted back on a pull request.
       - name: Build
-        run: ./gradlew assembleRelease -PndkVersion="$NDK_VERSION"
+        id: build
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --console=plain -PndkVersion="$NDK_VERSION" 2>&1 | tee /tmp/build.log
 
       - name: Describe the apk
         run: |
@@ -218,6 +305,68 @@ jobs:
           done
           grep -qi "CN=Android, OU=Android, O=Android" /tmp/sig.txt \
             || { echo "::error::apk is not signed with the AOSP testkey"; exit 1; }
+
+      # ── The pull-request report ──────────────────────────────────────────────────────────
+      # One comment per pull request, rewritten on every push: whether it merges, and when the
+      # build failed, the compiler's own errors with paths made short. Fork pull requests carry a
+      # read-only token and cannot comment; the same text is in the run summary either way.
+      - name: Report on the pull request
+        if: always() && github.event_name == 'pull_request_target'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          set -uo pipefail
+          MARK="<!-- steamdeck-pr-build -->"
+          {
+            echo "$MARK"
+            echo "## Build of this pull request"
+            echo
+            [ -f /tmp/pr-merge.md ] && cat /tmp/pr-merge.md
+            echo
+            case "$BUILD_OUTCOME" in
+              success)
+                echo "### ✅ Build passed"
+                echo
+                echo "The apk is the \`steamdeck-apk\` artifact on [this run]($RUN_URL) (signed with the same test key as every build, so it installs over any other)."
+                ;;
+              failure)
+                echo "### ❌ Build failed"
+                echo
+                echo "The compiler's errors ([full log]($RUN_URL)):"
+                echo
+                echo '```'
+                { grep -E '^e: |^w: .*error|error:|CMake Error|fatal error|ninja: error|FAILED|What went wrong|Execution failed for task|Unresolved reference|Type mismatch|Unresolved' /tmp/build.log 2>/dev/null \
+                  | sed -e 's#file:///home/runner/work/[^/]*/[^/]*/##' -e 's#/home/runner/work/[^/]*/[^/]*/##' \
+                  | grep -v '^w: ' | awk '!seen[$0]++' | head -80; } || true
+                echo '```'
+                echo
+                echo "<details><summary>What went wrong (Gradle)</summary>"
+                echo
+                echo '```'
+                awk '/^\* What went wrong/{p=1} /^\* Try:/{p=0} p{print}' /tmp/build.log 2>/dev/null | head -60
+                echo '```'
+                echo "</details>"
+                ;;
+              skipped|cancelled)
+                echo "### ⏭ Not built"
+                echo
+                echo "The build did not run (see above, or [the run]($RUN_URL))."
+                ;;
+            esac
+            echo
+            echo "_Updated on every push to this pull request._"
+          } > /tmp/pr-report.md
+          cat /tmp/pr-report.md >> "$GITHUB_STEP_SUMMARY"
+          ID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate --jq ".[] | select(.body | startswith(\"$MARK\")) | .id" | head -1 || true)
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${ID}" -F body=@/tmp/pr-report.md >/dev/null
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -F body=@/tmp/pr-report.md >/dev/null
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

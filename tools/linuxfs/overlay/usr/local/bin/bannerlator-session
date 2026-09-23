@@ -323,6 +323,15 @@ BUSCONF
     # desktop's launchers ask for; gamescope shows one window at a time and the game takes over.
     _bl_ui=(-gamepadui)
     [ "${BL_STEAM_UI:-}" = desktop ] && _bl_ui=()
+    # SteamOS runs its own session as `steam -gamepadui -steamos3 -steamdeck`, which is the shape
+    # Valve tunes Big Picture for. BL_STEAMDECK=1 (the Performance page) tries it. Off by default:
+    # it also makes the client expect Deck hardware (battery, TDP controls, a Deck input device)
+    # that is not here, and that cost is untested.
+    if [ "${BL_STEAMDECK:-0}" = 1 ] && [ "${BL_STEAM_UI:-}" != desktop ]; then
+      _bl_ui+=(-steamdeck -steamos3)
+      echo "== steam: Deck mode on (-steamdeck -steamos3)"
+    fi
+    echo "== steam args: ${_bl_ui[*]} -clientbeta publicbeta -no-cef-sandbox -cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan $*"
     while :; do
       step "starting the Steam client${BL_STEAM_UI:+ ($BL_STEAM_UI UI)}"
       "$steam_root/steamrtarm64/steam" "${_bl_ui[@]}" -clientbeta publicbeta \

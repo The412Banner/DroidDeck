@@ -12,6 +12,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -35,14 +36,13 @@ import com.steamdeck.launcher.ui.ProtonDialog
 import com.steamdeck.launcher.ui.ProtonRow
 import com.steamdeck.launcher.core.CpuCores
 import com.steamdeck.launcher.ui.CoreRow
-import com.steamdeck.launcher.ui.PerformanceDialog
-import com.steamdeck.launcher.ui.ModeSettingsDialog
+import com.steamdeck.launcher.ui.PerformancePage
+import com.steamdeck.launcher.ui.ModeSettingsPage
 import com.steamdeck.launcher.ui.ModeSettings
 import com.steamdeck.launcher.ui.ModeSettingsActions
 import com.steamdeck.launcher.ui.DriverRow
 import com.steamdeck.launcher.ui.ConfirmDialog
 import com.steamdeck.launcher.ui.CreditsDialog
-import com.steamdeck.launcher.ui.FrameGenDialog
 import com.steamdeck.launcher.ui.FrontEndScreen
 import com.steamdeck.launcher.ui.FrontEndState
 import com.steamdeck.launcher.ui.FrontEndActions
@@ -72,6 +72,10 @@ class MainActivity : ComponentActivity() {
     private var failed by mutableStateOf(false)
     private var frameGenLabel by mutableStateOf("Off")
     private var showRemove by mutableStateOf(false)
+    private var showNonAdreno by mutableStateOf<LinuxRuntimeInstaller.Release?>(null)
+    private var glThread by mutableStateOf(true)
+    private var noGlError by mutableStateOf(true)
+    private var steamDeckMode by mutableStateOf(false)
     private var showFrameGen by mutableStateOf(false)
     private var showCredits by mutableStateOf(false)
     private var showProtons by mutableStateOf(false)
@@ -118,6 +122,7 @@ class MainActivity : ComponentActivity() {
     // The mode whose settings dialog is open, with what it shows; refreshed by openModeSettings().
     private var settingsMode by mutableStateOf<String?>(null)
     private var resolutionCap by mutableStateOf(1080)
+    private var fexPreset by mutableStateOf("")
     private var shapeMode by mutableStateOf(SessionPrefs.SHAPE_AUTO)
     private var hdrOn by mutableStateOf(false)
     private var hdrReason by mutableStateOf<String?>(null)
@@ -138,10 +143,22 @@ class MainActivity : ComponentActivity() {
     private var logsEnabled by mutableStateOf(true)
     private var showRoms by mutableStateOf(false)
 
+    /** The session surface rises over the front end instead of cutting to it. */
+    override fun startActivity(intent: Intent?) {
+        super.startActivity(intent)
+        if (intent?.component?.className == SessionActivity::class.java.name) overridePendingTransition(R.anim.session_rise, R.anim.session_hold)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             SteamDeckTheme {
+                val sm = settingsMode
+                val page: (@Composable () -> Unit)? = when {
+                    sm != null -> { { ModeSettingsHost(sm) } }
+                    showPerformance -> { { PerformanceHost() } }
+                    else -> null
+                }
                 FrontEndScreen(
                     FrontEndState(
                         installed = installed, ready = ready, available = available?.version,
@@ -150,6 +167,9 @@ class MainActivity : ComponentActivity() {
                         offlineAccount = offlineAccount, offline = offline,
                         frameGenLabel = frameGenLabel, romsDir = romsDir, logsEnabled = logsEnabled,
                         steamGames = steamGames, emulators = emulatorList, running = runningLabel,
+                        frameGenEngine = FrameGen.engine(this), frameGenMultiplier = FrameGen.multiplier(this),
+                        lsfgReady = LsfgNative.isInstalled(this),
+                        pageKey = sm?.let { "settings:$it" } ?: if (showPerformance) "performance" else null,
                     ),
                     FrontEndActions(
                         onPlay = { startActivity(Intent(this, SessionActivity::class.java)) },
@@ -179,7 +199,10 @@ class MainActivity : ComponentActivity() {
                         onDesktopSettings = { openModeSettings(SessionService.MODE_DESKTOP) },
                         onApps = { openApps() },
                         onRuntime = { onRuntimeButton() },
-                        onFrameGen = { showFrameGen = true },
+                        onFrameGenPick = { engine, multiplier ->
+                            FrameGen.set(this, engine, multiplier)
+                            frameGenLabel = FrameGen.label(this)
+                        },
                         onProtons = { refreshProtons(); showProtons = true },
                         onPerformance = { refreshCores(); showPerformance = true },
                         onRoms = { showRoms = true },
@@ -194,7 +217,9 @@ class MainActivity : ComponentActivity() {
                         },
                         onEmulatorHelp = { showEmulatorHelp = true },
                         onCredits = { showCredits = true },
+                        onPageBack = { settingsMode = null; showPerformance = false },
                     ),
+                    page = page,
                 )
                 if (showRoms) RomsDialog(
                     path = romsDir,
@@ -219,89 +244,21 @@ class MainActivity : ComponentActivity() {
                     onRemove = { id -> ProtonExtras.tools.first { it.id == id }.let { ProtonExtras.remove(this, it) }; refreshProtons() },
                     onDismiss = { showProtons = false },
                 )
-                settingsMode?.let { mode ->
-                    ModeSettingsDialog(
-                        ModeSettings(
-                            mode = mode, resolutionCap = resolutionCap, shapeMode = shapeMode,
-                            hdr = hdrOn, hdrReason = hdrReason,
-                            linuxRows = linuxRows,
-                            linuxSelected = if (mode == SessionService.MODE_STEAM) linuxSteam else linuxDesktop,
-                            androidRows = androidRows, androidSelected = androidSelected,
-                            touchMode = touchMode,
-                            oscMode = if (mode == SessionService.MODE_STEAM) oscMode else null,
-                            directAudio = if (mode == SessionService.MODE_STEAM) directAudio else null,
-                            mic = if (mode == SessionService.MODE_STEAM) mic else null,
-                            renderer = if (mode == SessionService.MODE_DESKTOP) renderer else null,
-                            gameStorage = if (mode == SessionService.MODE_STEAM) gameStorage else null,
-                            storageOptions = storageOptions,
-                        ),
-                        ModeSettingsActions(
-                            onResolution = { cap -> SessionPrefs.setResolutionCap(this, mode, cap); resolutionCap = cap },
-                            onShape = { shape -> SessionPrefs.setShapeMode(this, shape); shapeMode = shape },
-                            onHdr = { on -> SessionPrefs.setHdr(this, mode, on); hdrOn = on },
-                            onSelectLinux = { id -> SessionPrefs.setLinuxDriver(this, mode, id); refreshDrivers() },
-                            onImportLinux = { pickLinuxDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a Linux runtime driver (-Linux zip)")) },
-                            onRemoveLinux = { id -> LinuxVulkanDriverManager(this).removeDriver(id); refreshDrivers() },
-                            onSelectAndroid = { id -> SessionPrefs.setAndroidDriver(this, id); refreshDrivers() },
-                            onImportAndroid = { pickAndroidDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a display driver (AdrenoTools zip)")) },
-                            onRemoveAndroid = { id -> TurnipDriver(this).remove(id); refreshDrivers() },
-                            onTouch = { t -> SessionPrefs.setTouchMode(this, t); touchMode = t },
-                            onOsc = { o -> SessionPrefs.setOscMode(this, o); oscMode = o },
-                            onDirectAudio = { on -> SessionPrefs.setDirectAudio(this, on); directAudio = on },
-                            onMic = { on ->
-                                SessionPrefs.setMicEnabled(this, on)
-                                mic = on
-                                // The session checks the grant itself at start; asking here means the
-                                // answer is in before the first session that wants it.
-                                if (on && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
-                                }
-                            },
-                            onRenderer = { r -> SessionPrefs.setDesktopRenderer(this, r); renderer = r },
-                            onGameStorage = { path, label -> setGameStorage(path, label) },
-                            onPickGameStorageFolder = {
-                                pickGameStorage.launch(InAppFilePicker.buildDirIntent(this, "Choose the game storage folder", gameStorage.ifEmpty { null }))
-                            },
-                            onDismiss = { settingsMode = null },
-                        ),
+                showNonAdreno?.let { release ->
+                    ConfirmDialog(
+                        title = "Not an Adreno GPU",
+                        text = "The runtime draws with Turnip, an Adreno driver. On ${com.steamdeck.launcher.core.DeviceSupport.gpuName()} the compositor gets no usable Vulkan device and a session comes up as sound over a black screen. The download is ${"%.0f".format(release.size / 1e6)} MB.",
+                        confirm = "Install anyway",
+                        onConfirm = { showNonAdreno = null; install(release) },
+                        onDismiss = { showNonAdreno = null },
                     )
                 }
-                if (showPerformance) PerformanceDialog(
-                    cores = CpuCores.all.map { c -> CoreRow(c, "cpu$c" + (CpuCores.maxGhz(c)?.let { String.format(java.util.Locale.US, " · %.1f GHz", it) } ?: "")) },
-                    clientOverride = clientOverride, clientCores = clientCores, gameCores = gameCores,
-                    tuSysmem = tuSysmem, zinkLazy = zinkLazy, noXalia = noXalia,
-                    prootNoSeccomp = prootNoSeccomp, phantomWarning = phantomWarning,
-                    onClientOverride = { on -> SessionPrefs.setClientCpusOverride(this, on); clientOverride = on },
-                    onTuSysmem = { on -> SessionPrefs.setTuSysmem(this, on); tuSysmem = on },
-                    onZinkLazy = { on -> SessionPrefs.setZinkLazy(this, on); zinkLazy = on },
-                    onNoXalia = { on -> SessionPrefs.setNoXalia(this, on); noXalia = on },
-                    onProotNoSeccomp = { on -> SessionPrefs.setProotNoSeccomp(this, on); prootNoSeccomp = on },
-                    onClientCore = { core, on ->
-                        clientCores = if (on) clientCores + core else clientCores - core
-                        SessionPrefs.setClientCpus(this, CpuCores.format(clientCores))
-                    },
-                    onGameCore = { core, on ->
-                        gameCores = if (on) gameCores + core else gameCores - core
-                        SessionPrefs.setGameCpus(this, CpuCores.format(gameCores))
-                    },
-                    onDismiss = { showPerformance = false },
-                )
                 if (showRemove) ConfirmDialog(
                     title = "Remove Linux runtime",
                     text = "This deletes the runtime, the Steam client inside it, and every game installed there.",
                     confirm = "Remove",
                     onConfirm = { Thread({ LinuxRuntimeInstaller.uninstall(this); ui.post { refresh() } }, "uninstall").start() },
                     onDismiss = { showRemove = false },
-                )
-                if (showFrameGen) FrameGenDialog(
-                    engine = FrameGen.engine(this), multiplier = FrameGen.multiplier(this),
-                    lsfgReady = LsfgNative.isInstalled(this),
-                    onPick = { engine, multiplier ->
-                        FrameGen.set(this, engine, multiplier)
-                        frameGenLabel = FrameGen.label(this)
-                        showFrameGen = false
-                    },
-                    onDismiss = { showFrameGen = false },
                 )
                 if (showCredits) CreditsDialog { showCredits = false }
                 if (showEmulatorHelp) com.steamdeck.launcher.ui.EmulatorHelpDialog { showEmulatorHelp = false }
@@ -390,9 +347,90 @@ class MainActivity : ComponentActivity() {
 
     /** Both driver lists as the dialog shows them, re-read from disk so an import or removal shows at once. */
     /** Everything the mode's cog shows, read fresh, then the dialog. */
+    /** The Steam or Desktop settings page, in the front end's pane. */
+    @Composable
+    private fun ModeSettingsHost(mode: String) {
+        ModeSettingsPage(
+            ModeSettings(
+                mode = mode, resolutionCap = resolutionCap, shapeMode = shapeMode,
+                hdr = hdrOn, hdrReason = hdrReason,
+                linuxRows = linuxRows,
+                linuxSelected = if (mode == SessionService.MODE_STEAM) linuxSteam else linuxDesktop,
+                androidRows = androidRows, androidSelected = androidSelected,
+                touchMode = touchMode,
+                oscMode = if (mode == SessionService.MODE_STEAM) oscMode else null,
+                directAudio = if (mode == SessionService.MODE_STEAM) directAudio else null,
+                mic = if (mode == SessionService.MODE_STEAM) mic else null,
+                renderer = if (mode == SessionService.MODE_DESKTOP) renderer else null,
+                gameStorage = if (mode == SessionService.MODE_STEAM) gameStorage else null,
+                storageOptions = storageOptions,
+                fexPreset = if (mode == SessionService.MODE_STEAM) fexPreset else null,
+            ),
+            ModeSettingsActions(
+                onResolution = { cap -> SessionPrefs.setResolutionCap(this, mode, cap); resolutionCap = cap },
+                onShape = { shape -> SessionPrefs.setShapeMode(this, shape); shapeMode = shape },
+                onHdr = { on -> SessionPrefs.setHdr(this, mode, on); hdrOn = on },
+                onSelectLinux = { id -> SessionPrefs.setLinuxDriver(this, mode, id); refreshDrivers() },
+                onImportLinux = { pickLinuxDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a Linux runtime driver (-Linux zip)")) },
+                onRemoveLinux = { id -> LinuxVulkanDriverManager(this).removeDriver(id); refreshDrivers() },
+                onSelectAndroid = { id -> SessionPrefs.setAndroidDriver(this, id); refreshDrivers() },
+                onImportAndroid = { pickAndroidDriver.launch(InAppFilePicker.buildIntent(this, ZIP_EXT, "Choose a display driver (AdrenoTools zip)")) },
+                onRemoveAndroid = { id -> TurnipDriver(this).remove(id); refreshDrivers() },
+                onTouch = { t -> SessionPrefs.setTouchMode(this, t); touchMode = t },
+                onOsc = { o -> SessionPrefs.setOscMode(this, o); oscMode = o },
+                onDirectAudio = { on -> SessionPrefs.setDirectAudio(this, on); directAudio = on },
+                onMic = { on ->
+                    SessionPrefs.setMicEnabled(this, on)
+                    mic = on
+                    // The session checks the grant itself at start; asking here means the
+                    // answer is in before the first session that wants it.
+                    if (on && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
+                    }
+                },
+                onRenderer = { r -> SessionPrefs.setDesktopRenderer(this, r); renderer = r },
+                onGameStorage = { path, label -> setGameStorage(path, label) },
+                onPickGameStorageFolder = {
+                    pickGameStorage.launch(InAppFilePicker.buildDirIntent(this, "Choose the game storage folder", gameStorage.ifEmpty { null }))
+                },
+                onFexPreset = { id -> SessionPrefs.setFexPreset(this, id); fexPreset = id },
+                onDismiss = { settingsMode = null },
+            ),
+        )
+    }
+
+    /** The Performance page, in the front end's pane. */
+    @Composable
+    private fun PerformanceHost() {
+        PerformancePage(
+            cores = CpuCores.all.map { c -> CoreRow(c, "cpu$c" + (CpuCores.maxGhz(c)?.let { String.format(java.util.Locale.US, " · %.1f GHz", it) } ?: "")) },
+            clientOverride = clientOverride, clientCores = clientCores, gameCores = gameCores,
+            tuSysmem = tuSysmem, zinkLazy = zinkLazy, glThread = glThread, noGlError = noGlError, steamDeckMode = steamDeckMode, noXalia = noXalia,
+            prootNoSeccomp = prootNoSeccomp, phantomWarning = phantomWarning,
+            onClientOverride = { on -> SessionPrefs.setClientCpusOverride(this, on); clientOverride = on },
+            onTuSysmem = { on -> SessionPrefs.setTuSysmem(this, on); tuSysmem = on },
+            onZinkLazy = { on -> SessionPrefs.setZinkLazy(this, on); zinkLazy = on },
+            onGlThread = { on -> SessionPrefs.setGlThread(this, on); glThread = on },
+            onNoGlError = { on -> SessionPrefs.setNoGlError(this, on); noGlError = on },
+            onSteamDeckMode = { on -> SessionPrefs.setSteamDeckMode(this, on); steamDeckMode = on },
+            onNoXalia = { on -> SessionPrefs.setNoXalia(this, on); noXalia = on },
+            onProotNoSeccomp = { on -> SessionPrefs.setProotNoSeccomp(this, on); prootNoSeccomp = on },
+            onClientCore = { core, on ->
+                clientCores = if (on) clientCores + core else clientCores - core
+                SessionPrefs.setClientCpus(this, CpuCores.format(clientCores))
+            },
+            onGameCore = { core, on ->
+                gameCores = if (on) gameCores + core else gameCores - core
+                SessionPrefs.setGameCpus(this, CpuCores.format(gameCores))
+            },
+            onDismiss = { showPerformance = false },
+        )
+    }
+
     private fun openModeSettings(mode: String) {
         refreshDrivers()
         resolutionCap = SessionPrefs.resolutionCap(this, mode)
+        fexPreset = SessionPrefs.fexPreset(this)
         shapeMode = SessionPrefs.shapeMode(this)
         hdrOn = SessionPrefs.hdr(this, mode)
         hdrReason = com.steamdeck.launcher.wayland.HdrSupport.probe(this).reason
@@ -485,6 +523,9 @@ class MainActivity : ComponentActivity() {
     /** The two masks as the dialog shows them; an empty stored list shows as every core ticked. */
     private fun refreshCores() {
         clientOverride = SessionPrefs.clientCpusOverride(this)
+        glThread = SessionPrefs.glThread(this)
+        noGlError = SessionPrefs.noGlError(this)
+        steamDeckMode = SessionPrefs.steamDeckMode(this)
         clientCores = CpuCores.parse(SessionPrefs.clientCpus(this)).ifEmpty { CpuCores.all.toSet() }
         gameCores = CpuCores.parse(SessionPrefs.gameCpus(this)).ifEmpty { CpuCores.all.toSet() }
         tuSysmem = SessionPrefs.tuSysmem(this)
@@ -543,6 +584,10 @@ class MainActivity : ComponentActivity() {
             Thread({ checkCatalog() }, "catalog").start()
             return
         }
+        // The runtime draws with Turnip, an Adreno driver: on Mali, Xclipse or PowerVR the
+        // compositor gets no usable Vulkan device and a session is sound over a black screen.
+        // Said before the download, not after it; the user may still go ahead.
+        if (installed == null && !com.steamdeck.launcher.core.DeviceSupport.adreno()) { showNonAdreno = release; return }
         install(release)
     }
 

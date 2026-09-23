@@ -168,6 +168,9 @@ class SessionService : Service() {
         guest.add("PATH=/usr/local/bin:/usr/bin:/bin")
         guest.add("TERM=xterm-256color")
         guest.add("LANG=C.UTF-8")
+        // Without this the session is UTC: the client's clock, its logs and every timestamp in a
+        // session bundle sit hours off the device's. Bannerlator carries the same line.
+        guest.add("TZ=" + java.util.TimeZone.getDefault().id)
         guest.add("XDG_RUNTIME_DIR=" + runtimeDir.path)
         guest.add("XDG_SESSION_TYPE=wayland")
         guest.add("WAYLAND_DISPLAY=wayland-0")
@@ -192,10 +195,25 @@ class SessionService : Service() {
         // the mode Zink recommends where the driver has no descriptor buffer, and what Ludashi ships
         // by default for its Zink path; a switch here because on one Fold the menus run at 14 fps.
         if (SessionPrefs.zinkLazy(this)) guest.add("ZINK_DESCRIPTORS=lazy")
+        // The rest of the client-interface switches (SessionPrefs): GL marshalled off the calling
+        // thread, no GL error checks, and the client run as SteamOS runs it (the script reads
+        // BL_STEAMDECK; it is the one that builds the command line).
+        if (SessionPrefs.glThread(this)) guest.add("mesa_glthread=true")
+        if (SessionPrefs.noGlError(this)) guest.add("MESA_NO_ERROR=1")
+        if (SessionState.mode == MODE_STEAM) guest.add("BL_STEAMDECK=" + (if (SessionPrefs.steamDeckMode(this)) "1" else "0"))
         // Proton's own gate for its xalia helper (its `proton` script reads this, and sets
         // XALIA_SUPPORTED_ONLY itself otherwise). Off by default: xalia is Valve's, and on a device
         // whose seccomp answers its syscalls normally there is no reason to take it away.
         if (SessionPrefs.noXalia(this)) guest.add("PROTON_USE_XALIA=0")
+        // The FEXCore preset for the x86 games the client launches: its FEX_* variables go in
+        // here, before the script, so every game process inherits them from the client. The
+        // default preset sets nothing, which is what every session ran on before.
+        if (SessionState.mode == MODE_STEAM) {
+            val preset = SessionPrefs.fexPreset(this)
+            val vars = com.steamdeck.launcher.core.FexPreset.env(preset)
+            vars.forEach { guest.add(it) }
+            if (vars.isNotEmpty()) Log.i(TAG, "fex preset $preset: ${vars.joinToString(" ")}")
+        }
         // Anything else, for a device that cannot be reached with a debugger: Downloads/steamdeck-env
         // holds KEY=VALUE lines that go into the session's environment as written, after ours, so a
         // line here wins. Zink and Turnip tunables (ZINK_DESCRIPTORS=lazy, MESA_*), gamescope's,

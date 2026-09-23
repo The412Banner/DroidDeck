@@ -62,6 +62,7 @@ public final class WaylandCompositor {
     /** Invoked from native (banner_on_game_frame) for every frame of the HUD's window. */
     @SuppressWarnings("unused")
     static void onGameFrame() {
+        com.steamdeck.launcher.session.PerfHints.onFrame();
         GameListener l = gameListener;
         if (l != null) l.onGameFrame();
     }
@@ -174,6 +175,9 @@ public final class WaylandCompositor {
     /** One screen refresh (Choreographer frame callback). The compositor draws the newest state
      *  once per tick, so games run unthrottled and the screen shows their latest frame. */
     public static native void nativeVsync(long frameTimeNanos);
+
+    /** The compositor thread's Linux tid, or 0 before it has started (see PerfHints). */
+    public static native int nativeCompositorTid();
 
     /** Shortcut launches: don't draw explorer's windows (desktop, taskbar, Start menu), matching the
      *  X11 renderer's unviewable "explorer.exe". Set before the compositor starts. */

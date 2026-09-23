@@ -1,48 +1,24 @@
 package com.steamdeck.launcher.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.VerticalDivider
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.steamdeck.launcher.core.FexPreset
+import com.steamdeck.launcher.session.SessionPrefs
 import com.steamdeck.launcher.session.SessionService
 
-/** One driver as the dialog shows it. [removable] is false for the runtime's own and the bundled builds. */
+/** One driver as the page shows it. [removable] is false for the runtime's own and the bundled builds. */
 class DriverRow(val id: String, val name: String, val detail: String, val removable: Boolean)
 
-/** Everything one mode's settings dialog shows; the activity owns the values. */
+/** Everything one mode's settings page shows; the activity owns the values. */
 class ModeSettings(
     val mode: String,
     val resolutionCap: Int,
@@ -64,6 +40,8 @@ class ModeSettings(
     /** Steam only: the second library's root ("" = internal only) and what this device offers. */
     val gameStorage: String? = null,
     val storageOptions: List<Pair<String, String>> = emptyList(),
+    /** Steam only: the FEXCore preset for the games the client launches. */
+    val fexPreset: String? = null,
 )
 
 class ModeSettingsActions(
@@ -83,251 +61,151 @@ class ModeSettingsActions(
     val onRenderer: (String) -> Unit,
     val onGameStorage: (path: String, label: String) -> Unit = { _, _ -> },
     val onPickGameStorageFolder: () -> Unit = {},
+    val onFexPreset: (String) -> Unit = {},
     val onDismiss: () -> Unit,
 )
 
-/** One entry of the settings window's rail. */
-private class SettingsSection(val key: String, val label: String)
-
 /**
- * The cog beside Play / Desktop: a settings window with a rail of sections down the left and the
- * chosen section on the right, so each setting is found by name rather than by scrolling past
- * every other one. What only matters for that one mode lives here - the display the session is
- * sized to, HDR, the driver inside the runtime, the display driver, and the input and audio
- * choices - so the main screen is left with what applies to both.
+ * The cog beside Play / Desktop: a page in the front end's pane, one row per setting with its
+ * value in a chip, and a small menu under the chip to change it. What only matters for that one
+ * mode lives here - the display the session is sized to, HDR, the driver inside the runtime,
+ * the display driver, and the input and audio choices - so the rail keeps what applies to both.
  */
 @Composable
-fun ModeSettingsDialog(s: ModeSettings, a: ModeSettingsActions) {
+fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
     val steam = s.mode == SessionService.MODE_STEAM
-    val sections = remember(steam) {
-        buildList {
-            add(SettingsSection("display", "Display"))
-            add(SettingsSection("hdr", "HDR"))
-            add(SettingsSection("runtime", "Runtime driver"))
-            add(SettingsSection("panel", "Display driver"))
-            add(SettingsSection("touch", if (steam) "Touch & controls" else "Touch"))
-            if (steam) add(SettingsSection("audio", "Audio"))
-            if (steam) add(SettingsSection("storage", "Game storage"))
-            if (!steam) add(SettingsSection("renderer", "Renderer"))
-        }
-    }
-    var selected by rememberSaveable(s.mode) { mutableStateOf("display") }
+    val host = rememberMenuHost()
     val colors = MaterialTheme.colorScheme
-
-    Dialog(onDismissRequest = a.onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = colors.surface,
-            tonalElevation = 2.dp,
-            modifier = Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.86f),
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
-                ) {
-                    Text(if (steam) "Steam session" else "Desktop session", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = a.onDismiss) { Text("Done") }
-                }
-                HorizontalDivider()
-                Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    // The rail: one entry per section, the chosen one filled.
-                    Column(
-                        modifier = Modifier
-                            .width(132.dp)
-                            .fillMaxHeight()
-                            .background(colors.surfaceVariant.copy(alpha = 0.35f))
-                            .verticalScroll(rememberScrollState())
-                            .padding(vertical = 6.dp),
+    SettingsPage(
+        host,
+        eyebrow = if (steam) "Steam · settings" else "Desktop · settings",
+        title = if (steam) "Steam session" else "Desktop session",
+        lede = "Each value opens where it is. Most take effect at the next session start; the ones that need the app closed say so.",
+        onBack = a.onDismiss,
+    ) {
+        SettingsGroup("Display") {
+            val default = SessionPrefs.defaultResolutionCap(s.mode)
+            ChoiceRow(
+                host, "res", "Resolution", "Takes effect at the next session: gamescope sizes its display once, when it starts.",
+                listOf(720 to "Up to 720p", 900 to "Up to 900p", 1080 to "Up to 1080p", 0 to "The panel's own")
+                    .map { (cap, label) -> cap to (if (cap == default) "$label — the default" else label) },
+                s.resolutionCap, note = "720p keeps the client's menus responsive; above 1080p costs frames for nothing a handheld can show.",
+                onPick = a.onResolution,
+            )
+            ChoiceRow(
+                host, "shape", "Shape", "16:9 is for a foldable: bars on either panel instead of a squashed picture.",
+                listOf("auto" to "The panel's shape", "16:9" to "16:9 with bars"), s.shapeMode, onPick = a.onShape,
+            )
+        }
+        SettingsGroup("HDR") {
+            ToggleRow(
+                host, "hdr", "HDR10 output",
+                s.hdrReason?.let { "Not available: $it." }
+                    ?: "Decided once when the compositor starts: a change applies after the app is fully closed and opened again.",
+                checked = s.hdr && s.hdrReason == null, enabled = s.hdrReason == null, onChange = a.onHdr,
+            )
+        }
+        SettingsGroup("Drivers") {
+            DriverRowMenu(
+                host, "rt", "Runtime driver",
+                "What " + (if (steam) "the Steam client and its games" else "the desktop's programs") + " render with inside the runtime. Applies at the next session start.",
+                s.linuxRows, s.linuxSelected, importLabel = "Import a \"-Linux\" Turnip zip…",
+                onSelect = a.onSelectLinux, onRemove = a.onRemoveLinux, onImport = a.onImportLinux,
+            )
+            DriverRowMenu(
+                host, "panel", "Display driver",
+                "What the app's compositor puts frames on the screen with; shared by both modes. Applies after the app is fully closed and opened again.",
+                s.androidRows, s.androidSelected, importLabel = "Import an AdrenoTools zip…",
+                onSelect = a.onSelectAndroid, onRemove = a.onRemoveAndroid, onImport = a.onImportAndroid,
+            )
+        }
+        SettingsGroup(if (steam) "Touch & controls" else "Touch") {
+            ChoiceRow(
+                host, "touch", "Touch", "How a finger drives the pointer. Also in the session's drawer.",
+                listOf("auto" to "Auto", "touchpad" to "Touchpad", "direct" to "Direct"), s.touchMode,
+                note = "Auto: touchpad on the desktop, direct in Steam. Touchpad: drag moves, tap clicks. Direct: the pointer jumps under the finger.",
+                onPick = a.onTouch,
+            )
+            if (steam && s.oscMode != null) ChoiceRow(
+                host, "osc", "On-screen controls", "The virtual pad drawn over a game.",
+                listOf("auto" to "Auto", "always" to "Always", "never" to "Never"), s.oscMode,
+                note = "Auto shows it when no controller is attached.", onPick = a.onOsc,
+            )
+        }
+        if (steam && s.fexPreset != null) SettingsGroup("Games") {
+            ChoiceRow(
+                host, "fex", "FEX preset", "How FEX translates the x86 games the client launches. Applies to the next game launch. Also in the session's drawer.",
+                FexPreset.all.map { it.id to it.label }, s.fexPreset,
+                note = FexPreset.byId(s.fexPreset).detail, onPick = a.onFexPreset,
+            )
+        }
+        if (steam && s.directAudio != null && s.mic != null) SettingsGroup("Audio") {
+            ToggleRow(host, "da", "DirectAudio for games", "Games play straight to the device, bypassing PulseAudio: lower latency. Off = PulseAudio for everything.", s.directAudio, onChange = a.onDirectAudio)
+            ToggleRow(host, "mic", "Microphone", "The device's microphone for voice chat, as the client's input device. Asks for the permission once.", s.mic, onChange = a.onMic)
+        }
+        if (steam && s.gameStorage != null) SettingsGroup("Game storage") {
+            val custom = s.gameStorage.isNotEmpty() && s.gameStorage != "off" && s.storageOptions.none { it.second == s.gameStorage }
+            val options = buildList {
+                add("" to ("Automatic — the SD card when one is in" + (if (s.storageOptions.isEmpty()) " (none right now)" else "")))
+                add("off" to "Internal only")
+                for ((label, path) in s.storageOptions) add(path to label)
+                if (custom) add(s.gameStorage to "Folder: ${s.gameStorage}")
+            }
+            val open = host.open == "storage"
+            SettingsRow(
+                "Second library",
+                "With a second place registered, every Install in Steam asks which drive, Settings › Storage lists both, and Steam moves games between them. Applies at the next session start.",
+                highlighted = open,
+            ) {
+                androidx.compose.foundation.layout.Box {
+                    ValueChip(options.firstOrNull { it.first == s.gameStorage }?.second?.substringBefore(" —") ?: "—", open) { host.open = if (open) null else "storage" }
+                    AnchoredMenu(
+                        open, onDismiss = { if (host.open == "storage") host.open = null }, title = "Second library",
+                        note = "An SD card and shared storage go through Android's file layer: a game that streams big assets from there can stall. Keep such games internal.",
                     ) {
-                        sections.forEach { section ->
-                            val on = section.key == selected
-                            Text(
-                                section.label,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (on) colors.onPrimary else colors.onSurface,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (on) colors.primary else Color.Transparent)
-                                    .clickable { selected = section.key }
-                                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                            )
+                        for ((path, label) in options) MenuItem(label, checked = path == s.gameStorage) {
+                            a.onGameStorage(path, if (path.isEmpty() || path == "off") "" else label.substringBefore(" ·"))
+                            host.open = null
                         }
-                    }
-                    VerticalDivider()
-                    // The chosen section alone, scrolling only if it must.
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                    ) {
-                        when (selected) {
-                            "display" -> {
-                                Section("Display", "Takes effect at the next session: gamescope sizes its display once, when it starts.")
-                                Text("Resolution", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
-                                listOf(
-                                    1080 to "Up to 1080p — the default",
-                                    900 to "Up to 900p",
-                                    720 to "Up to 720p — lighter on the GPU",
-                                    0 to "The panel's own — above 1080p costs frames for nothing a handheld can show",
-                                ).forEach { (cap, label) ->
-                                    Choice(label, s.resolutionCap == cap) { a.onResolution(cap) }
-                                }
-                                Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
-                                Choice("The panel's shape (never narrower than 16:9)", s.shapeMode == "auto") { a.onShape("auto") }
-                                Choice("16:9 — for a foldable, with bars on either panel", s.shapeMode == "16:9") { a.onShape("16:9") }
-                            }
-                            "hdr" -> {
-                                Section("HDR10 output", "Decided once, when the compositor starts: a change applies after the app is fully closed and opened again.")
-                                Spacer(Modifier.height(6.dp))
-                                SwitchRow(
-                                    "HDR10 output",
-                                    s.hdrReason?.let { "Not available: $it." }
-                                        ?: (if (steam) "The compositor offers games HDR10 and gamescope passes it on; a game that renders HDR shows as HDR on the panel."
-                                            else "Offered to the desktop's programs; labwc itself composites in SDR, so only a program that presents HDR directly shows it."),
-                                    checked = s.hdr && s.hdrReason == null, enabled = s.hdrReason == null, onChange = a.onHdr,
-                                )
-                            }
-                            "runtime" -> {
-                                Section(
-                                    "Linux runtime driver",
-                                    "What " + (if (steam) "the Steam client and its games" else "the desktop's programs") +
-                                        " render on, inside the runtime. \"-Linux\" Turnip zips only. Applies at the next session start.",
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                for (row in s.linuxRows) DriverChoice(row, row.id == s.linuxSelected, { a.onSelectLinux(row.id) }, { a.onRemoveLinux(row.id) })
-                                OutlinedButton(onClick = a.onImportLinux, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                                    Text("Import \"-Linux\" Turnip zip…")
-                                }
-                            }
-                            "panel" -> {
-                                Section(
-                                    "Display driver (Android)",
-                                    "What the app's compositor puts frames on the screen with, the last step of every session; shared by both modes. " +
-                                        "AdrenoTools zips only. Applies after the app is fully closed and opened again.",
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                for (row in s.androidRows) DriverChoice(row, row.id == s.androidSelected, { a.onSelectAndroid(row.id) }, { a.onRemoveAndroid(row.id) })
-                                OutlinedButton(onClick = a.onImportAndroid, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                                    Text("Import AdrenoTools zip…")
-                                }
-                            }
-                            "touch" -> {
-                                Section("Touch", "How a finger drives the pointer. Also in the session's drawer.")
-                                Spacer(Modifier.height(4.dp))
-                                Choice("Auto — touchpad on the desktop, direct in Steam", s.touchMode == "auto") { a.onTouch("auto") }
-                                Choice("Touchpad — drag moves the pointer, tap clicks", s.touchMode == "touchpad") { a.onTouch("touchpad") }
-                                Choice("Direct — the pointer jumps under the finger", s.touchMode == "direct") { a.onTouch("direct") }
-                                if (steam && s.oscMode != null) {
-                                    Spacer(Modifier.height(12.dp))
-                                    Section("On-screen controls", "The virtual pad drawn over a game.")
-                                    Spacer(Modifier.height(4.dp))
-                                    Choice("Auto — shown when no controller is attached", s.oscMode == "auto") { a.onOsc("auto") }
-                                    Choice("Always", s.oscMode == "always") { a.onOsc("always") }
-                                    Choice("Never", s.oscMode == "never") { a.onOsc("never") }
-                                }
-                            }
-                            "audio" -> if (s.directAudio != null && s.mic != null) {
-                                Section("Audio", "Both apply at the next session start.")
-                                Spacer(Modifier.height(4.dp))
-                                SwitchRow(
-                                    "DirectAudio for games",
-                                    "Games play straight to the device, bypassing PulseAudio: lower latency. Off = PulseAudio for everything.",
-                                    s.directAudio, true, a.onDirectAudio,
-                                )
-                                SwitchRow(
-                                    "Microphone",
-                                    "The device's microphone for voice chat, as the client's input device. Asks for the permission once.",
-                                    s.mic, true, a.onMic,
-                                )
-                            }
-                            "storage" -> if (s.gameStorage != null) {
-                                Section(
-                                    "Game storage",
-                                    "The choice itself is made inside Steam: with a second place registered, every Install asks which " +
-                                        "drive, Settings › Storage lists both, and Steam moves games between them. Internal is the " +
-                                        "client's own library and always there. Applies at the next session start.",
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                Choice(
-                                    "Automatic — the SD card when one is in the phone" +
-                                        (if (s.storageOptions.isEmpty()) " (none right now)" else ""),
-                                    s.gameStorage.isEmpty(),
-                                ) { a.onGameStorage("", "") }
-                                Choice("Internal only", s.gameStorage == "off") { a.onGameStorage("off", "") }
-                                for ((label, path) in s.storageOptions) {
-                                    Choice(label, s.gameStorage == path) { a.onGameStorage(path, label.substringBefore(" ·")) }
-                                }
-                                val custom = s.gameStorage.isNotEmpty() && s.gameStorage != "off" && s.storageOptions.none { it.second == s.gameStorage }
-                                if (custom) Choice("Folder: ${s.gameStorage}", true) {}
-                                OutlinedButton(onClick = a.onPickGameStorageFolder, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                                    Text("Choose a folder…")
-                                }
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    "Slow for streaming: an SD card and the phone's shared storage go through Android's file layer, " +
-                                        "and a game that streams video or big assets from there can stall. Keep such games internal; " +
-                                        "use the second place for size. On a card, the app may write only inside its own folder, which " +
-                                        "is the one offered.",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            "renderer" -> if (s.renderer != null) {
-                                Section(
-                                    "Desktop renderer",
-                                    "How labwc composites the desktop. pixman is software and works everywhere; gles2 / vulkan need a real DRM render node, which the Adreno stand-in is not on most devices.",
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Choice("pixman — software, the default", s.renderer == "pixman") { a.onRenderer("pixman") }
-                                Choice("gles2", s.renderer == "gles2") { a.onRenderer("gles2") }
-                                Choice("vulkan", s.renderer == "vulkan") { a.onRenderer("vulkan") }
-                            }
-                        }
+                        MenuItem("Choose a folder…", checked = false) { host.open = null; a.onPickGameStorageFolder() }
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun Section(title: String, detail: String?) {
-    Text(title, style = MaterialTheme.typography.titleSmall)
-    if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable
-private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        RadioButton(selected = selected, onClick = onClick)
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun SwitchRow(label: String, detail: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!steam && s.renderer != null) SettingsGroup("Renderer") {
+            ChoiceRow(
+                host, "renderer", "Desktop renderer", "How labwc composites the desktop. pixman is software and works everywhere.",
+                listOf("pixman" to "pixman — software", "gles2" to "gles2", "vulkan" to "vulkan"), s.renderer,
+                note = "gles2 and vulkan need a real DRM render node, which the Adreno stand-in is not on most devices.", onPick = a.onRenderer,
+            )
         }
-        Switch(checked = checked, enabled = enabled, onCheckedChange = onChange)
+        Spacer(Modifier.height(8.dp))
+        Text("Values are saved as they are picked; there is nothing to confirm.", fontSize = 11.5.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
     }
 }
 
+/** A driver list as a menu: each build a line, imported ones with a remove control, an import at the end. */
 @Composable
-private fun DriverChoice(row: DriverRow, selected: Boolean, onSelect: () -> Unit, onRemove: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        RadioButton(selected = selected, onClick = onSelect)
-        Column(modifier = Modifier.weight(1f)) {
-            Text(row.name, style = MaterialTheme.typography.bodyMedium)
-            if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (row.removable) TextButton(onClick = onRemove, contentPadding = PaddingValues(0.dp)) {
-                Text("Remove", style = MaterialTheme.typography.labelSmall)
+private fun DriverRowMenu(
+    host: MenuHost, key: String, label: String, hint: String, rows: List<DriverRow>, selected: String, importLabel: String,
+    onSelect: (String) -> Unit, onRemove: (String) -> Unit, onImport: () -> Unit,
+) {
+    val open = host.open == key
+    val colors = MaterialTheme.colorScheme
+    SettingsRow(label, hint, highlighted = open) {
+        androidx.compose.foundation.layout.Box {
+            ValueChip(rows.firstOrNull { it.id == selected }?.name ?: rows.firstOrNull()?.name ?: "—", open) { host.open = if (open) null else key }
+            AnchoredMenu(open, onDismiss = { if (host.open == key) host.open = null }, title = label) {
+                for (row in rows) MenuItem(
+                    row.name, checked = row.id == selected, detail = row.detail.ifEmpty { null },
+                    trailing = if (row.removable) ({
+                        Text(
+                            "✕", fontSize = 12.sp, color = colors.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp).padding(4.dp).clickable { onRemove(row.id); host.open = null },
+                        )
+                    }) else null,
+                ) { onSelect(row.id); host.open = null }
+                MenuItem(importLabel, checked = false) { host.open = null; onImport() }
             }
         }
     }

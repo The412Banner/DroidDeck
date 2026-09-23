@@ -33,7 +33,9 @@ import com.steamdeck.launcher.input.PointerGestures
 import com.steamdeck.launcher.input.TouchpadGestures
 import com.steamdeck.launcher.runtime.LinuxRuntime
 import com.steamdeck.launcher.session.LoadingState
+import com.steamdeck.launcher.session.PerfHints
 import com.steamdeck.launcher.session.PerfHud
+import com.steamdeck.launcher.session.PerfMode
 import com.steamdeck.launcher.session.ProtonExtras
 import com.steamdeck.launcher.session.SessionPrefs
 import com.steamdeck.launcher.session.SessionPaths
@@ -42,7 +44,6 @@ import com.steamdeck.launcher.session.SessionService
 import com.steamdeck.launcher.session.SessionState
 import com.steamdeck.launcher.ui.CursorOverlay
 import com.steamdeck.launcher.ui.DrawerActions
-import com.steamdeck.launcher.ui.FrameGenDialog
 import com.steamdeck.launcher.ui.HudText
 import com.steamdeck.launcher.ui.LoadingOverlay
 import com.steamdeck.launcher.ui.ProtonDialog
@@ -82,11 +83,13 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     // Compose reads these; the activity writes them.
     private var drawerOpen by mutableStateOf(false)
-    private var showFrameGen by mutableStateOf(false)
     private var showProtons by mutableStateOf(false)
     private var protonRows by mutableStateOf<List<ProtonRow>>(emptyList())
     private var hudOn by mutableStateOf(true)
     private var frameGenLabel by mutableStateOf("Off")
+    private var frameGenEngine by mutableStateOf(FrameGen.ENGINE_OFF)
+    private var frameGenMultiplier by mutableStateOf(2)
+    private var fexPreset by mutableStateOf("")
     private var oscMode by mutableStateOf(SessionPrefs.OSC_AUTO)
     private var shapeMode by mutableStateOf(SessionPrefs.SHAPE_AUTO)
 
@@ -104,6 +107,9 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Game-tier power policy for the whole session: a sustained clock floor, the panel's
+        // fastest mode, and the OS told it is in gameplay. Logged so a slow device says why.
+        Log.i(TAG, "perf: " + PerfMode.apply(this))
         goFullscreen()
         // The device's volume keys change the stream the session plays on (the relay and
         // PulseAudio are media playback); they are never forwarded to the guest.
@@ -152,15 +158,20 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                     CursorOverlay(cursorPos, cursorVisible, resources.displayMetrics.density)
                     if (hud.text.isNotEmpty()) HudText(hud.text)
                     if (loading.visible) LoadingOverlay(loading.step, loading.percent, loading.elapsed, loading.hint, loading.ended)
-                    if (drawerOpen) SessionDrawer(DrawerActions(
-                        hudOn = hudOn, frameGenLabel = frameGenLabel, oscMode = oscMode,
-                        touchMode = when (touchMode) {
-                            SessionPrefs.TOUCH_PAD -> "touchpad"; SessionPrefs.TOUCH_DIRECT -> "direct"
-                            else -> "auto (" + (if (usingTouchpad()) "touchpad" else "direct") + ")"
-                        },
-                        shapeMode = if (shapeMode == SessionPrefs.SHAPE_WIDE) "16:9" else "panel",
+                    SessionDrawer(drawerOpen, DrawerActions(
+                        steam = SessionState.mode == SessionService.MODE_STEAM,
+                        hudOn = hudOn,
+                        frameGenEngine = frameGenEngine, frameGenMultiplier = frameGenMultiplier,
+                        lsfgReady = LsfgNative.isInstalled(this@SessionActivity),
+                        oscMode = oscMode, touchMode = touchMode,
+                        touchAuto = if (usingTouchpad()) "touchpad" else "direct",
+                        shapeMode = shapeMode, fexPreset = fexPreset,
                         onHud = { on -> SessionPrefs.setHudEnabled(this@SessionActivity, on); hudOn = on; hud.refresh() },
-                        onFrameGen = { showFrameGen = true },
+                        onFrameGenPick = { engine, multiplier ->
+                            FrameGen.set(this@SessionActivity, engine, multiplier)
+                            readPrefs()
+                            applyFrameGen()
+                        },
                         onKeyboard = { drawerOpen = false; keyboard?.toggle() },
                         onSteamMenu = if (SessionState.mode == SessionService.MODE_STEAM) ({
                             // The Guide button, the way the on-screen ◉ sends it: a device with no
@@ -173,31 +184,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                             }, 90)
                         }) else null,
                         onProtons = { refreshProtons(); showProtons = true },
-                        onOsc = {
-                            val next = when (SessionPrefs.oscMode(this@SessionActivity)) {
-                                SessionPrefs.OSC_AUTO -> SessionPrefs.OSC_ALWAYS
-                                SessionPrefs.OSC_ALWAYS -> SessionPrefs.OSC_NEVER
-                                else -> SessionPrefs.OSC_AUTO
-                            }
-                            SessionPrefs.setOscMode(this@SessionActivity, next)
-                            readPrefs()
-                            updateOnScreenControls()
-                        },
-                        onTouch = {
-                            val next = when (SessionPrefs.touchMode(this@SessionActivity)) {
-                                SessionPrefs.TOUCH_AUTO -> SessionPrefs.TOUCH_PAD
-                                SessionPrefs.TOUCH_PAD -> SessionPrefs.TOUCH_DIRECT
-                                else -> SessionPrefs.TOUCH_AUTO
-                            }
-                            SessionPrefs.setTouchMode(this@SessionActivity, next)
-                            readPrefs()
-                        },
-                        onShape = {
-                            val next = if (SessionPrefs.shapeMode(this@SessionActivity) == SessionPrefs.SHAPE_WIDE)
-                                SessionPrefs.SHAPE_AUTO else SessionPrefs.SHAPE_WIDE
-                            SessionPrefs.setShapeMode(this@SessionActivity, next)
-                            readPrefs()
-                        },
+                        onOsc = { v -> SessionPrefs.setOscMode(this@SessionActivity, v); readPrefs(); updateOnScreenControls() },
+                        onTouch = { v -> SessionPrefs.setTouchMode(this@SessionActivity, v); readPrefs() },
+                        onShape = { v -> SessionPrefs.setShapeMode(this@SessionActivity, v); readPrefs() },
+                        onFexPreset = { v -> SessionPrefs.setFexPreset(this@SessionActivity, v); readPrefs() },
                         onBackground = { drawerOpen = false; moveTaskToBack(true) },
                         onStop = { drawerOpen = false; SessionService.stop(this@SessionActivity); finish() },
                         onClose = { drawerOpen = false },
@@ -208,18 +198,6 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                         onCancel = { id -> ProtonExtras.tools.first { it.id == id }.let { ProtonExtras.unqueue(this@SessionActivity, it) }; refreshProtons() },
                         onRemove = { id -> ProtonExtras.tools.first { it.id == id }.let { ProtonExtras.remove(this@SessionActivity, it) }; refreshProtons() },
                         onDismiss = { showProtons = false },
-                    )
-                    if (showFrameGen) FrameGenDialog(
-                        engine = FrameGen.engine(this@SessionActivity),
-                        multiplier = FrameGen.multiplier(this@SessionActivity),
-                        lsfgReady = LsfgNative.isInstalled(this@SessionActivity),
-                        onPick = { engine, multiplier ->
-                            FrameGen.set(this@SessionActivity, engine, multiplier)
-                            showFrameGen = false
-                            readPrefs()
-                            applyFrameGen()
-                        },
-                        onDismiss = { showFrameGen = false },
                     )
                 }
             }
@@ -241,7 +219,6 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
-                    showFrameGen -> showFrameGen = false
                     showProtons -> showProtons = false
                     else -> drawerOpen = !drawerOpen
                 }
@@ -260,6 +237,9 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         hudOn = SessionPrefs.hudEnabled(this)
         touchMode = SessionPrefs.touchMode(this)
         frameGenLabel = FrameGen.label(this)
+        frameGenEngine = FrameGen.engine(this)
+        frameGenMultiplier = FrameGen.multiplier(this)
+        fexPreset = SessionPrefs.fexPreset(this)
         oscMode = SessionPrefs.oscMode(this)
         shapeMode = SessionPrefs.shapeMode(this)
     }
@@ -283,6 +263,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         // was 16:9 — the picture came back squashed sideways. While a session runs, keep its size.
         val size = if (SessionState.running) SessionState.outputSize else outputSize()
         SessionState.outputSize = size
+        onScreenControls?.setPicture(drawnRect())
         if (!SessionState.running) SessionState.refreshHz = refreshHz()
         // Letterbox, never stretch or crop: the output can be a different shape from the panel,
         // and a game's picture must keep its proportions with bars, not lose its edges.
@@ -329,6 +310,9 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             driverId?.let { turnip.driverPath(it) }, driverId?.let { turnip.libraryName(it) },
             applicationInfo.nativeLibraryDir, size.first, size.second, refreshHz(),
         )
+        // ADPF: the compositor thread's frame intervals go to the power HAL against the panel's
+        // period, so a long frame raises CPU clocks now rather than after the load averages up.
+        PerfHints.arm(this, refreshHz())
         // The service owns everything below the compositor. It is started whenever no session is
         // running — NOT only when the compositor was just started: the compositor lives for the
         // whole process, so the second Play after a session ended used to re-attach the Surface,
@@ -353,6 +337,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         val resized = surfaceW != 0 && (width != surfaceW || height != surfaceH)
         surfaceW = width
         surfaceH = height
+        // The on-screen controls follow the picture: into the bars beside or under it when there are any.
+        onScreenControls?.setPicture(drawnRect())
         if (resized) {
             Log.i(TAG, "surface resized to ${width}x$height — rebinding the compositor")
             CompositorHost.resize(holder.surface) { applyFrameGen() }
@@ -389,9 +375,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         // compositor letterboxes onto a squarer panel.
         val aspect = if (SessionPrefs.shapeMode(this) == SessionPrefs.SHAPE_WIDE) 16f / 9f
                      else maxOf(panelW / panelH, 16f / 9f)
-        // 1080 tall at most by default: the client's CEF is the heaviest thing in the session, and
-        // above 1080p it costs frames for nothing anyone can see on a handheld panel. The mode's
-        // settings (the cog beside Play / Desktop) can lower the cap or lift it to the panel.
+        // 720 tall at most by default, client and desktop alike: the client's CEF is the heaviest
+        // thing in the session, and pixels above that cost frames for nothing anyone can see on a
+        // handheld panel. The mode's settings (the cog beside Play / Desktop) can change
+        // the cap or lift it to the panel.
         val mode = SessionPrefs.prefMode(intent.getStringExtra(SessionService.EXTRA_MODE) ?: SessionService.MODE_STEAM)
         val cap = SessionPrefs.resolutionCap(this, mode)
         val height = (if (cap <= 0) panelH else minOf(panelH, cap.toFloat())).toInt()
@@ -737,6 +724,12 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         if (SessionState.endListener === endListener) SessionState.endListener = null
         WaylandCompositor.setFirstFrameListener(null)
         super.onDestroy()
+    }
+
+    /** Leaving the session sinks its surface back down onto the front end. */
+    override fun finish() {
+        super.finish()
+        overridePendingTransition(R.anim.session_hold, R.anim.session_sink)
     }
 
     companion object {

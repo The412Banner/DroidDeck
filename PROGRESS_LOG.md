@@ -6,6 +6,37 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
+## 2026-09-22 (late) — motion front end + run-as-a-game, branch `feat/frontend-motion` (unmerged)
+
+- Front end rebuilt around a motion system (`ui/FrontEndScreen.kt`, same state/actions API): the rail's selection is one pill that springs between rows; sub-lists unfold and stagger their children; a page change sinks out and cascades in over a blurred wash of the selection's art; tiles lift/ring/shine on focus and pop a play badge; the launch button sweeps a sheen and squashes on press; the session activity rises over the front end (`res/anim/session_*`). Durations follow the system animator scale.
+- The session now runs as a game: manifest `appCategory=game` + `game_mode_config` (Performance mode welcome; the OS FPS cap and downscaling refused), sustained performance mode, the panel's fastest mode at its size, GameManager game state, and an ADPF hint session over the compositor thread fed with each presented frame's interval (`session/PerfMode.kt`, `session/PerfHints.kt`, `nativeCompositorTid`). One `perf:` line in the session log says what took on the device.
+- App libraries link 16 KB-aligned. Still 4 KB-only (prebuilt, need a rebuild): libpulse, libpulseaudio, libpulsecommon-13.0, libpulsecore-13.0, libsndfile, libltdl.
+- The session's display caps at 720p by default now, client and desktop alike (`SessionPrefs.defaultResolutionCap`); a cap the user chose still wins. The cog's list marks the default per mode.
+- Builds: r1 `7ddfb57` (motion only), r2 `546c063` (+ run-as-a-game), r3 `d1ced87` (+ client 720p), r4 `fb2a3d4` (+ desktop 720p) — all CI-green, none device-tested. Staged as `SteamDeck-motion-r1..r4.apk`; r4 has everything.
+- r5 `1ba803b` + TZ in the guest; r6 `39272cf` Setup folds, "Linux desktop environment", help link above the grid (r4 seen running on the FIT); r7 `af3f377` settings without a pop-up: the cog and Performance are pages in the pane with anchored menus under each value, frame generation / logs / offline open in place on the rail. **r7 merged fast-forward to `main` (`af3f377`) and main's auto-build staged as `SteamDeck-r52.apk`; no tag, no release.**
+- r8 `90ff23a` (branch only, unmerged): the session drawer in the front end's dress with the same rows and menus (Now / Next session / leave), FEXCore presets carried over from Bannerlator (`core/FexPreset`, Steam settings page + drawer, FEX_* into the Steam session's environment; default = FEX defaults as before), file manager and picker locked to landscape.
+- Collaborators: `maxjivi05` (push) and `xXJSONDeruloXx` (push, invited 2026-09-22) on the private repo.
+
+## 🔖 Checkpoint 2026-09-22 22:xx — known-good point for the front end
+
+- **`main` @ `36cde7d`**, APK `SteamDeck-r51.apk` staged (sha `adb5acf5…`, run 35761437514) =
+  frontend-r6 + docs. Same versionCode 5 / 0.1.4 inside; **0.1.5 not cut yet**.
+- **Proven on the Pocket FIT this evening:** the front end renders and navigates (rail, art,
+  square emulator icons, focus outline); RPCS3 lists Tomb Raider (ISO in a subfolder) and God of
+  War II HD (its HDD); ▶ God of War II HD boots the game under gamescope at ~40 fps
+  (`session-20260922-133044`: `run: rpcs3.AppImage --no-gui …NPUA80491/USRDIR/EBOOT.BIN`, 399
+  frames on screen in 10 s).
+- **Not yet proven:** desktop→Steam hand-off after the three fixes (r47–r50); ▶ FlatOut from the
+  rail (Steam session with rungameid); Running tile; volume keys; automatic SD game storage
+  (Install drive drop-down); Steam desktop-UI session; Tomb Raider ISO boot.
+- **Open decision:** rename the app away from Valve's marks before it spreads (shortlist offered:
+  Linuxlator / Pocketscope / Portascope); rename = label, icon text, `applicationId` (fresh
+  install + runtime re-download), `Download/SteamDeck/` log folder, repo, release-tag pattern.
+- **Rollback:** `git checkout 36cde7d` (or 0.1.4 tag `8e58e8e` for the last release), reinstall
+  `SteamDeck-r51.apk` / `SteamDeck-0.1.4.apk` from Downloads.
+- Loose ends: `ui/MainScreen.kt` keeps ConfirmDialog/CreditsDialog/EmulatorHelpDialog but its
+  `MainScreen`/tiles are dead; worktree `~/steamdeck-frontend` still exists (branch merged).
+
 ## Current state (2026-09-22, evening)
 
 - **`main` @ the front end merge** (`feat/frontend` fast-forwarded): the launcher main screen -

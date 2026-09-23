@@ -141,8 +141,26 @@ object SessionPrefs {
         prefs(context).edit().putBoolean("tuSysmem", on).apply()
     }
 
-    /** Zink's lazy descriptor mode (ZINK_DESCRIPTORS=lazy) for the client's GL-on-Vulkan UI. */
-    fun zinkLazy(context: Context): Boolean = prefs(context).getBoolean("zinkLazy", false)
+    /*
+     * The client's interface is drawn Chromium -> ANGLE -> Zink -> Turnip, and that chain is what
+     * limits its menus (~14 fps on an Adreno 840 while a game ran 89). These make the chain
+     * cheaper rather than asking for more; the three environment switches are on by default,
+     * Deck mode off. Bannerlator's LinuxTuning, carried over; none device-proven here yet.
+     */
+    /** mesa_glthread=true: GL marshalled off the calling thread. */
+    fun glThread(context: Context): Boolean = prefs(context).getBoolean("glThread", true)
+    fun setGlThread(context: Context, on: Boolean) { prefs(context).edit().putBoolean("glThread", on).apply() }
+
+    /** MESA_NO_ERROR=1: no GL error checking. */
+    fun noGlError(context: Context): Boolean = prefs(context).getBoolean("noGlError", true)
+    fun setNoGlError(context: Context, on: Boolean) { prefs(context).edit().putBoolean("noGlError", on).apply() }
+
+    /** `steam -steamdeck -steamos3`: the client as SteamOS runs it. Expects Deck hardware; untested. */
+    fun steamDeckMode(context: Context): Boolean = prefs(context).getBoolean("steamDeckMode", false)
+    fun setSteamDeckMode(context: Context, on: Boolean) { prefs(context).edit().putBoolean("steamDeckMode", on).apply() }
+
+    /** Zink's lazy descriptor mode (ZINK_DESCRIPTORS=lazy) for the client's GL-on-Vulkan UI. On by default. */
+    fun zinkLazy(context: Context): Boolean = prefs(context).getBoolean("zinkLazy", true)
 
     fun setZinkLazy(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean("zinkLazy", on).apply()
@@ -186,11 +204,24 @@ object SessionPrefs {
 
     /**
      * The tallest the session's display may be, in pixels, for MODE_STEAM / MODE_DESKTOP:
-     * 0 = the panel's own height, otherwise a cap. 1080 is the default the app always had - the
-     * client's CEF is the heaviest thing in a session and above 1080p it costs frames for nothing
-     * a handheld panel can show. Read once, when the session's display is sized.
+     * 0 = the panel's own height, otherwise a cap. Both modes default to 720p: the client's CEF
+     * is the heaviest thing in a session, Big Picture is drawn for a TV at arm's length, and on
+     * a handheld panel 720p is where its menus stay responsive on a regular flagship; the desktop
+     * and the emulators under it get the same GPU headroom. Read once, when the session's display
+     * is sized; a cap the user chose wins over the default.
      */
-    fun resolutionCap(context: Context, mode: String): Int = prefs(context).getInt("resolutionCap.$mode", 900)
+    fun resolutionCap(context: Context, mode: String): Int = prefs(context).getInt("resolutionCap.$mode", defaultResolutionCap(mode))
+
+    /** The FEXCore preset for the games the client launches (core/FexPreset ids); "" = FEX's defaults. */
+    fun fexPreset(context: Context): String = prefs(context).getString("fexPreset", "") ?: ""
+
+    fun setFexPreset(context: Context, id: String) {
+        prefs(context).edit().putString("fexPreset", id).apply()
+    }
+
+    /** What a mode gets when nothing was chosen. */
+    @Suppress("UNUSED_PARAMETER")
+    fun defaultResolutionCap(mode: String): Int = 720
 
     fun setResolutionCap(context: Context, mode: String, cap: Int) {
         prefs(context).edit().putInt("resolutionCap.$mode", cap).apply()

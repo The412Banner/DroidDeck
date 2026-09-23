@@ -33,7 +33,16 @@
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="true"
         android:largeHeap="true"
-        android:extractNativeLibs="true">
+        android:extractNativeLibs="true"
+        android:appCategory="game"
+        android:isGame="true">
+
+        <!-- A game, to the OS: Android 12+ routes the category through GameManager and the OEM
+             performance frameworks (Game Booster, Game Turbo, Game Space) key off it. Without it
+             a regular flagship runs the session under its "app" power profile — a conservative
+             governor and GPU DVFS — which is why the same chipset feels slower here than in a
+             gaming phone whose mode is on for everything. The config says what the OS may do. -->
+        <meta-data android:name="android.game_mode_config" android:resource="@xml/game_mode_config" />
 
         <activity
             android:name=".MainActivity"
@@ -58,17 +67,20 @@
         <activity
             android:name=".files.FileManagerActivity"
             android:exported="false"
+            android:screenOrientation="sensorLandscape"
             android:theme="@style/AppTheme" />
 
         <activity
             android:name=".files.FilePickerActivity"
             android:exported="false"
+            android:screenOrientation="sensorLandscape"
             android:theme="@style/AppTheme" />
 
         <activity
             android:name=".SessionActivity"
             android:exported="false"
             android:theme="@style/SessionTheme"
+            android:preferMinimalPostProcessing="true"
             android:screenOrientation="sensorLandscape"
             android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density" />

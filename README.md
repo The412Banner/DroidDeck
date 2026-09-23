@@ -13,6 +13,25 @@ Around that: the Vulkan driver each half of the session draws with is yours to i
 audio can bypass PulseAudio and carry a microphone, the cores the client and a game get are
 separate, and every session writes a folder of logs meant to be attached to a report as it is.
 
+## Contributors
+
+Building this alongside the owner. A pull request from either of them builds by itself and gets
+a comment saying whether it merges, what conflicts, or what failed to compile.
+
+- **MaxsTechReview** — [@maxjivi05](https://github.com/maxjivi05)
+- **Kurt Himebauch** — [@xXJSONDeruloXx](https://github.com/xXJSONDeruloXx)
+
+<!-- contributions:start -->
+_From the repository's pull requests; rewritten when one is opened, merged or closed._
+
+| Contributor | Pull request | Opened | State |
+|---|---|---|---|
+| [@xXJSONDeruloXx](https://github.com/xXJSONDeruloXx) | [#1](https://github.com/The412Banner/SteamDeck/pull/1) initial decky installer stuff | 2026-09-23 | draft |
+| [@xXJSONDeruloXx](https://github.com/xXJSONDeruloXx) | [#3](https://github.com/The412Banner/SteamDeck/pull/3) Fix hardware back in Steam session | 2026-09-23 | open |
+
+- **@xXJSONDeruloXx**: 2 submitted, 0 merged
+<!-- contributions:end -->
+
 ## Requirements
 
 - An **arm64 Android device with an Adreno GPU that Turnip supports** — in practice Adreno **730 or
@@ -364,8 +383,8 @@ any game. The dialog queues or cancels a request and removes an installed build.
 ## The cog beside Play and Desktop
 
 Each launch button has a cog, and everything that only matters for that one mode lives behind it,
-so the main screen keeps only what applies to both: **resolution** (up to 1080p by default, 900p or
-720p for a lighter session, or the panel's own), the display **shape**, **HDR10 output**, the
+so the main screen keeps only what applies to both: **resolution** (up to 720p by default; 900p, 1080p, or the
+panel's own), the display **shape**, **HDR10 output**, the
 **Linux runtime driver** for that mode and the shared **display driver**, **touch**, and for Steam
 the on-screen controls and audio, for the desktop its renderer.
 

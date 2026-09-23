@@ -1,0 +1,40 @@
+name: Contributions ledger
+
+# Keeps the Contributors section of the README current: every pull request by a contributor,
+# with its state, and a line of totals each. Runs when a pull request is opened, merged or
+# closed and commits the README to main as the Actions bot. The README is documentation, so
+# that commit does not buy an apk build.
+on:
+  pull_request_target:
+    types: [ opened, reopened, closed, edited ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: contributions
+  cancel-in-progress: false
+
+jobs:
+  ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Rewrite the table
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/contributions.sh "$GITHUB_REPOSITORY"
+      - name: Commit it when it changed
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then echo "ledger unchanged"; exit 0; fi
+          git commit -m "README: contributions ledger"
+          git push origin HEAD:main
