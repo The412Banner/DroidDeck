@@ -199,6 +199,36 @@ jobs:
           install -Dm644 tools/linuxfs/desktop/firefox-steamdeck.js "$D/usr/lib/firefox/defaults/pref/steamdeck.js"
           ls -lR "$D"
 
+      # The daemon's AAudio sink (tools/aaudio-sink), compiled here against upstream PulseAudio 13
+      # headers and the app's own libpulse*, then put into the audio bundle the apk carries. The
+      # committed bundle holds every other module and no sink, so a build without this step would
+      # have no audio - the unpack check in PulseAudioComponent would then fail loudly, not quietly.
+      - name: Cache PulseAudio 13.0 source
+        id: pa-src
+        uses: actions/cache@v4
+        with:
+          path: pa13
+          key: pulseaudio-src-13.0
+      - name: Fetch PulseAudio 13.0 source
+        if: steps.pa-src.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL -o pa.tar.gz https://github.com/pulseaudio/pulseaudio/archive/refs/tags/v13.0.tar.gz
+          mkdir -p pa13 && tar -xzf pa.tar.gz -C pa13 --strip-components=1 && rm pa.tar.gz
+      - name: Build the AAudio sink into the audio bundle
+        run: |
+          set -euo pipefail
+          export NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$ANDROID_NDK_ROOT}}"
+          tools/aaudio-sink/build.sh "$PWD/pa13" "$PWD/module-aaudio-sink.so"
+          rm -rf pa-bundle && mkdir -p pa-bundle
+          tar --use-compress-program=unzstd -xf app/src/main/assets/pulseaudio.tzst -C pa-bundle
+          test ! -f pa-bundle/modules/arm64/module-aaudio-sink.so
+          install -m755 module-aaudio-sink.so pa-bundle/modules/arm64/module-aaudio-sink.so
+          (cd pa-bundle && tar --use-compress-program='zstd -19' -cf ../pulseaudio.tzst .)
+          mv pulseaudio.tzst app/src/main/assets/pulseaudio.tzst
+          tar --use-compress-program=unzstd -tf app/src/main/assets/pulseaudio.tzst | grep -c '\.so$'
+          rm -rf pa-bundle module-aaudio-sink.so
+
       # Runs whether the preloads were built or restored: readelf reads any ELF whatever the host,
       # so these assertions cost nothing and need no cross toolchain.
       - name: Check the preloads

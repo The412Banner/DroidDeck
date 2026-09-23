@@ -31,7 +31,7 @@ public class PulseAudioComponent extends SessionPart {
     /** Where the guest reaches the daemon; the session exports PULSE_SERVER=unix:<this>. */
     public static final String SOCKET_NAME = "PS0";
     /** Identifies the bundled pulseaudio.tzst; a change here re-unpacks it over what a device has. */
-    private static final String BUNDLE_STAMP = "2026-09-21-pa13-pipe-modules";
+    private static final String BUNDLE_STAMP = "2026-09-23-pa13-aaudio-sink-r2";
 
     private final File workingDir;
     /** Where the daemon's own output is kept for this session, or null for logcat only. */
@@ -72,8 +72,8 @@ public class PulseAudioComponent extends SessionPart {
             workingDir.mkdirs();
             FileUtils.chmod(workingDir, 0771);
         }
-        // The loadable modules (module-aaudio-sink, the native protocol, the pipe modules) ride in
-        // the apk; the daemon and its libraries come from the native library directory, the one
+        // The loadable modules (module-aaudio-sink - the app's own, from tools/aaudio-sink - the
+        // native protocol, the pipe modules) ride in the apk; the daemon and its libraries come from the native library directory, the one
         // place an app may execute a file from. The bundle is unpacked once per BUNDLE_STAMP, not
         // once ever: an installed app kept the modules it unpacked on its first run, so a bundle
         // fixed in a later build never reached the device - which is how a 17.0 glibc build of
