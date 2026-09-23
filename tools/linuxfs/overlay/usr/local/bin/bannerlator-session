@@ -60,7 +60,14 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
     /*) ;;
     ?*) bl_icd_lib="$(dirname "$BL_VK_DRIVER")/$bl_icd_lib" ;;
   esac
-  if [ -r "$BL_VK_DRIVER" ] && [ -n "$bl_icd_lib" ] && [ -r "$bl_icd_lib" ]; then
+  if [ -n "${BL_QCOM_LAYERS:-}" ] && [ -z "${BL_INSIDE:-}" ] && [ "${BL_QCOM_GAMESCOPE:-0}" != 1 ]; then
+    # Qualcomm's own Linux driver, first pass: this is gamescope's environment. The driver claims
+    # DRM format modifiers but lists none for any format, and gamescope asserts on that
+    # (rendervulkan.cpp: modifiers.size() > 0) - seen on the Pocket FIT. So the compositor keeps the
+    # runtime's Turnip; the second pass, inside gamescope, hands the client and every game Qualcomm's.
+    # BL_QCOM_GAMESCOPE=1 gives gamescope Qualcomm's too, to retry that on a later driver.
+    echo "== vulkan driver: gamescope keeps the runtime's Turnip (Qualcomm's lists no DRM format modifiers); the client and games get Qualcomm's"
+  elif [ -r "$BL_VK_DRIVER" ] && [ -n "$bl_icd_lib" ] && [ -r "$bl_icd_lib" ]; then
     export VK_DRIVER_FILES="$BL_VK_DRIVER"
     # Loaders older than 1.3.207 only know the old name; both are harmless together.
     export VK_ICD_FILENAMES="$BL_VK_DRIVER"
