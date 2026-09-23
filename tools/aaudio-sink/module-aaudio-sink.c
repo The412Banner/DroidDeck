@@ -19,7 +19,10 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <aaudio/AAudio.h>
 
@@ -60,8 +63,17 @@ PA_MODULE_USAGE(
 /* A write that blocks longer than this has lost the device underneath it. */
 #define WRITE_TIMEOUT_NS (500LL * 1000 * 1000)
 /* Underruns are polled every so many writes, not every write. */
-#define XRUN_CHECK_EVERY 16
+#define XRUN_CHECK_EVERY 8
 #define FALLBACK_BURST_FRAMES 192
+/* The buffer starts at whichever is larger: this many bursts, or this much time. The daemon runs
+ * under proot, where every system call is traced, and a buffer of two bursts (8 ms) left the
+ * client's menu sounds choppy on device; 30 ms is inaudible for a menu and games have their own
+ * path. adaptive=1 still grows it further after real underruns. */
+#define MIN_BUFFER_BURSTS 4
+#define MIN_BUFFER_USEC (30 * PA_USEC_PER_MSEC)
+/* Android's own audio threads run at nice -16 (THREAD_PRIORITY_AUDIO); an app may ask for it. */
+#define AUDIO_NICE (-16)
+#define STATS_EVERY_USEC (30 * PA_USEC_PER_SEC)
 
 static const char* const valid_modargs[] = {
     "sink_name",
@@ -101,10 +113,28 @@ struct userdata {
     bool adaptive;
     int32_t xruns_seen;
     unsigned writes_since_xrun_check;
+    int32_t chunk_frames;
+    pa_usec_t stats_at;
+    int32_t xruns_reported;
 };
 
 static pa_usec_t frames_to_usec(const struct userdata *u, int64_t frames) {
     return (pa_usec_t) (frames * (int64_t) PA_USEC_PER_SEC / (int64_t) u->ss.rate);
+}
+
+static int32_t usec_to_frames(const struct userdata *u, pa_usec_t usec) {
+    return (int32_t) ((uint64_t) usec * u->ss.rate / PA_USEC_PER_SEC);
+}
+
+/* Each write hands the device half the buffer, whole bursts, at least one: fewer, larger
+ * trips through proot's tracing than a burst at a time, with half the buffer of slack left. */
+static void set_chunk(struct userdata *u) {
+    int32_t frames = u->buffer_frames / 2;
+    frames -= frames % u->burst_frames;
+    if (frames < u->burst_frames)
+        frames = u->burst_frames;
+    u->chunk_frames = frames;
+    u->chunk_bytes = (size_t) frames * u->frame_size;
 }
 
 static void close_stream(struct userdata *u) {
@@ -126,6 +156,7 @@ static void apply_buffer_size(struct userdata *u, int32_t frames) {
         frames = u->max_buffer_frames;
     got = AAudioStream_setBufferSizeInFrames(u->stream, frames);
     u->buffer_frames = got > 0 ? got : AAudioStream_getBufferSizeInFrames(u->stream);
+    set_chunk(u);
 }
 
 /* Opens the stream for u->ss; on return u->ss holds what the device actually gave. */
@@ -161,17 +192,21 @@ static int open_stream(struct userdata *u) {
     u->burst_frames = AAudioStream_getFramesPerBurst(u->stream);
     if (u->burst_frames <= 0)
         u->burst_frames = FALLBACK_BURST_FRAMES;
-    u->chunk_bytes = (size_t) u->burst_frames * u->frame_size;
-
     capacity = AAudioStream_getBufferCapacityInFrames(u->stream);
     if (u->max_buffer_frames <= 0 || (capacity > 0 && u->max_buffer_frames > capacity))
         u->max_buffer_frames = capacity;
-    apply_buffer_size(u, u->requested_buffer_frames > 0 ? u->requested_buffer_frames : 2 * u->burst_frames);
+    if (u->requested_buffer_frames > 0)
+        apply_buffer_size(u, u->requested_buffer_frames);
+    else
+        apply_buffer_size(u, PA_MAX(MIN_BUFFER_BURSTS * u->burst_frames, usec_to_frames(u, MIN_BUFFER_USEC)));
     u->xruns_seen = AAudioStream_getXRunCount(u->stream);
+    u->xruns_reported = u->xruns_seen;
+    u->stats_at = pa_rtclock_now();
 
-    pa_log_info("stream open: %u Hz, %u ch, %s, burst %d frames, buffer %d of %d frames, performance mode %d",
-                u->ss.rate, u->ss.channels, pa_sample_format_to_string(u->ss.format),
-                u->burst_frames, u->buffer_frames, u->max_buffer_frames, (int) u->performance_mode);
+    pa_log("aaudio-sink: stream open: %u Hz, %u ch, %s, burst %d frames, buffer %d of %d frames (%u ms), %d frames per write, performance mode %d",
+           u->ss.rate, u->ss.channels, pa_sample_format_to_string(u->ss.format),
+           u->burst_frames, u->buffer_frames, u->max_buffer_frames, (unsigned) (frames_to_usec(u, u->buffer_frames) / PA_USEC_PER_MSEC),
+           u->chunk_frames, (int) u->performance_mode);
     return 0;
 }
 
@@ -222,6 +257,12 @@ static void check_underruns(struct userdata *u) {
     u->writes_since_xrun_check = 0;
 
     xruns = AAudioStream_getXRunCount(u->stream);
+    /* A line every so often while underruns keep coming, so a session log shows the count. */
+    if (xruns != u->xruns_reported && pa_rtclock_now() - u->stats_at >= STATS_EVERY_USEC) {
+        pa_log("aaudio-sink: %d underrun(s) so far, buffer %d frames", xruns, u->buffer_frames);
+        u->xruns_reported = xruns;
+        u->stats_at = pa_rtclock_now();
+    }
     if (xruns <= u->xruns_seen)
         return;
     u->xruns_seen = xruns;
@@ -230,7 +271,8 @@ static void check_underruns(struct userdata *u) {
 
     apply_buffer_size(u, u->buffer_frames + u->burst_frames);
     pa_sink_set_fixed_latency_within_thread(u->sink, frames_to_usec(u, u->buffer_frames));
-    pa_log_info("underrun %d: buffer now %d frames", xruns, u->buffer_frames);
+    pa_sink_set_max_request_within_thread(u->sink, u->chunk_bytes);
+    pa_log("aaudio-sink: underrun %d: buffer now %d frames (%u ms)", xruns, u->buffer_frames, (unsigned) (frames_to_usec(u, u->buffer_frames) / PA_USEC_PER_MSEC));
 }
 
 /* One burst from the sink into the device. Returns <0 when the stream is gone for good. */
@@ -252,7 +294,7 @@ static int write_one_burst(struct userdata *u) {
 
     /* The device went away (headphones, a route change). Reopen once with the same settings; if
      * the new stream differs in rate or format there is nothing sane to do but give up. */
-    pa_log_warn("AAudioStream_write: %s; reopening the stream", AAudio_convertResultToText(written));
+    pa_log("aaudio-sink: AAudioStream_write: %s; reopening the stream", AAudio_convertResultToText(written));
     {
         pa_sample_spec before = u->ss;
 
@@ -301,6 +343,12 @@ static void thread_func(void *userdata) {
 
     pa_log_debug("IO thread starting");
     pa_thread_mq_install(&u->thread_mq);
+    /* Ahead of everything else in the app, as Android's own audio threads are; realtime on top
+     * of that where the kernel allows (it does not, for an app, but it costs nothing to ask). */
+    if (setpriority(PRIO_PROCESS, (id_t) syscall(SYS_gettid), AUDIO_NICE) < 0)
+        pa_log("aaudio-sink: could not raise the IO thread's priority (%s)", strerror(errno));
+    if (u->core->realtime_scheduling)
+        pa_thread_make_realtime(u->core->realtime_priority);
 
     for (;;) {
         int ret;
