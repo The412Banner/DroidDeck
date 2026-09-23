@@ -157,6 +157,7 @@ class FrontEndActions(
     val onOffline: () -> Unit,
     val onEmulatorHelp: () -> Unit,
     val onCredits: () -> Unit,
+    val onDecky: () -> Unit = {},
     /** Leaves the page in the pane (back key, the rail, or the page's own Back). */
     val onPageBack: () -> Unit = {},
 )
@@ -366,7 +367,8 @@ private fun Rail(
                     if (s.emulators.none { it.installed }) NavItem("install emulators under Desktop & apps", "x", false, small = true, muted = true, register = register, unregister = unregister) { a.onApps() }
                     NavItem("Settings", "settings:lxqt", selected == "settings:lxqt", small = true, tiny = true, muted = true, i = s.emulators.count { it.installed }, register = register, unregister = unregister) { a.onDesktopSettings() }
                 }
-            Spacer(Modifier.height(6.dp))
+                NavItem("Decky Loader", "decky", selected == "decky", register = register, unregister = unregister) { a.onDecky() }
+                Spacer(Modifier.height(6.dp))
             // Setup: the same fold as Steam and Desktop. A row that holds a value opens a small menu
             // in place; a row that opens a page lights up while the page is shown.
             val menus = remember { MenuHost() }

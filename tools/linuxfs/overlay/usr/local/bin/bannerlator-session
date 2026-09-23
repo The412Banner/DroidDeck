@@ -267,6 +267,17 @@ case $mode in
       echo "== autolaunch $_bl_url"
       set -- "$@" "$_bl_url"
     fi
+    # Decky's official Linux asset is x86_64. Ask Steam for its FEX compatibility tool on the
+    # first session that needs it, then supervise Decky inside this Steam session (systemd is not
+    # available in this app-managed rootfs). The supervisor waits for the Steam download to land.
+    if [ -x "$HOME/homebrew/services/PluginLoader" ]; then
+      if ! bannerlator-decky --has-fex "$steam_root"; then
+        echo "== Decky: requesting Valve FEX from Steam (app 3127680)"
+        set -- "$@" steam://install/3127680
+      fi
+      bannerlator-decky "$steam_root" &
+      decky_supervisor=$!
+    fi
     # The client builds Settings > Internet and its connection indicator on NetworkManager, which
     # it looks for on the SYSTEM bus as it starts. This runtime has neither, so the page failed
     # ("StartScanningForNetworks is not a function") under a header that showed no connection even
@@ -317,7 +328,11 @@ BUSCONF
     # app's compatdata instead. FEX therefore starts with no rootfs, every x86_64 library lookup
     # falls through to the host, and the guest shell dies on libreadline before the game is reached.
     # FEX_ROOTFS names it outright and is read whatever the config situation.
-    [ -d /usr/share/guestos/fex-mesa ] && export FEX_ROOTFS=/usr/share/guestos/fex-mesa
+    if [ -f "$HOME/.fex-emu/RootFS/Ubuntu_24_04.sqsh" ]; then
+      export FEX_ROOTFS="$HOME/.fex-emu/RootFS/Ubuntu_24_04.sqsh"
+    elif [ -d /usr/share/guestos/fex-mesa ]; then
+      export FEX_ROOTFS=/usr/share/guestos/fex-mesa
+    fi
     # The client exits 42 when it has updated itself and wants a fresh start (steam.sh does this).
     # BL_STEAM_UI=desktop = the client's desktop UI (a window, the library as a list), which the
     # desktop's launchers ask for; gamescope shows one window at a time and the game takes over.

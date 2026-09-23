@@ -1,0 +1,72 @@
+#!/bin/bash
+# Keeps Decky Loader alive for the Steam session. The official PluginLoader asset is x86_64;
+# Valve's Steam FEX compatibility component runs it on this ARM64 session runtime.
+set -u
+
+mode=${1:-run}
+if [ "$mode" = --has-fex ]; then
+  steam_root=${2:-${XDG_DATA_HOME:-$HOME/.local/share}/Steam}
+else
+  steam_root=${1:-${XDG_DATA_HOME:-$HOME/.local/share}/Steam}
+fi
+loader=$HOME/homebrew/services/PluginLoader
+log=$HOME/homebrew/services/PluginLoader.log
+
+find_fex() {
+  for binary in /usr/bin/FEX /usr/bin/FEXBash /usr/bin/FEXInterpreter; do
+    [ -x "$binary" ] && { printf '%s\n' "$binary"; return 0; }
+  done
+  for library in "$steam_root" /mnt/bannerlator-sd; do
+    manifest=$library/steamapps/appmanifest_3127680.acf
+    [ -r "$manifest" ] || continue
+    install_dir=$(awk -F '"' '$2 == "installdir" { print $4; exit }' "$manifest")
+    [ -n "$install_dir" ] || continue
+    tool=$library/steamapps/common/$install_dir
+    [ -d "$tool" ] || continue
+    binary=$(find "$tool" -maxdepth 6 \( -type f -o -type l \) \
+      \( -name FEX -o -name FEXBash -o -name FEXInterpreter \) -perm -u+x -print 2>/dev/null | head -n 1)
+    [ -n "$binary" ] && { printf '%s\n' "$binary"; return 0; }
+  done
+  return 1
+}
+
+if [ "$mode" = --has-fex ]; then
+  find_fex >/dev/null
+  exit $?
+fi
+
+[ -x "$loader" ] || exit 0
+mkdir -p "$(dirname "$log")"
+exec >>"$log" 2>&1
+echo "== bannerlator-decky $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+while [ -x "$loader" ]; do
+  fex=$(find_fex || true)
+  if [ -z "$fex" ]; then
+    echo "Decky is installed; waiting for Valve's FEX component (Steam app 3127680)"
+    sleep 5
+    continue
+  fi
+  if [ -f "$HOME/.fex-emu/RootFS/Ubuntu_24_04.sqsh" ]; then
+    export FEX_ROOTFS="$HOME/.fex-emu/RootFS/Ubuntu_24_04.sqsh"
+  elif [ -d /usr/share/guestos/fex-mesa ]; then
+    export FEX_ROOTFS=/usr/share/guestos/fex-mesa
+  else
+    echo "Decky is installed; waiting for the FEX root filesystem"
+    sleep 5
+    continue
+  fi
+  unset FEX_PORTABLE
+  fex_dir=$(dirname "$fex")
+  LD_LIBRARY_PATH=$fex_dir:$fex_dir/../lib:$fex_dir/../lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH
+  echo "Starting Decky through FEX: $fex"
+  case ${fex##*/} in
+    FEXBash) "$fex" -c "exec '$loader'" ;;
+    *) "$fex" "$loader" ;;
+  esac
+  rc=$?
+  echo "Decky exited with status $rc; retrying in 10 seconds"
+  sleep 10
+done
+echo "Decky loader was removed; stopping its session supervisor"

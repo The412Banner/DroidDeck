@@ -28,6 +28,7 @@ object SessionFiles {
             "libblsession.so" to "usr/local/lib/libblsession.so",
             "libfakeinput.so" to "usr/local/lib/libfakeinput.so",
             "usr/local/bin/bannerlator-session" to "usr/local/bin/bannerlator-session",
+            "usr/local/bin/bannerlator-decky" to "usr/local/bin/bannerlator-decky",
             "usr/local/bin/bannerlator-steam-compat" to "usr/local/bin/bannerlator-steam-compat",
             "usr/local/bin/bannerlator-steam-install" to "usr/local/bin/bannerlator-steam-install",
             "usr/local/bin/bannerlator-steam-library" to "usr/local/bin/bannerlator-steam-library",

@@ -26,6 +26,7 @@ import com.steamdeck.launcher.gpu.LsfgNative
 import com.steamdeck.launcher.runtime.LinuxRuntime
 import com.steamdeck.launcher.runtime.DesktopCatalog
 import com.steamdeck.launcher.runtime.LinuxRuntimeInstaller
+import com.steamdeck.launcher.runtime.DeckyManager
 import com.steamdeck.launcher.session.SessionService
 import com.steamdeck.launcher.ui.DesktopAppsDialog
 import com.steamdeck.launcher.ui.PackageRow
@@ -46,6 +47,7 @@ import com.steamdeck.launcher.ui.CreditsDialog
 import com.steamdeck.launcher.ui.FrontEndScreen
 import com.steamdeck.launcher.ui.FrontEndState
 import com.steamdeck.launcher.ui.FrontEndActions
+import com.steamdeck.launcher.ui.DeckyManagerPage
 import com.steamdeck.launcher.frontend.Library
 import com.steamdeck.launcher.ui.SteamDeckTheme
 import com.steamdeck.launcher.ui.RomsDialog
@@ -89,6 +91,16 @@ class MainActivity : ComponentActivity() {
     private var offline by mutableStateOf(false)
     private var protonRows by mutableStateOf<List<ProtonRow>>(emptyList())
     private var showPerformance by mutableStateOf(false)
+    private var showDecky by mutableStateOf(false)
+    private var deckyStatus by mutableStateOf(DeckyManager.Status(false, null, null, null))
+    private var deckyFexRootfsReady by mutableStateOf(false)
+    private var deckyStable by mutableStateOf<DeckyManager.Release?>(null)
+    private var deckyPrerelease by mutableStateOf<DeckyManager.Release?>(null)
+    private var deckyChecking by mutableStateOf(false)
+    private var deckyBusy by mutableStateOf(false)
+    private var deckyStage by mutableStateOf<String?>(null)
+    private var deckyPercent by mutableIntStateOf(-1)
+    private var deckyError by mutableStateOf<String?>(null)
     private var clientOverride by mutableStateOf(false)
     private var clientCores by mutableStateOf<Set<Int>>(emptySet())
     private var gameCores by mutableStateOf<Set<Int>>(emptySet())
@@ -157,6 +169,24 @@ class MainActivity : ComponentActivity() {
                 val page: (@Composable () -> Unit)? = when {
                     sm != null -> { { ModeSettingsHost(sm) } }
                     showPerformance -> { { PerformanceHost() } }
+                    showDecky -> { {
+                        DeckyManagerPage(
+                            status = deckyStatus,
+                            stable = deckyStable,
+                            prerelease = deckyPrerelease,
+                            checking = deckyChecking,
+                            busy = deckyBusy,
+                            stage = deckyStage,
+                            percent = deckyPercent,
+                            error = deckyError,
+                            runtimeReady = ready,
+                            fexRootfsReady = deckyFexRootfsReady,
+                            sessionRunning = SessionState.running,
+                            onRefresh = { refreshDeckyReleases() },
+                            onInstall = { installDecky(it) },
+                            onUninstall = { uninstallDecky(it) },
+                        )
+                    } }
                     else -> null
                 }
                 FrontEndScreen(
@@ -169,7 +199,11 @@ class MainActivity : ComponentActivity() {
                         steamGames = steamGames, emulators = emulatorList, running = runningLabel,
                         frameGenEngine = FrameGen.engine(this), frameGenMultiplier = FrameGen.multiplier(this),
                         lsfgReady = LsfgNative.isInstalled(this),
-                        pageKey = sm?.let { "settings:$it" } ?: if (showPerformance) "performance" else null,
+                        pageKey = sm?.let { "settings:$it" } ?: when {
+                            showPerformance -> "performance"
+                            showDecky -> "decky"
+                            else -> null
+                        },
                     ),
                     FrontEndActions(
                         onPlay = { startActivity(Intent(this, SessionActivity::class.java)) },
@@ -217,7 +251,16 @@ class MainActivity : ComponentActivity() {
                         },
                         onEmulatorHelp = { showEmulatorHelp = true },
                         onCredits = { showCredits = true },
-                        onPageBack = { settingsMode = null; showPerformance = false },
+                        onDecky = {
+                            settingsMode = null
+                            showPerformance = false
+                            showDecky = true
+                            deckyError = null
+                            deckyStatus = DeckyManager.status(this)
+                            deckyFexRootfsReady = DeckyManager.fexRootfsReady(this)
+                            refreshDeckyReleases()
+                        },
+                        onPageBack = { settingsMode = null; showPerformance = false; showDecky = false },
                     ),
                     page = page,
                 )
@@ -278,7 +321,72 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        deckyStatus = DeckyManager.status(this)
+        deckyFexRootfsReady = DeckyManager.fexRootfsReady(this)
         if (!busy) Thread({ checkCatalog() }, "catalog").start()
+    }
+
+    private fun refreshDeckyReleases() {
+        if (deckyChecking || deckyBusy) return
+        deckyChecking = true
+        deckyError = null
+        Thread({
+            val releases = runCatching { DeckyManager.fetchReleases() }
+            ui.post {
+                deckyChecking = false
+                releases.onSuccess { (stable, prerelease) ->
+                    deckyStable = stable
+                    deckyPrerelease = prerelease
+                }.onFailure { error ->
+                    deckyError = "Could not check Decky releases: ${error.message ?: "network error"}"
+                }
+            }
+        }, "decky-releases").start()
+    }
+
+    private fun installDecky(channel: String) {
+        if (deckyBusy) return
+        if (!ready) { deckyError = "Install the Linux runtime first"; return }
+        if (SessionState.running) { deckyError = "Close the Steam session before changing Decky"; return }
+        val release = when (channel) {
+            DeckyManager.STABLE -> deckyStable
+            DeckyManager.PRERELEASE -> deckyPrerelease
+            else -> null
+        }
+        if (release == null) { refreshDeckyReleases(); deckyError = "Decky release information is not available yet"; return }
+        deckyBusy = true
+        deckyError = null
+        deckyStage = "Starting…"
+        deckyPercent = -1
+        Thread({
+            val problem = DeckyManager.install(this, release) { name, value -> ui.post { deckyStage = name; deckyPercent = value } }
+            ui.post {
+                deckyBusy = false
+                deckyStage = null
+                deckyError = problem
+                deckyStatus = DeckyManager.status(this)
+                deckyFexRootfsReady = DeckyManager.fexRootfsReady(this)
+            }
+        }, "decky-install").start()
+    }
+
+    private fun uninstallDecky(wipeData: Boolean) {
+        if (deckyBusy) return
+        if (SessionState.running) { deckyError = "Close the Steam session before changing Decky"; return }
+        deckyBusy = true
+        deckyError = null
+        deckyStage = if (wipeData) "Removing Decky and its data…" else "Removing Decky; keeping plugins and settings…"
+        deckyPercent = -1
+        Thread({
+            val problem = DeckyManager.uninstall(this, wipeData)
+            ui.post {
+                deckyBusy = false
+                deckyStage = null
+                deckyError = problem
+                deckyStatus = DeckyManager.status(this)
+                deckyFexRootfsReady = DeckyManager.fexRootfsReady(this)
+            }
+        }, "decky-uninstall").start()
     }
 
     private fun openApps() {
