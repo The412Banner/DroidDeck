@@ -10,6 +10,10 @@ cd "$WORK"
 # pacman's download sandbox (Landlock + the alpm user) cannot be set up inside the runner's
 # container; the packages still come signed from Arch Linux ARM's mirrors.
 grep -q '^DisableSandbox' /etc/pacman.conf || sed -i 's/^\[options\]/[options]\nDisableSandbox/' /etc/pacman.conf
+# The geo-redirecting mirror answered 500s and connection resets mid-transaction; name a few
+# concrete mirrors ahead of it so pacman has somewhere to fall over to.
+{ for m in https://ca.us.mirror.archlinuxarm.org https://fl.us.mirror.archlinuxarm.org https://de3.mirror.archlinuxarm.org https://nl.mirror.archlinuxarm.org; do echo "Server = $m/\$arch/\$repo"; done; cat /etc/pacman.d/mirrorlist; } > /etc/pacman.d/mirrorlist.new
+mv /etc/pacman.d/mirrorlist.new /etc/pacman.d/mirrorlist
 pacman -Syu --noconfirm --needed git sudo zstd binutils
 # makepkg refuses root; a builder user with passwordless sudo installs the dependencies.
 id builder >/dev/null 2>&1 || useradd -m builder
@@ -33,7 +37,8 @@ PATCHES=\$(ls *.patch | sort)
 cat >> PKGBUILD <<'PREP'
 
 _steamdeck_prepare() {
-  cd gamescope
+  # Arch's own prepare() leaves the shell inside the checkout; start from a known place.
+  cd \"\$srcdir/gamescope\"
   for p in \$(ls \"\$srcdir\"/*.patch | sort); do
     echo \"applying \$(basename \"\$p\")\"
     patch -p1 --no-backup-if-mismatch < \"\$p\"
