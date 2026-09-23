@@ -119,12 +119,16 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
     val pageScroll = androidx.compose.foundation.rememberScrollState()
     val runtimeChip = remember { androidx.compose.ui.focus.FocusRequester() }
     val displayChip = remember { androidx.compose.ui.focus.FocusRequester() }
+    val firstChip = remember { androidx.compose.ui.focus.FocusRequester() }
     fun openDriverPage(key: String) { returnTo = key; driverPage = key }
     androidx.compose.runtime.LaunchedEffect(driverPage) {
-        if (driverPage == null) returnTo?.let { key ->
-            // One frame first: the box has to be laid out again before it can take focus.
+        if (driverPage == null) {
+            // One frame first: the box has to be laid out before it can take focus. Opened from the
+            // cog, focus starts on the first control (Resolution) so the d-pad works at once; back
+            // from a driver page, it returns to the driver box that opened it.
             androidx.compose.runtime.withFrameNanos { }
-            runCatching { (if (key == "rt") runtimeChip else displayChip).requestFocus() }
+            val target = when (returnTo) { "rt" -> runtimeChip; "panel" -> displayChip; else -> firstChip }
+            runCatching { target.requestFocus() }
         }
     }
     when (driverPage) {
@@ -169,6 +173,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                     .map { (cap, label) -> cap to (if (cap == default) "$label - the default" else label) } +
                     (CUSTOM to (custom?.let { "Custom · ${it.first}×${it.second}" } ?: "Custom…")),
                 if (custom != null) CUSTOM else s.resolutionCap, note = "720p can improve menu responsiveness.",
+                chipModifier = androidx.compose.ui.Modifier.focusRequester(firstChip),
                 onPick = { v -> if (v == CUSTOM) editCustom = true else { a.onCustomResolution(null); a.onResolution(v) } },
             )
             ChoiceRow(

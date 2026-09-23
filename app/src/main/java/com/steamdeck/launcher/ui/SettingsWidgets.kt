@@ -226,12 +226,14 @@ fun SettingsRow(label: String, hint: String?, highlighted: Boolean = false, cont
 fun <T> ChoiceRow(
     host: MenuHost, key: String, label: String, hint: String?,
     options: List<Pair<T, String>>, selected: T, enabled: Boolean = true, note: String? = null,
+    /** For the box itself - a page's FocusRequester for its first control. */
+    chipModifier: Modifier = Modifier,
     onPick: (T) -> Unit,
 ) {
     val open = host.open == key
     SettingsRow(label, hint, highlighted = open) {
         Box {
-            ValueChip(options.firstOrNull { it.first == selected }?.second ?: "-", open, enabled) { host.open = if (open) null else key }
+            ValueChip(options.firstOrNull { it.first == selected }?.second ?: "-", open, enabled, modifier = chipModifier) { host.open = if (open) null else key }
             AnchoredMenu(open, onDismiss = { if (host.open == key) host.open = null }, title = label, note = note) {
                 for ((value, text) in options) MenuItem(text, checked = value == selected) { onPick(value); host.open = null }
             }
