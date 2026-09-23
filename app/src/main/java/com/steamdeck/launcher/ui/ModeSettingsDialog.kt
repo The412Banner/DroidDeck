@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.steamdeck.launcher.core.FexPreset
@@ -111,7 +112,21 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
     val steam = s.mode == SessionService.MODE_STEAM
     val host = rememberMenuHost()
     // The two driver lists open as full pages over this one ("rt" = runtime, "panel" = display).
+    // Coming back restores this page as it was left: the same scroll position, and controller focus
+    // on the driver box that opened the page.
     var driverPage by remember { mutableStateOf<String?>(null) }
+    var returnTo by remember { mutableStateOf<String?>(null) }
+    val pageScroll = androidx.compose.foundation.rememberScrollState()
+    val runtimeChip = remember { androidx.compose.ui.focus.FocusRequester() }
+    val displayChip = remember { androidx.compose.ui.focus.FocusRequester() }
+    fun openDriverPage(key: String) { returnTo = key; driverPage = key }
+    androidx.compose.runtime.LaunchedEffect(driverPage) {
+        if (driverPage == null) returnTo?.let { key ->
+            // One frame first: the box has to be laid out again before it can take focus.
+            androidx.compose.runtime.withFrameNanos { }
+            runCatching { (if (key == "rt") runtimeChip else displayChip).requestFocus() }
+        }
+    }
     when (driverPage) {
         "rt" -> {
             DriverPage(
@@ -142,6 +157,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
         host,
         title = if (steam) "Steam session" else "Desktop session",
         onBack = a.onDismiss,
+        scroll = pageScroll,
     ) {
         SettingsGroup("Display") {
             val default = SessionPrefs.defaultResolutionCap(s.mode)
@@ -176,10 +192,16 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
         }
         SettingsGroup("Drivers") {
             SettingsRow("Runtime driver", (if (steam) "Used by Steam and games." else "Used by desktop apps.") + " Applies next session.") {
-                ValueChip(s.linuxRows.firstOrNull { it.id == s.linuxSelected }?.name ?: "Runtime default", open = false) { driverPage = "rt" }
+                ValueChip(
+                    s.linuxRows.firstOrNull { it.id == s.linuxSelected }?.name ?: "Runtime default", open = false,
+                    modifier = androidx.compose.ui.Modifier.focusRequester(runtimeChip),
+                ) { openDriverPage("rt") }
             }
             SettingsRow("Display driver", "Used by the compositor in both modes. Restart the app to apply.") {
-                ValueChip(s.androidRows.firstOrNull { it.id == s.androidSelected }?.name ?: "Auto - picked by GPU", open = false) { driverPage = "panel" }
+                ValueChip(
+                    s.androidRows.firstOrNull { it.id == s.androidSelected }?.name ?: "Auto - picked by GPU", open = false,
+                    modifier = androidx.compose.ui.Modifier.focusRequester(displayChip),
+                ) { openDriverPage("panel") }
             }
         }
         SettingsGroup(if (steam) "Touch & controls" else "Touch") {

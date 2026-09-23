@@ -165,7 +165,7 @@ fun MenuItem(
 }
 
 @Composable
-fun ValueChip(text: String, open: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+fun ValueChip(text: String, open: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val src = remember { MutableInteractionSource() }
     val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
@@ -174,7 +174,7 @@ fun ValueChip(text: String, open: Boolean, enabled: Boolean = true, onClick: () 
     val rot by animateFloatAsState(if (open) 180f else 0f, Motion.sp(0.6f), label = "chipCaret")
     Row(
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
-        modifier = Modifier
+        modifier = modifier
             .widthIn(min = 150.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(colors.surfaceVariant)
@@ -282,8 +282,11 @@ fun SettingsPage(
     lede: String? = null,
     /** A small control at the right of the title (the driver pages' refresh button). */
     action: (@Composable () -> Unit)? = null,
+    /** Pass one held above the page to keep its scroll position across a page opened over it. */
+    scroll: androidx.compose.foundation.ScrollState? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val scrollState = scroll ?: rememberScrollState()
     val colors = MaterialTheme.colorScheme
     val dim by animateFloatAsState(if (host.open != null) 0.6f else 1f, Motion.tw(220), label = "pageDim")
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 18.dp)) {
@@ -314,7 +317,7 @@ fun SettingsPage(
         }
         if (lede != null) Rise(2) { Lede(lede) }
         Rise(3, Modifier.weight(1f).fillMaxWidth()) {
-            Column(modifier = Modifier.fillMaxSize().graphicsLayer { alpha = dim }.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) { content() }
+            Column(modifier = Modifier.fillMaxSize().graphicsLayer { alpha = dim }.verticalScroll(scrollState).padding(bottom = 24.dp)) { content() }
         }
     }
 }
