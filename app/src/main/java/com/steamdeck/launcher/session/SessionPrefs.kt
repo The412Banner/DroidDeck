@@ -4,6 +4,8 @@ import android.content.Context
 
 /** The in-session switches: the HUD and how the on-screen controls decide to appear. */
 object SessionPrefs {
+    // CI report test: a harmless change so the pull request has a diff again.
+
     const val OSC_AUTO = "auto"
     const val OSC_ALWAYS = "always"
     const val OSC_NEVER = "never"
