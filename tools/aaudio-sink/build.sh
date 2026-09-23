@@ -19,7 +19,9 @@ mkdir -p "$INC/pulse"
 sed -e 's/@PA_MAJOR@/13/g' -e 's/@PA_MINOR@/0/g' -e 's/@PA_API_VERSION@/12/g' -e 's/@PA_PROTOCOL_VERSION@/33/g' \
     "$PA_SRC/src/pulse/version.h.in" > "$INC/pulse/version.h"
 cp "$HERE/config.h" "$HERE/ltdl.h" "$INC/"
-"$CC" -O2 -shared -fPIC -Wall -Wno-unused-parameter -DHAVE_CONFIG_H \
+# PulseAudio 13's own headers (pulsecore/atomic.h) predate clang's int-conversion error; that
+# one is downgraded for them, the module itself compiles clean.
+"$CC" -O2 -shared -fPIC -Wall -Wno-unused-parameter -Wno-error=int-conversion -Wno-visibility -DHAVE_CONFIG_H \
     -I"$INC" -I"$PA_SRC/src" \
     -o "$OUT" "$HERE/module-aaudio-sink.c" \
     -L"$LIBS" -l:libpulsecore-13.0.so -l:libpulsecommon-13.0.so -l:libpulse.so -laaudio

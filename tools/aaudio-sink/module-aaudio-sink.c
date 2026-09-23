@@ -324,6 +324,8 @@ finish:
     pa_log_debug("IO thread shutting down");
 }
 
+void pa__done(pa_module *m);
+
 int pa__init(pa_module *m) {
     struct userdata *u = NULL;
     pa_modargs *ma = NULL;
