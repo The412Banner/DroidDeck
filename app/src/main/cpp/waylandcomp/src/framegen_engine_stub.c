@@ -1,5 +1,5 @@
 /* Stand-in for framegen_engine.cpp when the compositor is built on its own (standalone/, no
- * winlator tree, no dxbc). Every engine is reported unavailable; nothing is generated. */
+ * framegen tree, no dxbc). Every engine is reported unavailable; nothing is generated. */
 #include "framegen_engine.h"
 
 const void *fge_probe(PFN_vkGetInstanceProcAddr gipa, VkInstance inst, VkPhysicalDevice pd,

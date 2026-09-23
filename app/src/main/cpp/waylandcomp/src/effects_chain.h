@@ -2,7 +2,7 @@
 #define EFFECTS_CHAIN_H
 /*
  * Screen-effect chain for the embedded Wayland compositor: the X11 Vulkan renderer's post
- * chain (the .frag files in app/src/main/cpp/winlator, VulkanRendererContext::recordUpscalePasses) run
+ * chain (the .frag files in app/src/main/cpp/framegen, VulkanRendererContext::recordUpscalePasses) run
  * between the composited scene and the output blit, with the same SPIR-V, push-constant
  * layouts, uniform ranges and pass order, so a saved preset looks the same on both backends.
  *

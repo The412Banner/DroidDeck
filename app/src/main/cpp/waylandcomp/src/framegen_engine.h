@@ -3,10 +3,10 @@
 /*
  * C face of the C++ frame-generation engines for framegen_bridge.c.
  *
- * framegen_engine.cpp wraps lsfg::Engine (winlator/lsfg) and winfg::Engine (winlator/winfg)
+ * framegen_engine.cpp wraps lsfg::Engine (framegen/lsfg) and winfg::Engine (framegen/winfg)
  * unmodified - the same objects the X11 renderer (VulkanRendererContext) drives - and fills
  * their dispatch tables from the compositor's own Turnip entry points. The standalone
- * compositor build (no winlator tree) compiles framegen_engine_stub.c instead, which reports
+ * compositor build (no framegen tree) compiles framegen_engine_stub.c instead, which reports
  * "engines not built in" and generates nothing.
  *
  * Every function runs on the compositor thread.

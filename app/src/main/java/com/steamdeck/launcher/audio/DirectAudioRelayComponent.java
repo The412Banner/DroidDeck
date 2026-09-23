@@ -3,8 +3,8 @@ package com.steamdeck.launcher.audio;
 import android.os.Process;
 import android.util.Log;
 
-import com.steamdeck.launcher.core.EnvironmentComponent;
-import com.steamdeck.launcher.core.ProcessHelper;
+import com.steamdeck.launcher.core.SessionPart;
+import com.steamdeck.launcher.core.HostProcess;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -28,7 +28,7 @@ import java.util.ArrayList;
  * picks an audio driver, and reports itself unavailable if not. Ported from Bannerlator (GPL-3.0);
  * the helper binary is the one built by The412Banner/directaudio's relay workflow.
  */
-public class DirectAudioRelayComponent extends EnvironmentComponent {
+public class DirectAudioRelayComponent extends SessionPart {
     private static final String TAG = "DirectAudioRelay";
     /** The helper, named as a library so Android will run it. */
     public static final String BINARY = "libdirectaudiorelay.so";
@@ -53,7 +53,7 @@ public class DirectAudioRelayComponent extends EnvironmentComponent {
     @Override
     public void start() {
         stop();
-        File binary = new File(context.getApplicationInfo().nativeLibraryDir, BINARY);
+        File binary = new File(app().getApplicationInfo().nativeLibraryDir, BINARY);
         if (!binary.isFile()) {
             Log.w(TAG, "helper missing at " + binary + "; DirectAudio will report itself unavailable");
             return;
@@ -97,7 +97,7 @@ public class DirectAudioRelayComponent extends EnvironmentComponent {
             command.append(" --mic-fifo ").append(micFifoPath.getAbsolutePath());
         }
         ArrayList<String> env = new ArrayList<>();
-        env.add("HOME=" + context.getFilesDir());
+        env.add("HOME=" + app().getFilesDir());
         java.io.PrintWriter out = null;
         if (logFile != null) {
             try {
@@ -110,8 +110,8 @@ public class DirectAudioRelayComponent extends EnvironmentComponent {
             }
         }
         final java.io.PrintWriter log = out;
-        pid = ProcessHelper.exec(command.toString(), env.toArray(new String[0]),
-                context.getFilesDir(), null,
+        pid = HostProcess.start(command.toString(), env.toArray(new String[0]),
+                app().getFilesDir(), null,
                 line -> {
                     Log.i(TAG, line);
                     if (log != null) synchronized (log) { log.println(line); log.flush(); }

@@ -50,7 +50,7 @@ public final class Downloader {
      * 790 MB download survive a dropped connection instead of starting over.
      */
     public static boolean downloadFile(String url, File destination, boolean resume,
-                                       Callback<Float> progress) {
+                                       java.util.function.Consumer<Float> progress) {
         HttpURLConnection connection = null;
         long have = resume && destination.isFile() ? destination.length() : 0;
         try {
@@ -87,11 +87,11 @@ public final class Downloader {
                     // enough to move a progress bar smoothly.
                     if (progress != null && written - lastReport > (1 << 20)) {
                         lastReport = written;
-                        progress.call(total > 0 ? written / (float) total : -1f);
+                        progress.accept(total > 0 ? written / (float) total : -1f);
                     }
                 }
             }
-            if (progress != null) progress.call(1f);
+            if (progress != null) progress.accept(1f);
             return total <= 0 || written >= total;
         } catch (Exception e) {
             Log.w(TAG, "download " + url, e);

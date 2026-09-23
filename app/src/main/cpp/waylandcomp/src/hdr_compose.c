@@ -8,7 +8,7 @@
 
 /* SPIR-V, pre-compiled (glslangValidator -V hdr_encode.frag --vn hdr_encode_code) and committed next
  * to the GLSL, like every other shader of the compositor: the NDK build compiles no shaders. The quad
- * is the effect chain's upscale.vert (same bytes, from app/src/main/cpp/winlator). */
+ * is the effect chain's upscale.vert (same bytes, from app/src/main/cpp/framegen). */
 /* The headers define plain (external) arrays and effects_chain.c includes upscale_vert.h too: this
  * translation unit gets its own copy under another name, so the link sees no duplicate symbol. */
 #define upscale_vert_code hdrc_upscale_vert_code

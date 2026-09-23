@@ -357,7 +357,6 @@ fun CreditsDialog(onDismiss: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 Text("maxjivi05 (Max) — the gamescope runtime this is built on: the proot session, the session shim, the fake-evdev interposer and the controller work, from WinNative.", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(10.dp))
-                Text("Winlator (brunodev85) — the audio stack, the gamepad model and the shape of a session's host-side components; WinNative and Bannerlator are both Winlator lineage.", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "GPL-3.0. Valve, Steam, Steam Deck and Proton are trademarks of Valve Corporation; this project is not affiliated with Valve. gamescope, Mesa, Turnip, Xwayland, PulseAudio, proot and Arch Linux ARM are their authors' own.",

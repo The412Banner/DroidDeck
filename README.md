@@ -561,9 +561,8 @@ disabled.
 ## Lineage and licence
 
 GPL-3.0. The gamescope runtime, the session shim and the fake-evdev interposer come from
-maxjivi05's WinNative work and from Bannerlator, both GPL-3.0; the Wayland compositor, the frame
-generation engines and the runtime plumbing are Bannerlator's. Underneath all of it is Winlator
-(brunodev85, GPL-3.0): the PulseAudio-on-AAudio audio stack, the gamepad state model and the shape
-of a session's host-side components are his, and WinNative and Bannerlator are both Winlator
-lineage. Valve, Steam and Proton are Valve Corporation's; this project
-is not affiliated with Valve.
+maxjivi05's WinNative work, GPL-3.0; the Wayland compositor, the frame generation engines, the
+file manager and the runtime plumbing are Bannerlator's, GPL-3.0; the pad, the audio components
+and the session's host-side plumbing are this app's own. LSFG Native builds on lsfg-vk
+(PancakeTAS) and Win-FG carries the FidelityFX optical-flow notice. Valve, Steam and Proton are
+Valve Corporation's; this project is not affiliated with Valve.

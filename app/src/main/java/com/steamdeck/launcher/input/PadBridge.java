@@ -15,7 +15,7 @@ import java.io.File;
  * <p>Android hands a gamepad to the foreground activity as key and motion events; the Steam client
  * inside the runtime never sees that. What it does scan is {@code /dev/input}, which the session's
  * interposer (libfakeinput.so) serves out of the shared-memory rings written here. So the path is:
- * Android event → {@link GamepadState} → {@link FakeInputWriter} ring → interposer → evdev node →
+ * Android event → {@link PadState} → {@link FakeInputWriter} ring → interposer → evdev node →
  * SDL → Big Picture.
  *
  * <p>The identity the interposer reports is an Xbox 360 pad, which is what makes SDL apply a known
@@ -31,8 +31,8 @@ public final class PadBridge {
     private static final long QAM_GUIDE_TAIL_MS = 40;
 
     private final FakeInputWriter writer;
-    private final GamepadState state = new GamepadState();
-    private final GamepadState effectiveState = new GamepadState();
+    private final PadState state = new PadState();
+    private final PadState effectiveState = new PadState();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean open;
     private boolean systemGuidePressed;
@@ -61,8 +61,8 @@ public final class PadBridge {
         qamSyntheticAPressed = false;
         qamChordGeneration++;
         if (open) {
-            state.reset();
-            writer.writeGamepadState(state);
+            state.clear();
+            writer.writePad(state);
             writer.close();
             open = false;
         }
@@ -92,28 +92,28 @@ public final class PadBridge {
         if (!isFromController(event.getDevice())) return false;
         boolean pressed = event.getAction() == KeyEvent.ACTION_DOWN;
         switch (event.getKeyCode()) {
-            case KeyEvent.KEYCODE_BUTTON_A: state.setPressed(0, pressed); break;
-            case KeyEvent.KEYCODE_BUTTON_B: state.setPressed(1, pressed); break;
-            case KeyEvent.KEYCODE_BUTTON_X: state.setPressed(2, pressed); break;
-            case KeyEvent.KEYCODE_BUTTON_Y: state.setPressed(3, pressed); break;
-            case KeyEvent.KEYCODE_BUTTON_L1: state.setPressed(4, pressed); break;
-            case KeyEvent.KEYCODE_BUTTON_R1: state.setPressed(5, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_A: state.press(0, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_B: state.press(1, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_X: state.press(2, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_Y: state.press(3, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_L1: state.press(4, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_R1: state.press(5, pressed); break;
             case KeyEvent.KEYCODE_BUTTON_SELECT:
-            case KeyEvent.KEYCODE_BACK: state.setPressed(6, pressed); break;
+            case KeyEvent.KEYCODE_BACK: state.press(6, pressed); break;
             case KeyEvent.KEYCODE_BUTTON_START:
-            case KeyEvent.KEYCODE_MENU: state.setPressed(7, pressed); break;
-            case KeyEvent.KEYCODE_BUTTON_THUMBL: state.setPressed(8, pressed); break;
-            case KeyEvent.KEYCODE_BUTTON_THUMBR: state.setPressed(9, pressed); break;
+            case KeyEvent.KEYCODE_MENU: state.press(7, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_THUMBL: state.press(8, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_THUMBR: state.press(9, pressed); break;
             // The client's own in-game menu is opened by this one; the interposer publishes it as
             // BTN_MODE, which SDL reports as the "guide" button.
             case KeyEvent.KEYCODE_BUTTON_MODE:
-            case KeyEvent.KEYCODE_HOME: state.setPressed(GamepadState.IDX_BUTTON_MODE, pressed); break;
-            case KeyEvent.KEYCODE_BUTTON_L2: state.triggerL = pressed ? 1f : 0f; break;
-            case KeyEvent.KEYCODE_BUTTON_R2: state.triggerR = pressed ? 1f : 0f; break;
-            case KeyEvent.KEYCODE_DPAD_UP: state.dpad[0] = pressed; break;
-            case KeyEvent.KEYCODE_DPAD_RIGHT: state.dpad[1] = pressed; break;
-            case KeyEvent.KEYCODE_DPAD_DOWN: state.dpad[2] = pressed; break;
-            case KeyEvent.KEYCODE_DPAD_LEFT: state.dpad[3] = pressed; break;
+            case KeyEvent.KEYCODE_HOME: state.press(PadState.GUIDE, pressed); break;
+            case KeyEvent.KEYCODE_BUTTON_L2: state.leftTrigger = pressed ? 1f : 0f; break;
+            case KeyEvent.KEYCODE_BUTTON_R2: state.rightTrigger = pressed ? 1f : 0f; break;
+            case KeyEvent.KEYCODE_DPAD_UP: state.up = pressed; break;
+            case KeyEvent.KEYCODE_DPAD_RIGHT: state.right = pressed; break;
+            case KeyEvent.KEYCODE_DPAD_DOWN: state.down = pressed; break;
+            case KeyEvent.KEYCODE_DPAD_LEFT: state.left = pressed; break;
             default: return false;
         }
         publish();
@@ -124,19 +124,19 @@ public final class PadBridge {
     public synchronized boolean onMotionEvent(MotionEvent event) {
         if (!isFromController(event.getDevice())) return false;
         if (event.getAction() != MotionEvent.ACTION_MOVE) return false;
-        state.thumbLX = axis(event, MotionEvent.AXIS_X);
+        state.leftX = axis(event, MotionEvent.AXIS_X);
         // Android's Y axis grows downwards and evdev's ABS_Y does too, so no flip here: what the
         // pad reports as "down" is what the client is told.
-        state.thumbLY = axis(event, MotionEvent.AXIS_Y);
-        state.thumbRX = axis(event, MotionEvent.AXIS_Z);
-        state.thumbRY = axis(event, MotionEvent.AXIS_RZ);
+        state.leftY = axis(event, MotionEvent.AXIS_Y);
+        state.rightX = axis(event, MotionEvent.AXIS_Z);
+        state.rightY = axis(event, MotionEvent.AXIS_RZ);
         float lt = event.getAxisValue(MotionEvent.AXIS_LTRIGGER);
         float rt = event.getAxisValue(MotionEvent.AXIS_RTRIGGER);
         // Some pads only report the triggers on BRAKE/GAS.
         if (lt == 0f) lt = event.getAxisValue(MotionEvent.AXIS_BRAKE);
         if (rt == 0f) rt = event.getAxisValue(MotionEvent.AXIS_GAS);
-        state.triggerL = lt;
-        state.triggerR = rt;
+        state.leftTrigger = lt;
+        state.rightTrigger = rt;
         float hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X);
         float hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y);
         state.dpad[0] = hatY < -0.5f;
@@ -151,7 +151,7 @@ public final class PadBridge {
      * The on-screen controls' way in: they mutate the same state a physical pad writes, so the
      * client only ever sees one device and a user can use both at once without them fighting.
      */
-    public synchronized void applyTouch(java.util.function.Consumer<GamepadState> mutation) {
+    public synchronized void applyTouch(java.util.function.Consumer<PadState> mutation) {
         mutation.accept(state);
         publish();
     }
@@ -203,13 +203,13 @@ public final class PadBridge {
         if (!open && !start()) return;
         if (systemGuidePressed || qamChordActive) {
             effectiveState.copy(state);
-            effectiveState.setPressed(GamepadState.IDX_BUTTON_MODE, true);
+            effectiveState.setPressed(PadState.IDX_BUTTON_MODE, true);
             if (qamSyntheticAPressed) {
                 effectiveState.setPressed(0, state.isPressed(0) || qamSyntheticAPressed);
             }
-            writer.writeGamepadState(effectiveState);
+            writer.writePadState(effectiveState);
         } else {
-            writer.writeGamepadState(state);
+            writer.writePad(state);
         }
     }
 

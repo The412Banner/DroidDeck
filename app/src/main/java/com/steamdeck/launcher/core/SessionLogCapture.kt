@@ -43,7 +43,7 @@ object SessionLogCapture {
             this.target = target
             // -T 1 starts at the newest line rather than replaying the whole buffer; -v threadtime
             // keeps the timestamps and thread ids that make two logs line up.
-            pid = ProcessHelper.exec(
+            pid = HostProcess.start(
                 "/system/bin/logcat -v threadtime -T 1 --pid=" + Process.myPid(),
                 null, target.parentFile, null,
             ) { line ->
@@ -103,7 +103,7 @@ object SessionLogCapture {
             // callback on another thread, so a poll for "is it empty yet" declared an empty buffer
             // every time and still cost the wait. exec() returns a pid, never an exit status - the
             // first version printed that pid as "rc", which was nonsense in the file.
-            val pid = ProcessHelper.exec(
+            val pid = HostProcess.start(
                 "/system/bin/logcat -b crash -d -v threadtime -t 400", null, target.parentFile,
                 { done.countDown() },
             ) { line -> synchronized(lines) { lines.append(line).append('\n') } }

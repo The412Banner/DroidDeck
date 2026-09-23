@@ -4,7 +4,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.util.Log
-import com.steamdeck.launcher.core.EnvironmentComponent
+import com.steamdeck.launcher.core.SessionPart
 import java.io.File
 import kotlin.math.abs
 
@@ -22,7 +22,7 @@ import kotlin.math.abs
  * from |current| × voltage; time to empty from charge ÷ |average current| while discharging. Where
  * a device reports no current, the client still gets status and percentage.
  */
-class BatteryComponent(val dir: File) : EnvironmentComponent() {
+class BatteryComponent(val dir: File) : SessionPart() {
     @Volatile private var running = false
     private var thread: Thread? = null
 
@@ -45,7 +45,7 @@ class BatteryComponent(val dir: File) : EnvironmentComponent() {
     }
 
     private fun write() {
-        val ctx = context ?: return
+        val ctx = app() ?: return
         try {
             val bm = ctx.getSystemService(BatteryManager::class.java)
             val sticky: Intent? = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))

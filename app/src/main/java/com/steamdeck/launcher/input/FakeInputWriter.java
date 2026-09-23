@@ -64,8 +64,8 @@ public class FakeInputWriter {
             BTN_SELECT, BTN_START, BTN_THUMBL, BTN_THUMBR,
             BTN_MODE
     };
-    /** Bit 10 of the snapshot word. The first ten are GamepadState's own bit order; the Steam
-     *  button is not, because GamepadState keeps 10 and 11 for the triggers. */
+    /** Bit 10 of the snapshot word. The first ten are PadState's own bit order; the Steam
+     *  button is not, because PadState keeps 10 and 11 for the triggers. */
     private static final int SNAPSHOT_IDX_MODE = 10;
 
     private static final int EVENT_SIZE = 24;
@@ -595,7 +595,7 @@ public class FakeInputWriter {
         writeEvent(EV_KEY, BUTTON_MAP[idx], pressed ? 1 : 0);
     }
 
-    public synchronized void writeGamepadState(GamepadState state) {
+    public synchronized void writePad(PadState state) {
         if (!isOpen && !open())
             return;
 
@@ -613,19 +613,19 @@ public class FakeInputWriter {
 
         // Buttons
         for (int i = 0; i < 10; i++) {
-            writeButton(i, state.isPressed((byte) i));
+            writeButton(i, state.isDown(i));
         }
         // The Steam button. In a Linux session this is what opens the client's own in-game menu,
         // and the client looks for it where an Xbox pad keeps it: evdev BTN_MODE, which SDL then
         // reports as button 8 - exactly the "guide:b8" in the mapping Steam writes for this pad.
         writeButton(SNAPSHOT_IDX_MODE,
-                state.isPressed(GamepadState.IDX_BUTTON_MODE));
+                state.isDown(PadState.GUIDE));
 
         // Sticks
-        int lx = (int) (state.thumbLX * 32767);
-        int ly = (int) (state.thumbLY * 32767);
-        int rx = (int) (state.thumbRX * 32767);
-        int ry = (int) (state.thumbRY * 32767);
+        int lx = (int) (state.leftX * 32767);
+        int ly = (int) (state.leftY * 32767);
+        int rx = (int) (state.rightX * 32767);
+        int ry = (int) (state.rightY * 32767);
 
         // The fake evdev ring is event-queue semantics, so unchanged axes normally
         // stay silent; forceResend overrides that to emit a complete keyframe.
@@ -647,8 +647,8 @@ public class FakeInputWriter {
         }
 
         // L2 and R2 (Triggers)
-        int tl = (int) (state.triggerL * 255);
-        int tr = (int) (state.triggerR * 255);
+        int tl = (int) (state.leftTrigger * 255);
+        int tr = (int) (state.rightTrigger * 255);
         if (forceResend || tl != prevTriggerL) {
             prevTriggerL = tl;
             writeEvent(EV_ABS, ABS_BRAKE, tl);
@@ -659,8 +659,8 @@ public class FakeInputWriter {
         }
 
         // D-pad
-        int hatX = state.dpad[3] ? -1 : (state.dpad[1] ? 1 : 0);
-        int hatY = state.dpad[0] ? -1 : (state.dpad[2] ? 1 : 0);
+        int hatX = state.hatX();
+        int hatY = state.hatY();
         if (forceResend || hatX != prevHatX) {
             prevHatX = hatX;
             writeEvent(EV_ABS, ABS_HAT0X, hatX);

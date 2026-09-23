@@ -7,7 +7,7 @@ import android.net.Network
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
-import com.steamdeck.launcher.core.EnvironmentComponent
+import com.steamdeck.launcher.core.SessionPart
 import java.io.File
 import java.io.IOException
 import java.net.Inet4Address
@@ -28,7 +28,7 @@ import java.net.Inet6Address
 class LinuxNetworkLinkComponent(
     context: Context,
     private val rootDir: File,
-) : EnvironmentComponent() {
+) : SessionPart() {
     private val appContext = context.applicationContext
     private val connectivity =
         appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager

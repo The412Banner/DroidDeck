@@ -38,19 +38,19 @@ target_include_directories(bannerwayland PRIVATE
         prebuilt/include
         src
         # The X11 Vulkan renderer's committed SPIR-V headers (*_frag.h / upscale_vert.h, made by
-        # winlator/gen_shaders.sh): the screen-effect chain (src/effects_chain.c) runs the same bytes.
+        # Bannerlator's gen_shaders.sh): the screen-effect chain (src/effects_chain.c) runs the same bytes.
         ${CMAKE_CURRENT_SOURCE_DIR}/../shaders
 )
 
 # ── Frame generation (feat/wayland-framegen) ─────────────────────────────────
-# The two native engines the X11 renderer runs (LSFG Native: winlator/lsfg, Win-FG Native:
-# winlator/winfg) are compiled into this library unmodified and driven by
+# The two native engines the X11 renderer runs (LSFG Native: framegen/lsfg, Win-FG Native:
+# framegen/winfg) are compiled into this library unmodified and driven by
 # src/framegen_engine.cpp through the compositor's own Turnip entry points. They need the
-# winlator tree and the vendored DXBC translator (thirdparty/dxbc, for the LSFG cache format),
+# framegen tree and the vendored DXBC translator (thirdparty/dxbc, for the LSFG cache format),
 # which only the app build has: the standalone build (standalone/) gets the stub, which reports
 # every engine unavailable and generates nothing.
-set(BANNER_FRAMEGEN_LSFG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../winlator/lsfg)
-set(BANNER_FRAMEGEN_WINFG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../winlator/winfg)
+set(BANNER_FRAMEGEN_LSFG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../framegen/lsfg)
+set(BANNER_FRAMEGEN_WINFG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../framegen/winfg)
 if (TARGET dxbc AND EXISTS ${BANNER_FRAMEGEN_LSFG_DIR}/lsfg_engine.cpp
         AND EXISTS ${BANNER_FRAMEGEN_WINFG_DIR}/winfg_engine.cpp)
     message(STATUS "bannerwayland: frame-generation engines built in (LSFG Native, Win-FG Native)")
@@ -79,8 +79,8 @@ if (TARGET dxbc AND EXISTS ${BANNER_FRAMEGEN_LSFG_DIR}/lsfg_engine.cpp
             ${BANNER_FRAMEGEN_WINFG_DIR}/winfg_engine.cpp
     )
     target_include_directories(bannerwayland PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/..            # <thirdparty/...> as the winlator target sees it
-            ${CMAKE_CURRENT_SOURCE_DIR}/../winlator   # VulkanRendererContext.h (VkTable), lsfg/, winfg/
+            ${CMAKE_CURRENT_SOURCE_DIR}/..            # <thirdparty/...> as the frame-generation engines see it
+            ${CMAKE_CURRENT_SOURCE_DIR}/../framegen   # VulkanRendererContext.h (VkTable), lsfg/, winfg/
     )
     target_compile_options(bannerwayland PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:-std=c++17 -fvisibility=hidden>)

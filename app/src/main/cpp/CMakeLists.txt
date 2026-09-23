@@ -24,12 +24,12 @@ add_subdirectory(thirdparty/dxbc)
 # rot. The compositor's frame-generation leg (waylandcomp/CMakeLists.txt) stamps both in.
 set(WINFG_UPSTREAM "v0.3.0")
 set(WINFG_CHAIN_SRC
-        winlator/winfg/framegen.cpp
-        winlator/winfg/framegen.hpp
-        winlator/winfg/record_impl.inc
-        winlator/winfg/config.hpp
-        winlator/winfg/embedded_shaders.hpp
-        winlator/winfg/winfg_engine.cpp
+        framegen/winfg/framegen.cpp
+        framegen/winfg/framegen.hpp
+        framegen/winfg/record_impl.inc
+        framegen/winfg/config.hpp
+        framegen/winfg/embedded_shaders.hpp
+        framegen/winfg/winfg_engine.cpp
 )
 set(WINFG_HASH_INPUT "")
 foreach(f ${WINFG_CHAIN_SRC})

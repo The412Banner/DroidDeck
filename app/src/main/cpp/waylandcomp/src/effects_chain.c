@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The X11 Vulkan renderer's SPIR-V, pre-compiled by app/src/main/cpp/winlator/gen_shaders.sh
+/* The X11 Vulkan renderer's SPIR-V, pre-compiled by app/src/main/cpp/framegen/gen_shaders.sh
  * (glslangValidator --vn) and committed next to the GLSL: the NDK build compiles no shaders, so
  * there is no build-time tooling for CI to break. Same bytes as the X11 chain runs. */
 #include "upscale_vert.h"

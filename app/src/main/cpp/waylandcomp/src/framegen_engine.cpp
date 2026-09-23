@@ -1,7 +1,7 @@
 // C++ side of the Wayland frame-generation bridge - see framegen_engine.h.
 //
 // Hosts the SAME engine objects the X11 renderer drives (lsfg::Engine, winfg::Engine), fed from
-// the compositor's own Turnip entry points. Nothing in winlator/lsfg or winlator/winfg is
+// the compositor's own Turnip entry points. Nothing in framegen/lsfg or framegen/winfg is
 // modified: the engines take a VkTable (VulkanRendererContext.h) for their dispatch, and one is
 // filled here by name from the compositor's vkGetInstanceProcAddr / vkGetDeviceProcAddr.
 #include "framegen_engine.h"

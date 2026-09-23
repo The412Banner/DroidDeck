@@ -22,7 +22,7 @@
 #include <cstdint>
 
 #ifndef SCANOUT_LOG
-#define SCANOUT_LOG(...) __android_log_print(ANDROID_LOG_DEBUG,"Winlator_Scanout",__VA_ARGS__)
+#define SCANOUT_LOG(...) __android_log_print(ANDROID_LOG_DEBUG,"SteamDeck_Scanout",__VA_ARGS__)
 #endif
 
 class ScanoutContext {

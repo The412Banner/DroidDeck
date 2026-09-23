@@ -5,8 +5,8 @@ import android.os.Process;
 import android.util.Log;
 
 import com.steamdeck.launcher.core.FileUtils;
-import com.steamdeck.launcher.core.EnvironmentComponent;
-import com.steamdeck.launcher.core.ProcessHelper;
+import com.steamdeck.launcher.core.SessionPart;
+import com.steamdeck.launcher.core.HostProcess;
 import com.steamdeck.launcher.core.TarZst;
 
 import java.io.File;
@@ -26,7 +26,7 @@ import java.util.ArrayList;
  * recreate — those need the pasink native client, and a session here is a foreground activity
  * that does not background the way a game container does.
  */
-public class PulseAudioComponent extends EnvironmentComponent {
+public class PulseAudioComponent extends SessionPart {
     private static final String TAG = "PulseAudio";
     /** Where the guest reaches the daemon; the session exports PULSE_SERVER=unix:<this>. */
     public static final String SOCKET_NAME = "PS0";
@@ -136,7 +136,7 @@ public class PulseAudioComponent extends EnvironmentComponent {
         // startup: all of it used to reach logcat and nothing else, so a user's folder said nothing
         // at all about sound. Four separate faults hid behind "no input device" in one night.
         final java.io.PrintWriter out = openLog();
-        pid = ProcessHelper.exec(command, env.toArray(new String[0]), workingDir, null,
+        pid = HostProcess.start(command, env.toArray(new String[0]), workingDir, null,
                 line -> {
                     Log.i(TAG, line);
                     if (out != null) synchronized (out) { out.println(line); out.flush(); }

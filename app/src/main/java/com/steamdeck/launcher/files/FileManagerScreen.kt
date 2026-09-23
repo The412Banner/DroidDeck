@@ -151,7 +151,7 @@ enum class ConflictChoice { OVERWRITE, MERGE, KEEP_BOTH, SKIP }
  * Shortens a path from the LEFT, keeping whole segments.
  *
  * Compose's TextOverflow can only ellipsise the tail, which for a path throws away the part that
- * matters — `/storage/emulated/0/Winlator/Game…` tells you nothing about where you are.
+ * matters — `/storage/emulated/0/Games/…` tells you nothing about where you are.
  */
 private fun elidePathStart(path: String, max: Int): String {
     if (path.length <= max) return path
@@ -923,7 +923,7 @@ fun FileManagerScreen(
                 Spacer(Modifier.weight(1f))
             } else {
                 // LANDSCAPE: the CURRENT FOLDER, not the full path. A path ellipsised on the right
-                // hides its tail — the only part that says where you are ("…/Winlator/Game…"). The
+                // hides its tail — the only part that says where you are ("…/Games/…"). The
                 // full path moves to the line below, where it has room.
                 Text(
                     text = currentDir.name.ifBlank { currentDir.absolutePath },

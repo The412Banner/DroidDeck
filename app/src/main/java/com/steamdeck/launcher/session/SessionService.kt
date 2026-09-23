@@ -23,12 +23,12 @@ import com.steamdeck.launcher.audio.DirectAudioRelayComponent
 import com.steamdeck.launcher.audio.PulseAudioComponent
 import com.steamdeck.launcher.core.CpuCores
 import com.steamdeck.launcher.core.DeviceReport
-import com.steamdeck.launcher.core.EnvVars
+import com.steamdeck.launcher.core.HostEnvironment
 import com.steamdeck.launcher.core.SessionLogCapture
 import com.steamdeck.launcher.core.NetworkReport
-import com.steamdeck.launcher.core.EnvironmentComponent
+import com.steamdeck.launcher.core.SessionPart
 import com.steamdeck.launcher.core.FileUtils
-import com.steamdeck.launcher.core.ProcessHelper
+import com.steamdeck.launcher.core.HostProcess
 import com.steamdeck.launcher.input.FakeInputWriter
 import com.steamdeck.launcher.runtime.LinuxNetworkLinkComponent
 import com.steamdeck.launcher.runtime.LinuxRuntime
@@ -52,7 +52,7 @@ import java.util.Locale
  * The activity comes and goes on top of this; see [com.steamdeck.launcher.wayland.CompositorHost].
  */
 class SessionService : Service() {
-    private val components = ArrayList<EnvironmentComponent>()
+    private val components = ArrayList<SessionPart>()
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var sessionPid = -1
@@ -250,14 +250,14 @@ class SessionService : Service() {
         val audioLog = File(sessionDir, "audio.log")
         val pulse = PulseAudioComponent(this, micFifo?.absolutePath)
         pulse.setLogFile(audioLog)
-        pulse.setContext(this)
+        pulse.attach(this)
         guest.add("PULSE_SERVER=unix:" + pulse.socket().absolutePath)
         components.add(pulse)
         if (wantsDirectAudio || wantsMic) {
             // After the daemon in the list, so it can wait for the pipe the daemon makes.
             val relay = DirectAudioRelayComponent(relaySocket, micFifo)
             relay.setLogFile(audioLog)
-            relay.setContext(this)
+            relay.attach(this)
             components.add(relay)
         }
         if (wantsDirectAudio) {
@@ -355,9 +355,12 @@ class SessionService : Service() {
         // called "battery" and its files differ, so the client sees no battery at all. A directory
         // of our own, written from Android's battery API every few seconds, is bound over it.
         val battery = BatteryComponent(File(filesDir, "session/sys/power_supply"))
-        battery.setContext(this)
+        battery.attach(this)
         components.add(battery)
         binds.add(battery.dir.path + ":/sys/class/power_supply")
+        // Rumble for the on-screen pad: the fake evdev layer sends force-feedback effects to this
+        // listener, which drives the phone's vibrator (see RumbleComponent).
+        if (controllersOn) components.add(RumbleComponent().also { it.attach(this) })
         // Where the device's files appear inside the session. Internal storage is bound at its own
         // path already, and every program's file dialog opens at home and lists "Computer" from
         // /proc/mounts, where a proot bind never shows - so a user saw only the runtime's own
@@ -396,26 +399,26 @@ class SessionService : Service() {
             this, sessionRoot, runtimeDir, Environment.getExternalStorageDirectory(), binds, guest,
         )
 
-        val hostEnv = EnvVars()
-        hostEnv.put("PROOT_LOADER", LinuxRuntime.prootLoader(this).path)
-        hostEnv.put("PROOT_TMP_DIR", cacheDir.path)
+        val hostEnv = HostEnvironment()
+        hostEnv["PROOT_LOADER"] = LinuxRuntime.prootLoader(this).path
+        hostEnv["PROOT_TMP_DIR"] = cacheDir.path
         // proot links against a libtalloc beside it, and Android's linker does not search an
         // executable's own directory: unnamed, the process dies before it starts and says so only
         // in `logcat -b crash`.
         // proot reads this itself, so it belongs in proot's own environment rather than the guest's.
         if (SessionPrefs.prootNoSeccomp(this)) {
-            hostEnv.put("PROOT_NO_SECCOMP", "1")
+            hostEnv["PROOT_NO_SECCOMP"] = "1"
             Log.i(TAG, "proot: seccomp acceleration off by request")
         }
         val prootLibs = LinuxRuntime.prootLibraryPath(this)
-        if (prootLibs.isNotEmpty()) hostEnv.put("LD_LIBRARY_PATH", prootLibs)
+        if (prootLibs.isNotEmpty()) hostEnv["LD_LIBRARY_PATH"] = prootLibs
 
         // Whether the client signs in to Valve or starts offline: read once, while it starts, and
         // rewritten by the client when it exits, so it is set again here at every session start.
         if (SessionState.mode == MODE_STEAM) OfflineMode.apply(this, root)
 
         val networkLink = LinuxNetworkLinkComponent(this, root)
-        networkLink.setContext(this)
+        networkLink.attach(this)
         networkLink.publish()
         components.add(networkLink)
         components.forEach { it.start() }
@@ -426,10 +429,10 @@ class SessionService : Service() {
         // by the teardown a second after the new one has started, and its exit used to arrive
         // here as "session ended: 137" and end the NEW session. An exit belongs to the session
         // that started it.
-        sessionPid = ProcessHelper.exec(line, hostEnv.toStringArray(), root, { status ->
+        sessionPid = HostProcess.start(line, hostEnv.asArray(), root, { status ->
             if (gen != sessionGen) {
                 Log.i(TAG, "an earlier session's process ended ($status); the current one carries on")
-                return@exec
+                return@start
             }
             Log.i(TAG, "session ended: $status")
             stopSession(status ?: -1)

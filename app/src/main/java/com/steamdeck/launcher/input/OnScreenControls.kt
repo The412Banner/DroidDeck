@@ -30,9 +30,9 @@ class OnScreenControls(context: Context, private val pad: PadBridge) : View(cont
     private class Control(
         val id: String,
         val label: String,
-        /** Bit index in GamepadState, or -1. */
+        /** A PadState button number, or -1. */
         val button: Int,
-        /** Index into GamepadState.dpad, or -1. */
+        /** A d-pad direction (0 up, 1 right, 2 down, 3 left), or -1. */
         val dpad: Int,
         /** 0 = left stick, 1 = right stick, -1 = a button. */
         val stick: Int,
@@ -83,7 +83,7 @@ class OnScreenControls(context: Context, private val pad: PadBridge) : View(cont
         Control("select", "⧉", 6, -1, -1, dp(20f)),
         Control("start", "☰", 7, -1, -1, dp(20f)),
         // The client's own in-game menu; the interposer publishes it as BTN_MODE.
-        Control("guide", "◉", GamepadState.IDX_BUTTON_MODE.toInt(), -1, -1, dp(22f)),
+        Control("guide", "◉", PadState.GUIDE, -1, -1, dp(22f)),
         Control("qam", "⋯", -1, -1, -1, dp(22f)),
     )
 
@@ -318,10 +318,13 @@ class OnScreenControls(context: Context, private val pad: PadBridge) : View(cont
                     val held = control.pressedBy != -1
                     when {
                         control.stick >= 0 && !control.dirty -> {}
-                        control.stick == 0 -> { state.thumbLX = control.kx / control.radius; state.thumbLY = control.ky / control.radius; control.dirty = false }
-                        control.stick == 1 -> { state.thumbRX = control.kx / control.radius; state.thumbRY = control.ky / control.radius; control.dirty = false }
-                        control.dpad >= 0 -> state.dpad[control.dpad] = held
-                        control.button >= 0 -> state.setPressed(control.button, held)
+                        control.stick == 0 -> { state.leftX = control.kx / control.radius; state.leftY = control.ky / control.radius; control.dirty = false }
+                        control.stick == 1 -> { state.rightX = control.kx / control.radius; state.rightY = control.ky / control.radius; control.dirty = false }
+                        control.dpad == 0 -> state.up = held
+                        control.dpad == 1 -> state.right = held
+                        control.dpad == 2 -> state.down = held
+                        control.dpad == 3 -> state.left = held
+                        control.button >= 0 -> state.press(control.button, held)
                     }
                 }
             }

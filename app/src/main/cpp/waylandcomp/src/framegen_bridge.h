@@ -3,7 +3,7 @@
 /*
  * Frame generation on the Wayland backend (feat/wayland-framegen).
  *
- * The two NATIVE engines the X11 renderer runs inside libwinlator's compositor - LSFG Native
+ * The two NATIVE engines the X11 renderer runs inside Bannerlator's X11 compositor - LSFG Native
  * (the user's Lossless.dll chain, lsfg/) and Win-FG Native (our own FSR3-derived optical-flow
  * chain, winfg/) - are hosted here inside the Wayland compositor's Turnip device. Both consume
  * consecutive presented frames and emit interpolated frames between them; the guest never

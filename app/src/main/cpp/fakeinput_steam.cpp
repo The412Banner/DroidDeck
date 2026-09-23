@@ -294,7 +294,8 @@ send_vibration(int strong, int weak, uint16_t duration_ms, uint16_t slot) {
   if (!fake_vibration_enabled())
     return;
 
-  // Rumble is best effort. A full Android listener backlog must never park
+  // Rumble is best effort: the app listens on the abstract socket below (RumbleComponent) and
+  // drives the phone's vibrator. A full listener backlog must never park
   // winebus (or every input hook through controller_mutex()), and a closing
   // listener must not terminate the guest with SIGPIPE.
   int sock = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
@@ -303,7 +304,7 @@ send_vibration(int strong, int weak, uint16_t duration_ms, uint16_t slot) {
 
   struct sockaddr_un addr = {};
   addr.sun_family = AF_UNIX;
-  const char *name = "winlator_vibration";
+  const char *name = "steamdeck-rumble";
   memcpy(addr.sun_path + 1, name, strlen(name));
   socklen_t addrlen = offsetof(struct sockaddr_un, sun_path) + 1 + strlen(name);
 
