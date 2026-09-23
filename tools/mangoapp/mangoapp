@@ -1,0 +1,4 @@
+#!/bin/sh
+# gamescope --mangoapp runs `mangoapp` from PATH; this puts Valve's build beside the libraries the
+# runtime lacks (fmt 10, spdlog 1.13, glfw, libtracefs, libtraceevent), staged by the app.
+LD_LIBRARY_PATH=/usr/local/lib/mangoapp${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} exec /usr/local/lib/mangoapp/mangoapp "$@"

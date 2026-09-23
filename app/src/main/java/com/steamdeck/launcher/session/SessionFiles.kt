@@ -64,9 +64,20 @@ object SessionFiles {
         // The patched gamescope (tools/gamescope): the runtime's own version rebuilt with the ARM64
         // client fixes, over /usr/local/bin so it comes first in the session's PATH. Only when the
         // apk carries it - a build without the asset leaves the runtime's copy alone.
-        val optional = arrayOf(
+        // Valve's mangoapp (tools/mangoapp) - Deck mode's performance overlay - with the five
+        // libraries the runtime lacks beside it, and the wrapper on PATH that points it at them.
+        val mangoapp = listOf(
+            "usr/local/bin/mangoapp",
+            "usr/local/lib/mangoapp/mangoapp",
+            "usr/local/lib/mangoapp/libfmt.so.10",
+            "usr/local/lib/mangoapp/libspdlog.so.1.13",
+            "usr/local/lib/mangoapp/libglfw.so.3",
+            "usr/local/lib/mangoapp/libtraceevent.so.1",
+            "usr/local/lib/mangoapp/libtracefs.so.1",
+        ).map { it to it }
+        val optional = (arrayOf(
             "usr/local/bin/gamescope" to "usr/local/bin/gamescope",
-        ).filter { (asset, _) ->
+        ) + mangoapp).filter { (asset, _) ->
             val dir = asset.substringBeforeLast('/')
             runCatching { context.assets.list("linuxfs/$dir")?.contains(asset.substringAfterLast('/')) == true }.getOrDefault(false)
         }
