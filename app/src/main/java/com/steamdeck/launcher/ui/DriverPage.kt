@@ -163,41 +163,55 @@ private fun InstalledRow(row: DriverRow, selected: Boolean, onSelect: () -> Unit
     val src = remember { MutableInteractionSource() }
     val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
     val shape = RoundedCornerShape(10.dp)
+    // Two focus targets side by side - the driver itself, and its trash can - so a controller's
+    // d-pad right reaches the trash can and left comes back. (Inside one clickable row the trash
+    // can was a child of the focused area and "right" had nowhere to go.) The row's outline still
+    // follows the driver part, so it looks the same.
+    val mainFocus = remember { FocusRequester() }
+    val delFocus = remember { FocusRequester() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier.fillMaxWidth().padding(3.dp).clip(shape)
+        modifier = Modifier.fillMaxWidth().padding(3.dp).clip(shape)
             .background(if (hot) pal.signal.copy(alpha = 0.14f) else if (selected) pal.signal.copy(alpha = 0.08f) else Color.Transparent)
-            .border(2.dp, if (hot) pal.signal else Color.Transparent, shape)
-            .hoverable(src).clickable(interactionSource = src, indication = null, onClick = onSelect)
-            .padding(horizontal = 11.dp, vertical = 8.dp),
+            .border(2.dp, if (hot) pal.signal else Color.Transparent, shape),
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(20.dp).border(2.dp, if (selected) pal.signal else colors.onSurfaceVariant, CircleShape),
-        ) { if (selected) Box(Modifier.size(10.dp).background(pal.signal, CircleShape)) }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    row.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    color = if (selected) pal.signal else colors.onBackground, modifier = Modifier.weight(1f, fill = false),
-                )
-                if (row.tag.isNotEmpty()) Text(
-                    row.tag, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = colors.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(alpha = 0.07f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f).then(modifier).focusRequester(mainFocus)
+                .then(if (row.removable) Modifier.focusProperties { right = delFocus } else Modifier)
+                .hoverable(src).clickable(interactionSource = src, indication = null, onClick = onSelect)
+                .padding(horizontal = 11.dp, vertical = 8.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(20.dp).border(2.dp, if (selected) pal.signal else colors.onSurfaceVariant, CircleShape),
+            ) { if (selected) Box(Modifier.size(10.dp).background(pal.signal, CircleShape)) }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        row.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = if (selected) pal.signal else colors.onBackground, modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (row.tag.isNotEmpty()) Text(
+                        row.tag, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(alpha = 0.07f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+                if (row.detail.isNotEmpty()) Text(row.detail, fontSize = 11.5.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
             }
-            if (row.detail.isNotEmpty()) Text(row.detail, fontSize = 11.5.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
         }
         if (row.removable) {
             val delSrc = remember { MutableInteractionSource() }
             val delHot = delSrc.collectIsFocusedAsState().value || delSrc.collectIsHoveredAsState().value
             Box(
                 contentAlignment = Alignment.Center,
-                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp))
+                modifier = Modifier.padding(end = 8.dp).size(40.dp).clip(RoundedCornerShape(10.dp))
                     .background(if (delHot) colors.error.copy(alpha = 0.16f) else Color.Transparent)
                     .border(2.dp, if (delHot) colors.error else Color.Transparent, RoundedCornerShape(10.dp))
+                    .focusRequester(delFocus)
+                    .focusProperties { left = mainFocus }
                     .hoverable(delSrc).clickable(interactionSource = delSrc, indication = null, onClick = onDelete),
             ) { Icon(Icons.Outlined.Delete, contentDescription = "Delete ${row.name}", tint = if (delHot) colors.error else colors.onSurfaceVariant, modifier = Modifier.size(20.dp)) }
         }
