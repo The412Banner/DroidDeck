@@ -86,16 +86,16 @@ def write(obj):
     def emit(key, value):
         if isinstance(value, dict):
             out.append(0x00)
-            out += key.encode() + b"\x00"
+            out.extend(key.encode() + b"\x00")
             for k, v in value.items():
                 emit(k, v)
             out.append(0x08)
         elif isinstance(value, int):
             out.append(0x02)
-            out += key.encode() + b"\x00" + struct.pack("<i", value)
+            out.extend(key.encode() + b"\x00" + struct.pack("<i", value))
         else:
             out.append(0x01)
-            out += key.encode() + b"\x00" + str(value).encode() + b"\x00"
+            out.extend(key.encode() + b"\x00" + str(value).encode() + b"\x00")
 
     for k, v in obj.items():
         emit(k, v)
