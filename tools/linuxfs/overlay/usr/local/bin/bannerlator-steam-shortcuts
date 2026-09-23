@@ -11,6 +11,7 @@ carry the tag "steamdeck-app" and are replaced wholesale; anything the user adde
 client is kept as it is. The appid is the one the client itself derives (crc32 of exe+name with
 the top bit set), so the launch URL the app uses matches what the client shows.
 """
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -161,7 +162,9 @@ def main():
     print("bannerlator-steam-shortcuts: %d added game(s) written, %d of the client's own kept" % (len(ours), len(kept)))
     # Each added game runs under the ARM64 Proton: the compat registrar's own mapping writer.
     try:
-        spec = importlib.util.spec_from_file_location("compat", "/usr/local/bin/bannerlator-steam-compat")
+        # No .py suffix on the registrar, so the loader has to be named.
+        compat_path = "/usr/local/bin/bannerlator-steam-compat"
+        spec = importlib.util.spec_from_file_location("compat", compat_path, loader=importlib.machinery.SourceFileLoader("compat", compat_path))
         compat = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(compat)
         cfg = os.path.join(steam_root, "config", "config.vdf")
