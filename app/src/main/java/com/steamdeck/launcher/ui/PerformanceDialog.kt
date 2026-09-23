@@ -96,7 +96,7 @@ fun PerformancePage(
             )
             ToggleRow(
                 host, "deck", "Steam Deck mode",
-                "Runs the client as SteamOS runs its own session (-steamdeck -steamos3), the shape Valve tunes Big Picture for. Off by default: the client then expects Deck hardware that is not here, and that cost is untested.",
+                "Runs the client with -steamdeck: the Quick Access Menu, the performance overlay and the Deck settings pages. The SteamOS helpers it calls are stubbed and the battery it reads is provided, so the mode is safe to try; off by default until it is proven on more devices.",
                 steamDeckMode, onChange = onSteamDeckMode,
             )
         }

@@ -37,6 +37,13 @@ object SessionFiles {
             "usr/local/bin/bannerlator-steam-launch" to "usr/local/bin/bannerlator-steam-launch",
             "usr/local/bin/bannerlator-desktop-games" to "usr/local/bin/bannerlator-desktop-games",
             "usr/local/bin/bannerlator-steam-shim" to "usr/local/bin/bannerlator-steam-shim",
+            // The SteamOS helpers the client calls in Deck mode: the two Armada found it needs, plus
+            // the three under /usr/bin, all no-ops that answer "nothing to do" (see each file).
+            "usr/bin/steamos-update" to "usr/bin/steamos-update",
+            "usr/bin/steamos-select-branch" to "usr/bin/steamos-select-branch",
+            "usr/bin/jupiter-biosupdate" to "usr/bin/jupiter-biosupdate",
+            "usr/bin/steamos-polkit-helpers/steamos-priv-write" to "usr/bin/steamos-polkit-helpers/steamos-priv-write",
+            "usr/bin/steamos-polkit-helpers/steamos-set-timezone" to "usr/bin/steamos-polkit-helpers/steamos-set-timezone",
         )
         // The desktop's launcher and labwc defaults, only where the desktop package is installed:
         // staging them into a runtime without it would make the desktop look present when it is not.

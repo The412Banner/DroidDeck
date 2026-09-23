@@ -1,0 +1,130 @@
+package com.steamdeck.launcher.session
+
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
+import android.util.Log
+import com.steamdeck.launcher.core.EnvironmentComponent
+import java.io.File
+import kotlin.math.abs
+
+/**
+ * The battery the Steam client can see.
+ *
+ * The client reads `/sys/class/power_supply/BAT<n>/...` - a laptop's or a Deck's naming and files
+ * (`energy_now`, `power_now`, `time_to_empty_now`, a `uevent` of `POWER_SUPPLY_*` lines). Android
+ * names its supply `battery` and lays it out differently, and on many phones an app may not read
+ * it at all, so the client showed no battery. This writes a `BAT0` (and a `BAT1`, the Deck's name)
+ * from Android's own battery API - the same on every device - into a directory the session binds
+ * over `/sys/class/power_supply`, refreshed every few seconds while the session runs.
+ *
+ * Values: charge in µAh from the charge counter; energy in µWh from charge × voltage; power in µW
+ * from |current| × voltage; time to empty from charge ÷ |average current| while discharging. Where
+ * a device reports no current, the client still gets status and percentage.
+ */
+class BatteryComponent(val dir: File) : EnvironmentComponent() {
+    @Volatile private var running = false
+    private var thread: Thread? = null
+
+    override fun start() {
+        running = true
+        write()
+        thread = Thread({
+            while (running) {
+                try { Thread.sleep(PERIOD_MS) } catch (e: InterruptedException) { break }
+                if (running) write()
+            }
+        }, "battery-sysfs").apply { isDaemon = true; start() }
+        Log.i(TAG, "battery: BAT0/BAT1 written to ${dir.path} every ${PERIOD_MS / 1000} s")
+    }
+
+    override fun stop() {
+        running = false
+        thread?.interrupt()
+        thread = null
+    }
+
+    private fun write() {
+        val ctx = context ?: return
+        try {
+            val bm = ctx.getSystemService(BatteryManager::class.java)
+            val sticky: Intent? = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val status = sticky?.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN) ?: BatteryManager.BATTERY_STATUS_UNKNOWN
+            val level = sticky?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale = sticky?.getIntExtra(BatteryManager.EXTRA_SCALE, 100)?.takeIf { it > 0 } ?: 100
+            val pct = if (level >= 0) level * 100 / scale else (bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 50)
+            val voltageUv = ((sticky?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0).toLong() * 1000L).takeIf { it > 0 } ?: 3_800_000L
+            val tempDeci = sticky?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
+            val tech = sticky?.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY)?.takeIf { it.isNotBlank() } ?: "Li-ion"
+            val chargeNowUah = bm?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)?.takeIf { it > 0 && it != Long.MIN_VALUE } ?: 0L
+            val currentNowUa = bm?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)?.takeIf { it != Long.MIN_VALUE } ?: 0L
+            val currentAvgUa = bm?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE)?.takeIf { it != Long.MIN_VALUE && it != 0L } ?: currentNowUa
+            // Android's sign convention varies by vendor; the status says which way the current flows.
+            val discharging = status == BatteryManager.BATTERY_STATUS_DISCHARGING || status == BatteryManager.BATTERY_STATUS_NOT_CHARGING
+            val chargeFullUah = if (chargeNowUah > 0 && pct > 0) chargeNowUah * 100 / pct else 0L
+            val energyNowUwh = chargeNowUah * voltageUv / 1_000_000L
+            val energyFullUwh = chargeFullUah * voltageUv / 1_000_000L
+            val powerNowUw = abs(currentNowUa) * voltageUv / 1_000_000L
+            val timeToEmptyS = if (discharging && chargeNowUah > 0 && abs(currentAvgUa) > 0) chargeNowUah * 3600L / abs(currentAvgUa) else 0L
+            val statusText = when (status) {
+                BatteryManager.BATTERY_STATUS_CHARGING -> "Charging"
+                BatteryManager.BATTERY_STATUS_DISCHARGING -> "Discharging"
+                BatteryManager.BATTERY_STATUS_FULL -> "Full"
+                BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Not charging"
+                else -> "Unknown"
+            }
+            val capacityLevel = when {
+                status == BatteryManager.BATTERY_STATUS_FULL || pct >= 100 -> "Full"
+                pct <= 5 -> "Critical"
+                pct <= 15 -> "Low"
+                else -> "Normal"
+            }
+            for (name in listOf("BAT0", "BAT1")) {
+                val bat = File(dir, name).apply { mkdirs() }
+                val attrs = linkedMapOf(
+                    "type" to "Battery",
+                    "present" to "1",
+                    "status" to statusText,
+                    "capacity" to pct.toString(),
+                    "capacity_level" to capacityLevel,
+                    "technology" to tech,
+                    "voltage_now" to voltageUv.toString(),
+                    "voltage_min_design" to voltageUv.toString(),
+                    "current_now" to currentNowUa.toString(),
+                    "current_avg" to currentAvgUa.toString(),
+                    "charge_now" to chargeNowUah.toString(),
+                    "charge_full" to chargeFullUah.toString(),
+                    "charge_full_design" to chargeFullUah.toString(),
+                    "energy_now" to energyNowUwh.toString(),
+                    "energy_full" to energyFullUwh.toString(),
+                    "energy_full_design" to energyFullUwh.toString(),
+                    "power_now" to powerNowUw.toString(),
+                    "time_to_empty_now" to timeToEmptyS.toString(),
+                    "time_to_empty_avg" to timeToEmptyS.toString(),
+                    "temp" to tempDeci.toString(),
+                    "model_name" to android.os.Build.MODEL.replace(' ', '_'),
+                    "manufacturer" to android.os.Build.MANUFACTURER.replace(' ', '_'),
+                    "scope" to "System",
+                )
+                for ((k, v) in attrs) put(File(bat, k), v + "\n")
+                val uevent = StringBuilder("POWER_SUPPLY_NAME=$name\n")
+                for ((k, v) in attrs) uevent.append("POWER_SUPPLY_").append(k.uppercase()).append('=').append(v).append('\n')
+                put(File(bat, "uevent"), uevent.toString())
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "battery: could not write", t)
+        }
+    }
+
+    /** Atomic per file: a reader in the guest never sees a half-written value. */
+    private fun put(target: File, text: String) {
+        val tmp = File(target.parentFile, "." + target.name + ".tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(target)) { target.writeText(text); tmp.delete() }
+    }
+
+    companion object {
+        private const val TAG = "SessionService"
+        private const val PERIOD_MS = 5_000L
+    }
+}

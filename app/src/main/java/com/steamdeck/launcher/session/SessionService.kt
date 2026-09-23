@@ -201,6 +201,7 @@ class SessionService : Service() {
         if (SessionPrefs.glThread(this)) guest.add("mesa_glthread=true")
         if (SessionPrefs.noGlError(this)) guest.add("MESA_NO_ERROR=1")
         if (SessionState.mode == MODE_STEAM) guest.add("BL_STEAMDECK=" + (if (SessionPrefs.steamDeckMode(this)) "1" else "0"))
+        if (SessionState.mode == MODE_STEAM) guest.add("BL_STEAM_CHANNEL=" + SessionPrefs.steamChannel(this))
         // Proton's own gate for its xalia helper (its `proton` script reads this, and sets
         // XALIA_SUPPORTED_ONLY itself otherwise). Off by default: xalia is Valve's, and on a device
         // whose seccomp answers its syscalls normally there is no reason to take it away.
@@ -349,6 +350,14 @@ class SessionService : Service() {
 
         val binds = ArrayList<String>()
         if (controllersOn) binds.add(fakeInputDir.path + ":/dev/input")
+        // The client's battery readout (the Quick Access Menu, the top bar) reads
+        // /sys/class/power_supply/BAT<n>/..., a laptop's or a Deck's naming; Android's supply is
+        // called "battery" and its files differ, so the client sees no battery at all. A directory
+        // of our own, written from Android's battery API every few seconds, is bound over it.
+        val battery = BatteryComponent(File(filesDir, "session/sys/power_supply"))
+        battery.setContext(this)
+        components.add(battery)
+        binds.add(battery.dir.path + ":/sys/class/power_supply")
         // Where the device's files appear inside the session. Internal storage is bound at its own
         // path already, and every program's file dialog opens at home and lists "Computer" from
         // /proc/mounts, where a proot bind never shows - so a user saw only the runtime's own

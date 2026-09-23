@@ -220,6 +220,13 @@ object SessionPrefs {
         prefs(context).edit().putString("fexPreset", id).apply()
     }
 
+    /** The Steam client branch forced on the command line: "publicbeta" (every session so far) or "steamdeck_publicbeta" (Armada's). */
+    fun steamChannel(context: Context): String = prefs(context).getString("steamChannel", "publicbeta") ?: "publicbeta"
+
+    fun setSteamChannel(context: Context, id: String) {
+        prefs(context).edit().putString("steamChannel", id).apply()
+    }
+
     /** The app's colour theme (ui/Themes ids); Paper on black unless chosen otherwise. */
     fun theme(context: Context): String = prefs(context).getString("theme", "paper") ?: "paper"
 

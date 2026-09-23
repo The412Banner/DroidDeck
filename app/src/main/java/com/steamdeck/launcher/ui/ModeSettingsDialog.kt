@@ -42,6 +42,8 @@ class ModeSettings(
     val storageOptions: List<Pair<String, String>> = emptyList(),
     /** Steam only: the FEXCore preset for the games the client launches. */
     val fexPreset: String? = null,
+    /** Steam only: the client branch forced on the command line. */
+    val steamChannel: String? = null,
 )
 
 class ModeSettingsActions(
@@ -62,6 +64,7 @@ class ModeSettingsActions(
     val onGameStorage: (path: String, label: String) -> Unit = { _, _ -> },
     val onPickGameStorageFolder: () -> Unit = {},
     val onFexPreset: (String) -> Unit = {},
+    val onSteamChannel: (String) -> Unit = {},
     val onDismiss: () -> Unit,
 )
 
@@ -135,6 +138,14 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                     SessionPrefs.OSC_NEVER to "Never",
                 ), s.oscMode,
                 note = "Auto shows the full pad when no controller is attached. Steam + QAM shows only those two buttons.", onPick = a.onOsc,
+            )
+        }
+        if (steam && s.steamChannel != null) SettingsGroup("Client") {
+            ChoiceRow(
+                host, "channel", "Client branch", "The Steam client build the session forces. Applies at the next session start; the client may update itself once.",
+                listOf("publicbeta" to "Public beta", "steamdeck_publicbeta" to "Steam Deck public beta"), s.steamChannel,
+                note = "Public beta is what every session has run on. Steam Deck public beta is the channel Armada bootstraps its ARM64 client from.",
+                onPick = a.onSteamChannel,
             )
         }
         if (steam && s.fexPreset != null) SettingsGroup("Games") {
