@@ -86,7 +86,7 @@ public class PulseAudioComponent extends SessionPart {
                 || have == null || !BUNDLE_STAMP.equals(have.trim())) {
             Log.i(TAG, "unpacking pulseaudio.tzst (" + BUNDLE_STAMP + "; had " + have + ")");
             FileUtils.delete(modulesDir);
-            if (TarZst.extractAsset(context, "pulseaudio.tzst", workingDir)) {
+            if (TarZst.extractAsset(app(), "pulseaudio.tzst", workingDir)) {
                 FileUtils.writeString(stamp, BUNDLE_STAMP);
             } else {
                 Log.e(TAG, "pulseaudio.tzst did not unpack");

@@ -139,10 +139,10 @@ public final class PadBridge {
         state.rightTrigger = rt;
         float hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X);
         float hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y);
-        state.dpad[0] = hatY < -0.5f;
-        state.dpad[1] = hatX > 0.5f;
-        state.dpad[2] = hatY > 0.5f;
-        state.dpad[3] = hatX < -0.5f;
+        state.up = hatY < -0.5f;
+        state.right = hatX > 0.5f;
+        state.down = hatY > 0.5f;
+        state.left = hatX < -0.5f;
         publish();
         return true;
     }
@@ -202,12 +202,12 @@ public final class PadBridge {
     private void publish() {
         if (!open && !start()) return;
         if (systemGuidePressed || qamChordActive) {
-            effectiveState.copy(state);
-            effectiveState.setPressed(PadState.IDX_BUTTON_MODE, true);
+            effectiveState.copyFrom(state);
+            effectiveState.press(PadState.GUIDE, true);
             if (qamSyntheticAPressed) {
-                effectiveState.setPressed(0, state.isPressed(0) || qamSyntheticAPressed);
+                effectiveState.press(PadState.A, state.isDown(PadState.A) || qamSyntheticAPressed);
             }
-            writer.writePadState(effectiveState);
+            writer.writePad(effectiveState);
         } else {
             writer.writePad(state);
         }
