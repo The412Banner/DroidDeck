@@ -31,7 +31,7 @@ public class PulseAudioComponent extends SessionPart {
     /** Where the guest reaches the daemon; the session exports PULSE_SERVER=unix:<this>. */
     public static final String SOCKET_NAME = "PS0";
     /** Identifies the bundled pulseaudio.tzst; a change here re-unpacks it over what a device has. */
-    private static final String BUNDLE_STAMP = "2026-09-23-pa13-aaudio-sink-r2";
+    private static final String BUNDLE_STAMP = "2026-09-23-pa13-relay-sink-r3";
 
     private final File workingDir;
     /** Where the daemon's own output is kept for this session, or null for logcat only. */
@@ -43,6 +43,8 @@ public class PulseAudioComponent extends SessionPart {
      * turns that one stream into a source the client can see, named DirectAudioMic.
      */
     private final String micFifoPath;
+    /** The DirectAudio relay's socket when the client's output should go through it, else null. */
+    private String relaySocketPath;
     private int pid = -1;
 
     public PulseAudioComponent(Context context) {
@@ -53,6 +55,15 @@ public class PulseAudioComponent extends SessionPart {
     public PulseAudioComponent(Context context, String micFifoPath) {
         this.workingDir = new File(context.getFilesDir(), "pulseaudio");
         this.micFifoPath = micFifoPath;
+    }
+
+    /**
+     * Route the daemon's output through the DirectAudio relay at this socket instead of an AAudio
+     * stream of its own. The relay owns the stream outside proot, with its adaptive buffer; the
+     * daemon only fills a shared ring. Set before {@link #start()}; the relay may start later.
+     */
+    public void setRelaySocket(String path) {
+        this.relaySocketPath = path;
     }
 
     /** Send the daemon's output to this file as well as logcat. Set before {@link #start()}. */
@@ -111,7 +122,11 @@ public class PulseAudioComponent extends SessionPart {
                 + socket().getAbsolutePath() + "\"");
         // volume=1.0 is not optional: with no volume argument module-aaudio-sink defaults
         // the sink to 0% and the session plays silence.
-        config.add("load-module module-aaudio-sink performance_mode=1 adaptive=1 volume=1.0");
+        if (relaySocketPath != null && !relaySocketPath.isEmpty()) {
+            config.add("load-module module-directaudio-sink socket=\"" + relaySocketPath + "\" performance_mode=1 adaptive=1 volume=1.0");
+        } else {
+            config.add("load-module module-aaudio-sink performance_mode=1 adaptive=1 volume=1.0");
+        }
         config.add("set-default-sink AAudioSink");
         if (micFifoPath != null && !micFifoPath.isEmpty()) {
             // The format is the helper's, fixed at s16le/48000/mono: it resamples when the device

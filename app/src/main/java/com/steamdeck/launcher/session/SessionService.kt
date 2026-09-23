@@ -249,6 +249,9 @@ class SessionService : Service() {
 
         val audioLog = File(sessionDir, "audio.log")
         val pulse = PulseAudioComponent(this, micFifo?.absolutePath)
+        // With DirectAudio on, the client's own sound goes through the relay too: the daemon
+        // fills the relay's ring and the relay, outside proot, drives the device.
+        if (wantsDirectAudio) pulse.setRelaySocket(relaySocket.absolutePath)
         pulse.setLogFile(audioLog)
         pulse.attach(this)
         guest.add("PULSE_SERVER=unix:" + pulse.socket().absolutePath)
