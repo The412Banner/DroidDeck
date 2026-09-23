@@ -2,6 +2,7 @@ package com.steamdeck.launcher.session
 
 import com.steamdeck.launcher.gpu.LinuxVulkanDriver
 import com.steamdeck.launcher.gpu.LinuxVulkanDriverManager
+import com.steamdeck.launcher.gpu.QualcommLinuxDriver
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -256,6 +257,13 @@ class SessionService : Service() {
         // imported driver from the A710/A720/A722 legs gets "sysmem" on its own, which is what both
         // its authors advise for those GPUs and what nothing else in the list needs.
         tuDebug(linuxDriverId)?.let { guest.add("TU_DEBUG=$it") }
+        // Qualcomm's own Linux driver draws X11 windows only through its implicit layer (the client's
+        // UI is X11); the session script adds the manifests to the loader's search and enables it.
+        val linuxDrivers = LinuxVulkanDriverManager(this)
+        val qcomLibs = QualcommLinuxDriver.bindDir(linuxDrivers, linuxDriverId)
+        QualcommLinuxDriver.layerDir(linuxDrivers, linuxDriverId)
+            ?.takeIf { qcomLibs != null }
+            ?.let { guest.add("BL_QCOM_LAYERS=" + it.path) }
         // Zink renders the client's UI (Chromium -> ANGLE -> Zink -> Turnip). Lazy descriptors is
         // the mode Zink recommends where the driver has no descriptor buffer, and what Ludashi ships
         // by default for its Zink path; a switch here because on one Fold the menus run at 14 fps.
@@ -428,6 +436,9 @@ class SessionService : Service() {
 
         val binds = ArrayList<String>()
         if (controllersOn) binds.add(fakeInputDir.path + ":/dev/input")
+        // Qualcomm's Linux driver finds its own libraries through a RUNPATH of /usr/lib/adreno, so
+        // they are bound there for the session rather than written into the runtime.
+        qcomLibs?.let { binds.add(it.path + ":" + QualcommLinuxDriver.GUEST_DIR) }
         // The client's battery readout (the Quick Access Menu, the top bar) reads
         // /sys/class/power_supply/BAT<n>/..., a laptop's or a Deck's naming; Android's supply is
         // called "battery" and its files differ, so the client sees no battery at all. A directory

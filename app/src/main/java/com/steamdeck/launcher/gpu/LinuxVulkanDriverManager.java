@@ -69,7 +69,18 @@ public class LinuxVulkanDriverManager {
     public boolean isInstalled(String id) {
         if (id == null || id.isEmpty() || id.contains("/") || id.contains("..")) return false;
         File dir = getDriverDir(id);
-        return new File(dir, LIB_NAME).isFile() && new File(dir, ICD_NAME).isFile();
+        if (!new File(dir, ICD_NAME).isFile()) return false;
+        // Qualcomm's driver keeps its libraries under adreno/, bound at /usr/lib/adreno in the session.
+        if (QualcommLinuxDriver.FLAVOR.equals(getFlavor(id))) {
+            return new File(dir, "adreno/" + QualcommLinuxDriver.LIB_NAME).isFile();
+        }
+        return new File(dir, LIB_NAME).isFile();
+    }
+
+    /** meta.json's "flavor" ("" for an imported Turnip). */
+    public String getFlavor(String id) {
+        JSONObject m = readMeta(id);
+        return m != null ? m.optString("flavor", "") : "";
     }
 
     /** Absolute path of the driver's ICD manifest, or null when the id isn't installed. */
@@ -142,6 +153,17 @@ public class LinuxVulkanDriverManager {
                     // Flatten: only the base name matters, and it also defeats zip-slip paths.
                     String base = new File(entry.getName()).getName();
                     if (base.isEmpty()) continue;
+                    // Qualcomm's Linux driver keeps two folders (see QualcommLinuxDriver); only
+                    // the base name inside each is kept, so the same zip-slip defence holds.
+                    String parent = new File(entry.getName()).getParentFile() != null
+                            ? new File(entry.getName()).getParentFile().getName() : "";
+                    if (parent.equals("adreno") || parent.equals("implicit_layer.d")) {
+                        File sub = new File(tmpDir, parent);
+                        //noinspection ResultOfMethodCallIgnored
+                        sub.mkdirs();
+                        Files.copy(zis, new File(sub, base).toPath(), StandardCopyOption.REPLACE_EXISTING);
+                        continue;
+                    }
                     if (base.startsWith("libvulkan_freedreno") && base.endsWith(".so")) {
                         if (soName != null) Log.w(TAG, "zip has several libvulkan_freedreno*.so; using the first (" + soName + ")");
                         else {
@@ -158,6 +180,10 @@ public class LinuxVulkanDriverManager {
                     // The zip's own freedreno_icd.aarch64.json is dropped on purpose: its
                     // library_path is relative to itself, and we write an absolute one below.
                 }
+            }
+            if (zipMeta != null && QualcommLinuxDriver.FLAVOR.equals(zipMeta.optString("flavor", ""))) {
+                // Renamed into place on success, so the cleanup below finds nothing left to delete.
+                return installQualcomm(tmpDir, zipMeta);
             }
             if (soName == null) {
                 throw new IllegalArgumentException("No libvulkan_freedreno*.so in this zip. An Android "
@@ -220,6 +246,45 @@ public class LinuxVulkanDriverManager {
         } finally {
             if (!keep) FileUtils.delete(tmpDir);
         }
+    }
+
+    /**
+     * A zip of Qualcomm's Linux driver ({@link QualcommLinuxDriver}'s layout, meta flavor
+     * "qualcomm-kgsl"): the same checks as a Turnip, then an ICD manifest naming the guest path the
+     * session's bind creates. Imported under the downloaded driver's id, so the two never coexist.
+     */
+    private String installQualcomm(File tmpDir, JSONObject zipMeta) throws IOException, org.json.JSONException {
+        File so = new File(tmpDir, "adreno/" + QualcommLinuxDriver.LIB_NAME);
+        if (!so.isFile()) {
+            throw new IllegalArgumentException("This Qualcomm zip has no adreno/" + QualcommLinuxDriver.LIB_NAME + ".");
+        }
+        if (!isAarch64Elf(so) || !containsAscii(so, "libc.so.6")) {
+            throw new IllegalArgumentException(QualcommLinuxDriver.LIB_NAME + " is not a glibc AArch64 library - "
+                    + "the Android build of Qualcomm's driver belongs under the display driver instead.");
+        }
+        String id = QualcommLinuxDriver.ID;
+        if (isInstalled(id)) removeDriver(id);
+        JSONObject icd = new JSONObject();
+        icd.put("file_format_version", "1.0.0");
+        JSONObject body = new JSONObject();
+        body.put("library_path", QualcommLinuxDriver.GUEST_DIR + "/" + QualcommLinuxDriver.LIB_NAME);
+        body.put("api_version", "1.3.237");
+        icd.put("ICD", body);
+        if (!FileUtils.writeString(new File(tmpDir, ICD_NAME), icd.toString(2))) throw new IOException("cannot write icd.json");
+        JSONObject meta = new JSONObject();
+        meta.put("schemaVersion", 1);
+        meta.put("kind", "linux-vulkan-icd");
+        meta.put("flavor", QualcommLinuxDriver.FLAVOR);
+        meta.put("name", zipMeta.optString("name", QualcommLinuxDriver.NAME));
+        meta.put("driverVersion", zipMeta.optString("driverVersion", ""));
+        meta.put("libc", "glibc");
+        meta.put("minGlibc", zipMeta.optString("minGlibc", ""));
+        meta.put("importedAt", System.currentTimeMillis());
+        if (!FileUtils.writeString(new File(tmpDir, META_NAME), meta.toString(2))) throw new IOException("cannot write meta.json");
+        File dir = getDriverDir(id);
+        if (!tmpDir.renameTo(dir)) throw new IOException("cannot move into " + dir);
+        Log.i(TAG, "imported Qualcomm Linux driver -> " + dir);
+        return id;
     }
 
     private String uniqueId(String base) {
