@@ -1,6 +1,15 @@
 package com.steamdeck.launcher.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,7 +33,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,14 +77,25 @@ fun DriverPage(
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     var confirm by remember { mutableStateOf<DriverRow?>(null) }
+    // Back (the controller's B too) closes this page only, back to the session's settings.
+    BackHandler(onBack = onBack)
+    // D-pad: up from the first driver lands on refresh; the page opens with the driver in use focused.
+    val refreshFocus = remember { FocusRequester() }
+    val selectedFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { selectedFocus.requestFocus() } }
+    val refreshSrc = remember { MutableInteractionSource() }
+    val refreshHot = refreshSrc.collectIsFocusedAsState().value || refreshSrc.collectIsHoveredAsState().value
     SettingsPage(
         host, title = title, onBack = onBack, lede = "$hint\n$status",
         action = {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp))
-                    .border(1.dp, pal.line, RoundedCornerShape(10.dp))
-                    .clickable(enabled = !checking, onClick = onRefresh),
+                    .background(if (refreshHot) pal.signal.copy(alpha = 0.16f) else Color.Transparent)
+                    .border(if (refreshHot) 2.dp else 1.dp, if (refreshHot) pal.signal else pal.line, RoundedCornerShape(10.dp))
+                    .focusRequester(refreshFocus)
+                    .hoverable(refreshSrc)
+                    .clickable(interactionSource = refreshSrc, indication = null, enabled = !checking, onClick = onRefresh),
             ) {
                 if (checking) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                 else Icon(Icons.Outlined.Refresh, contentDescription = "Check for new drivers", tint = colors.onBackground, modifier = Modifier.size(20.dp))
@@ -84,7 +103,15 @@ fun DriverPage(
         },
     ) {
         SettingsGroup("Installed") {
-            for (row in rows) InstalledRow(row, row.id == selected, onSelect = { onSelect(row.id) }, onDelete = { confirm = row })
+            val focusRow = rows.firstOrNull { it.id == selected } ?: rows.firstOrNull()
+            rows.forEachIndexed { i, row ->
+                InstalledRow(
+                    row, row.id == selected, onSelect = { onSelect(row.id) }, onDelete = { confirm = row },
+                    modifier = Modifier
+                        .then(if (row === focusRow) Modifier.focusRequester(selectedFocus) else Modifier)
+                        .then(if (i == 0) Modifier.focusProperties { up = refreshFocus } else Modifier),
+                )
+            }
         }
         SettingsGroup("Available to download") {
             if (downloads.isEmpty()) Text(
@@ -104,10 +131,7 @@ fun DriverPage(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 14.dp)) {
             SecondaryButton(importLabel, onClick = onImport)
-            if (canRestore) Text(
-                "Restore built-in drivers", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = pal.signal,
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onRestore).padding(8.dp),
-            )
+            if (canRestore) FocusText("Restore built-in drivers", pal.signal, onClick = onRestore)
         }
     }
     confirm?.let { row ->
@@ -121,20 +145,31 @@ fun DriverPage(
                     fontSize = 13.sp,
                 )
             },
-            confirmButton = { TextButton(onClick = { confirm = null; onDelete(row.id) }) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
+            // Opens on Cancel, so a stray A press on a controller never deletes anything.
+            confirmButton = { FocusText("Delete", colors.error) { confirm = null; onDelete(row.id) } },
+            dismissButton = {
+                val cancelFocus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { runCatching { cancelFocus.requestFocus() } }
+                FocusText("Cancel", colors.onBackground, modifier = Modifier.focusRequester(cancelFocus)) { confirm = null }
+            },
         )
     }
 }
 
 @Composable
-private fun InstalledRow(row: DriverRow, selected: Boolean, onSelect: () -> Unit, onDelete: () -> Unit) {
+private fun InstalledRow(row: DriverRow, selected: Boolean, onSelect: () -> Unit, onDelete: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
+    val src = remember { MutableInteractionSource() }
+    val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
+    val shape = RoundedCornerShape(10.dp)
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().background(if (selected) pal.signal.copy(alpha = 0.08f) else Color.Transparent)
-            .clickable(onClick = onSelect).padding(horizontal = 14.dp, vertical = 11.dp),
+        modifier = modifier.fillMaxWidth().padding(3.dp).clip(shape)
+            .background(if (hot) pal.signal.copy(alpha = 0.14f) else if (selected) pal.signal.copy(alpha = 0.08f) else Color.Transparent)
+            .border(2.dp, if (hot) pal.signal else Color.Transparent, shape)
+            .hoverable(src).clickable(interactionSource = src, indication = null, onClick = onSelect)
+            .padding(horizontal = 11.dp, vertical = 8.dp),
     ) {
         Box(
             contentAlignment = Alignment.Center,
@@ -155,10 +190,33 @@ private fun InstalledRow(row: DriverRow, selected: Boolean, onSelect: () -> Unit
             }
             if (row.detail.isNotEmpty()) Text(row.detail, fontSize = 11.5.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
         }
-        if (row.removable) Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onDelete),
-        ) { Icon(Icons.Outlined.Delete, contentDescription = "Delete ${row.name}", tint = colors.onSurfaceVariant, modifier = Modifier.size(20.dp)) }
+        if (row.removable) {
+            val delSrc = remember { MutableInteractionSource() }
+            val delHot = delSrc.collectIsFocusedAsState().value || delSrc.collectIsHoveredAsState().value
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp))
+                    .background(if (delHot) colors.error.copy(alpha = 0.16f) else Color.Transparent)
+                    .border(2.dp, if (delHot) colors.error else Color.Transparent, RoundedCornerShape(10.dp))
+                    .hoverable(delSrc).clickable(interactionSource = delSrc, indication = null, onClick = onDelete),
+            ) { Icon(Icons.Outlined.Delete, contentDescription = "Delete ${row.name}", tint = if (delHot) colors.error else colors.onSurfaceVariant, modifier = Modifier.size(20.dp)) }
+        }
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
+}
+
+/** A text button that shows where controller focus is: an outline in its own colour. */
+@Composable
+private fun FocusText(text: String, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
+    val shape = RoundedCornerShape(8.dp)
+    Text(
+        text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = color,
+        modifier = modifier.clip(shape)
+            .background(if (hot) color.copy(alpha = 0.14f) else Color.Transparent)
+            .border(2.dp, if (hot) color else Color.Transparent, shape)
+            .hoverable(src).clickable(interactionSource = src, indication = null, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    )
 }

@@ -289,9 +289,16 @@ fun SettingsPage(
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 18.dp)) {
         Rise(0) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Outlined when a controller's focus is on it, like every other control here.
+                val backSrc = remember { MutableInteractionSource() }
+                val backHot = backSrc.collectIsFocusedAsState().value || backSrc.collectIsHoveredAsState().value
                 Text(
-                    "‹  Back", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurfaceVariant,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onBack).padding(horizontal = 6.dp, vertical = 4.dp),
+                    "‹  Back", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    color = if (backHot) LocalPalette.current.signal else colors.onSurfaceVariant,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .border(2.dp, if (backHot) LocalPalette.current.signal else Color.Transparent, RoundedCornerShape(8.dp))
+                        .hoverable(backSrc).clickable(interactionSource = backSrc, indication = null, onClick = onBack)
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
                 )
                 if (eyebrow != null) {
                     Spacer(Modifier.width(10.dp))
