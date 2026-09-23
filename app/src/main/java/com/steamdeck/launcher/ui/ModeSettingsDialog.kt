@@ -49,6 +49,8 @@ class ModeSettings(
     val addedGamesDirs: List<String>? = null,
     val addedGames: List<AddedGameRow> = emptyList(),
     val addedGamesArt: Boolean = true,
+    /** The Runtime driver menu's download entry for Qualcomm's Linux driver; null hides it (installed). */
+    val qcomDownload: String? = null,
 )
 
 /** One added game as the settings page shows it: its folder, the chosen .exe, the other .exe files it could be. */
@@ -63,6 +65,7 @@ class ModeSettingsActions(
     val onSelectLinux: (String) -> Unit,
     val onImportLinux: () -> Unit,
     val onRemoveLinux: (String) -> Unit,
+    val onDownloadQcom: () -> Unit = {},
     val onSelectAndroid: (String) -> Unit,
     val onImportAndroid: () -> Unit,
     val onRemoveAndroid: (String) -> Unit,
@@ -131,6 +134,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 (if (steam) "Used by Steam and games." else "Used by desktop apps.") + " Applies next session.",
                 s.linuxRows, s.linuxSelected, importLabel = "Import Turnip zip…",
                 onSelect = a.onSelectLinux, onRemove = a.onRemoveLinux, onImport = a.onImportLinux,
+                extraLabel = s.qcomDownload, onExtra = a.onDownloadQcom,
             )
             DriverRowMenu(
                 host, "panel", "Display driver",
@@ -263,6 +267,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
 private fun DriverRowMenu(
     host: MenuHost, key: String, label: String, hint: String, rows: List<DriverRow>, selected: String, importLabel: String,
     onSelect: (String) -> Unit, onRemove: (String) -> Unit, onImport: () -> Unit,
+    extraLabel: String? = null, onExtra: () -> Unit = {},
 ) {
     val open = host.open == key
     val colors = MaterialTheme.colorScheme
@@ -280,6 +285,7 @@ private fun DriverRowMenu(
                     }) else null,
                 ) { onSelect(row.id); host.open = null }
                 MenuItem(importLabel, checked = false) { host.open = null; onImport() }
+                if (extraLabel != null) MenuItem(extraLabel, checked = false) { host.open = null; onExtra() }
             }
         }
     }
