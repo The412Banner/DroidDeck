@@ -111,6 +111,8 @@ struct userdata {
     int32_t max_buffer_frames;
     int32_t requested_buffer_frames;
     bool adaptive;
+    /* rate= was given: ask the device for exactly that instead of its own rate. */
+    bool rate_requested;
     int32_t xruns_seen;
     unsigned writes_since_xrun_check;
     int32_t chunk_frames;
@@ -173,7 +175,10 @@ static int open_stream(struct userdata *u) {
     AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_SHARED);
     AAudioStreamBuilder_setPerformanceMode(builder, u->performance_mode);
     AAudioStreamBuilder_setFormat(builder, u->ss.format == PA_SAMPLE_FLOAT32NE ? AAUDIO_FORMAT_PCM_FLOAT : AAUDIO_FORMAT_PCM_I16);
-    AAudioStreamBuilder_setSampleRate(builder, (int32_t) u->ss.rate);
+    /* The device's own rate unless one was asked for: at any other rate Android falls back to a
+     * legacy stream with 20 ms bursts and room for three of them, and the daemon under proot
+     * cannot keep that fed. The sink takes whatever rate comes back; PulseAudio resamples clients. */
+    AAudioStreamBuilder_setSampleRate(builder, u->rate_requested ? (int32_t) u->ss.rate : AAUDIO_UNSPECIFIED);
     AAudioStreamBuilder_setChannelCount(builder, (int32_t) u->ss.channels);
 
     r = AAudioStreamBuilder_openStream(builder, &u->stream);
@@ -346,7 +351,7 @@ static void thread_func(void *userdata) {
     /* Ahead of everything else in the app, as Android's own audio threads are; realtime on top
      * of that where the kernel allows (it does not, for an app, but it costs nothing to ask). */
     if (setpriority(PRIO_PROCESS, (id_t) syscall(SYS_gettid), AUDIO_NICE) < 0)
-        pa_log("aaudio-sink: could not raise the IO thread's priority (%s)", strerror(errno));
+        pa_log_debug("aaudio-sink: could not raise the IO thread's priority (%s)", strerror(errno));
     if (u->core->realtime_scheduling)
         pa_thread_make_realtime(u->core->realtime_priority);
 
@@ -432,6 +437,7 @@ int pa__init(pa_module *m) {
                         : performance_mode == 2 ? AAUDIO_PERFORMANCE_MODE_POWER_SAVING
                         : AAUDIO_PERFORMANCE_MODE_LOW_LATENCY;
     u->adaptive = adaptive;
+    u->rate_requested = pa_modargs_get_value(ma, "rate", NULL) != NULL;
     u->requested_buffer_frames = (int32_t) buffer_frames;
     u->max_buffer_frames = (int32_t) max_buffer_frames;
     u->rtpoll = pa_rtpoll_new();
