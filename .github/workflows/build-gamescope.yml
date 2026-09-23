@@ -5,6 +5,10 @@ name: Build gamescope (patched)
 # release asset the apk build fetches (tools/gamescope/release.env names the tag and sha). The
 # hosted runtime image is never changed: the apk stages the binary over /usr/local/bin.
 on:
+  push:
+    paths:
+      - 'tools/gamescope/**'
+      - '.github/workflows/build-gamescope.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -33,7 +37,7 @@ jobs:
             gamescope.tzst
             gamescope.tzst.sha256
       - name: Publish
-        if: inputs.tag != ''
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

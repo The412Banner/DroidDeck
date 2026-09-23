@@ -76,7 +76,8 @@ object AddedGames {
             val candidates = candidates(folder)
             val chosen = SessionPrefs.addedGameExe(context, folder.name).takeIf { it.isNotEmpty() }?.let { File(it) }?.takeIf { it.isFile }
             val exe = chosen ?: candidates.firstOrNull() ?: continue
-            val guestExe = guestPath(context, exe) ?: run { Log.w(TAG, "${folder.name}: the session cannot see ${exe.path}"); continue }
+            val guestExe = guestPath(context, exe)
+            if (guestExe == null) { Log.w(TAG, "${folder.name}: the session cannot see ${exe.path}"); continue }
             val guestDir = guestPath(context, exe.parentFile ?: folder) ?: continue
             val name = folder.name
             val crc = CRC32().apply { update(("\"$guestExe\"" + name).toByteArray()) }.value
