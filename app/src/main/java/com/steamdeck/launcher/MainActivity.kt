@@ -118,6 +118,7 @@ class MainActivity : ComponentActivity() {
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
             SessionPrefs.setAddedGamesDirs(this, addedGamesDirs + path)
             addedGamesDirs = SessionPrefs.addedGamesDirs(this)
+        addedGamesArt = SessionPrefs.addedGamesArt(this)
             refreshAddedGames()
             refresh()
         }
@@ -133,6 +134,8 @@ class MainActivity : ComponentActivity() {
         }
     }
     private var addedGamesDirs by mutableStateOf<List<String>>(emptyList())
+    private var addedGamesArt by mutableStateOf(true)
+    @Volatile private var artFetchRunning = false
     private var addedGames by mutableStateOf<List<com.steamdeck.launcher.ui.AddedGameRow>>(emptyList())
     private val pickRomsDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
@@ -394,6 +397,7 @@ class MainActivity : ComponentActivity() {
                 steamChannel = if (mode == SessionService.MODE_STEAM) steamChannel else null,
                 addedGamesDirs = if (mode == SessionService.MODE_STEAM) addedGamesDirs else null,
                 addedGames = if (mode == SessionService.MODE_STEAM) addedGames else emptyList(),
+                addedGamesArt = addedGamesArt,
             ),
             ModeSettingsActions(
                 onResolution = { cap -> SessionPrefs.setResolutionCap(this, mode, cap); resolutionCap = cap },
@@ -425,6 +429,7 @@ class MainActivity : ComponentActivity() {
                 onFexPreset = { id -> SessionPrefs.setFexPreset(this, id); fexPreset = id },
                 onSteamChannel = { id -> SessionPrefs.setSteamChannel(this, id); steamChannel = id },
                 onPickAddedGamesDir = { pickAddedGamesDir.launch(InAppFilePicker.buildDirIntent(this, "Choose a folder of your own games", addedGamesDirs.lastOrNull())) },
+                onAddedGamesArt = { on -> SessionPrefs.setAddedGamesArt(this, on); addedGamesArt = on; if (on) refreshAddedGames() },
                 onForgetAddedGamesDir = { dir -> SessionPrefs.setAddedGamesDirs(this, addedGamesDirs - dir); addedGamesDirs = SessionPrefs.addedGamesDirs(this); refreshAddedGames(); refresh() },
                 onAddedGameExe = { folder, path -> SessionPrefs.setAddedGameExe(this, folder, path); refreshAddedGames(); refresh() },
                 onPickAddedGameExe = { folder ->
@@ -468,6 +473,19 @@ class MainActivity : ComponentActivity() {
     private fun refreshAddedGames() {
         addedGames = com.steamdeck.launcher.frontend.AddedGames.scan(this).map { g ->
             com.steamdeck.launcher.ui.AddedGameRow(g.folder.path, g.folderName(), g.exe.path, g.exe.name, g.candidates.map { c -> c.path to c.name }.distinctBy { it.first })
+        }
+        // Art the games do not have yet, from Steam's store, off the main thread; the rail
+        // redraws when something arrives.
+        if (SessionPrefs.addedGamesArt(this) && !artFetchRunning) {
+            artFetchRunning = true
+            Thread({
+                try {
+                    val games = com.steamdeck.launcher.frontend.AddedGames.scan(this)
+                    if (com.steamdeck.launcher.frontend.AddedGameArt.fetchMissing(this, games)) ui.post { refresh() }
+                } finally {
+                    artFetchRunning = false
+                }
+            }, "added-art").start()
         }
     }
 
@@ -614,7 +632,7 @@ class MainActivity : ComponentActivity() {
         // The libraries, off the main thread: manifests and a folder scan.
         Thread({
             val games = if (ready) Library.steamGames(this) + com.steamdeck.launcher.frontend.AddedGames.scan(this).map { g ->
-                Library.SteamGame(g.appId.toInt(), g.name, null, "added", g.gameId)
+                com.steamdeck.launcher.frontend.AddedGameArt.resolve(this, g).let { art -> Library.SteamGame(g.appId.toInt(), g.name, art.portrait ?: art.header, "added", g.gameId) }
             } else emptyList()
             val emus = Library.emulators(this) { id -> DesktopCatalog.installed(this, id) != null }
             ui.post { steamGames = games; emulatorList = emus }

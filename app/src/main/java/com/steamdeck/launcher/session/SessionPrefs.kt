@@ -249,6 +249,13 @@ object SessionPrefs {
         prefs(context).edit().putString("addedGamesDirs", dirs.distinct().joinToString("\n")).remove("addedGamesDir").apply()
     }
 
+    /** Whether added games without art of their own get Steam's store art fetched for them. */
+    fun addedGamesArt(context: Context): Boolean = prefs(context).getBoolean("addedGamesArt", true)
+
+    fun setAddedGamesArt(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean("addedGamesArt", on).apply()
+    }
+
     /** The .exe the user chose for one game folder (by its path), "" = the scanner's pick. */
     fun addedGameExe(context: Context, folderPath: String): String = prefs(context).getString("addedExe:$folderPath", "") ?: ""
 

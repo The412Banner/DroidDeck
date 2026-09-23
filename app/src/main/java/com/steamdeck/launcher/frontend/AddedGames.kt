@@ -126,10 +126,23 @@ object AddedGames {
         games.forEachIndexed { i, g ->
             if (i > 0) json.append(',')
             json.append("{\"name\":").append(quote(g.name)).append(",\"exe\":").append(quote(g.guestExe))
-                .append(",\"dir\":").append(quote(g.guestDir)).append(",\"appid\":").append(g.appId).append('}')
+                .append(",\"dir\":").append(quote(g.guestDir)).append(",\"appid\":").append(g.appId)
+            // The art, as the session sees it: the app's cache is bound at its own path, a file in
+            // the game's folder at the folder's guest path.
+            val art = AddedGameArt.resolve(context, g)
+            val pieces = listOf("p" to art.portrait, "header" to art.header, "hero" to art.hero, "logo" to art.logo, "icon" to art.icon)
+                .mapNotNull { (k, f) -> f?.let { file -> artGuestPath(context, file)?.let { k to it } } }
+            if (pieces.isNotEmpty()) json.append(",\"art\":{").append(pieces.joinToString(",") { (k, v) -> quote(k) + ":" + quote(v) }).append('}')
+            json.append('}')
         }
         file.writeText(json.append(']').toString())
         return file
+    }
+
+    private fun artGuestPath(context: Context, file: File): String? {
+        val files = context.filesDir.absolutePath
+        if (file.absolutePath.startsWith("$files/")) return file.absolutePath
+        return guestPath(context, file)
     }
 
     private fun quote(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""

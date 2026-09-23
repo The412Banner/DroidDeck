@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import struct
 import sys
 
@@ -111,7 +112,7 @@ def shortcut(game):
         "AppName": game["name"],
         "Exe": '"%s"' % game["exe"],
         "StartDir": '"%s"' % game["dir"],
-        "icon": "",
+        "icon": (game.get("art") or {}).get("icon", "") or "",
         "ShortcutPath": "",
         "LaunchOptions": "",
         "IsHidden": 0,
@@ -125,6 +126,62 @@ def shortcut(game):
         "FlatpakAppID": "",
         "tags": {"0": TAG},
     }
+
+
+ART_MANIFEST = ".steamdeck-art.json"
+# listing key -> the client's grid file suffix: <appid>p = portrait capsule, <appid> = header,
+# <appid>_hero, <appid>_logo.
+ART_SLOTS = (("p", "p"), ("header", ""), ("hero", "_hero"), ("logo", "_logo"))
+
+
+def install_art(acct, games):
+    """Copies each game's art into the client's grid folder under the names it looks for. A file
+    the client already has that this script did not write (art the user set in the client) is
+    left alone; ours are replaced when the source changed and removed when the game lost its art."""
+    grid = os.path.join(acct, "config", "grid")
+    os.makedirs(grid, exist_ok=True)
+    manifest_path = os.path.join(grid, ART_MANIFEST)
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, ValueError):
+        manifest = {}
+    wanted = {}
+    copied = 0
+    for game in games:
+        art = game.get("art") or {}
+        appid = str(int(game["appid"]) & 0xFFFFFFFF)
+        for key, suffix in ART_SLOTS:
+            src = art.get(key)
+            if not src or not os.path.isfile(src):
+                continue
+            ext = os.path.splitext(src)[1].lower() or ".png"
+            if ext == ".jpeg":
+                ext = ".jpg"
+            name = appid + suffix + ext
+            dst = os.path.join(grid, name)
+            size = os.path.getsize(src)
+            wanted[name] = size
+            if os.path.exists(dst) and name not in manifest:
+                continue  # the user's own choice inside the client
+            if os.path.exists(dst) and manifest.get(name) == size:
+                continue
+            try:
+                shutil.copyfile(src, dst + ".tmp")
+                os.replace(dst + ".tmp", dst)
+                copied += 1
+            except OSError as e:
+                print("bannerlator-steam-shortcuts: could not copy art %s (%s)" % (name, e))
+    for name in list(manifest):
+        if name not in wanted:
+            try:
+                os.remove(os.path.join(grid, name))
+            except OSError:
+                pass
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(wanted, f)
+    if copied:
+        print("bannerlator-steam-shortcuts: %d piece(s) of art placed" % copied)
 
 
 def main():
@@ -160,6 +217,7 @@ def main():
         f.write(write({"shortcuts": entries}))
     os.replace(tmp, path)
     print("bannerlator-steam-shortcuts: %d added game(s) written, %d of the client's own kept" % (len(ours), len(kept)))
+    install_art(acct, [g for g in games if g.get("exe") and g.get("name")])
     # Each added game runs under the ARM64 Proton: the compat registrar's own mapping writer.
     try:
         # No .py suffix on the registrar, so the loader has to be named.

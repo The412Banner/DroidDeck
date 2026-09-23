@@ -48,6 +48,7 @@ class ModeSettings(
     /** The chosen Games folders (null = not a Steam page). */
     val addedGamesDirs: List<String>? = null,
     val addedGames: List<AddedGameRow> = emptyList(),
+    val addedGamesArt: Boolean = true,
 )
 
 /** One added game as the settings page shows it: its folder, the chosen .exe, the other .exe files it could be. */
@@ -74,6 +75,7 @@ class ModeSettingsActions(
     val onSteamChannel: (String) -> Unit = {},
     val onPickAddedGamesDir: () -> Unit = {},
     val onForgetAddedGamesDir: (path: String) -> Unit = {},
+    val onAddedGamesArt: (Boolean) -> Unit = {},
     val onAddedGameExe: (folderPath: String, path: String) -> Unit = { _, _ -> },
     val onPickAddedGameExe: (folderPath: String) -> Unit = {},
     val onDismiss: () -> Unit,
@@ -171,6 +173,11 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 if (s.addedGamesDirs.isEmpty()) "Games folder" else "Another games folder",
                 "Your own Windows games, one subfolder each, anywhere: internal storage, the SD card, a USB drive. As many folders as you like. Each game goes into the client's library as a non-Steam game under the ARM64 Proton, at the next session start.",
                 "Add…", onClick = a.onPickAddedGamesDir,
+            )
+            ToggleRow(
+                host, "addedArt", "Artwork from Steam",
+                "A game with no art of its own gets the store's capsule, header, hero and logo for the same title, looked up by folder name. Your own art wins: drop cover.jpg (or poster, boxart, folder, the folder's name), header.jpg, hero.jpg, logo.png or icon.png into the game's folder or its art subfolder.",
+                s.addedGamesArt, onChange = a.onAddedGamesArt,
             )
             for (g in s.addedGames) ChoiceRow(
                 host, "added:" + g.folderPath, g.folderName, "Launches ${g.exeName}" + (if (s.addedGamesDirs.size > 1) " · in " + g.folderPath.substringBeforeLast('/').substringAfterLast('/') else ""),
