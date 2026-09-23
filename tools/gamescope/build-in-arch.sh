@@ -7,6 +7,9 @@ set -euxo pipefail
 VERSION=${GAMESCOPE_VERSION:-3.16.29}
 WORK=/work
 cd "$WORK"
+# pacman's download sandbox (Landlock + the alpm user) cannot be set up inside the runner's
+# container; the packages still come signed from Arch Linux ARM's mirrors.
+grep -q '^DisableSandbox' /etc/pacman.conf || sed -i 's/^\[options\]/[options]\nDisableSandbox/' /etc/pacman.conf
 pacman -Syu --noconfirm --needed git sudo zstd binutils
 # makepkg refuses root; a builder user with passwordless sudo installs the dependencies.
 id builder >/dev/null 2>&1 || useradd -m builder
