@@ -144,7 +144,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
             ChoiceRow(
                 host, "channel", "Client branch", "The Steam client build the session forces. Applies at the next session start; the client may update itself once.",
                 listOf("publicbeta" to "Public beta", "steamdeck_publicbeta" to "Steam Deck public beta"), s.steamChannel,
-                note = "Public beta is what every session has run on. Steam Deck public beta is the channel Armada bootstraps its ARM64 client from.",
+                note = "Public beta is what every session ran on before. Steam Deck public beta is the channel Deck mode needs (on public beta it reinstalls the same client at every start) and the one Armada bootstraps from; Deck mode picks it unless you choose here.",
                 onPick = a.onSteamChannel,
             )
         }

@@ -221,7 +221,13 @@ object SessionPrefs {
     }
 
     /** The Steam client branch forced on the command line: "publicbeta" (every session so far) or "steamdeck_publicbeta" (Armada's). */
-    fun steamChannel(context: Context): String = prefs(context).getString("steamChannel", "publicbeta") ?: "publicbeta"
+    fun steamChannel(context: Context): String =
+        prefs(context).getString("steamChannel", null)
+            // Deck mode on the publicbeta channel reinstalls the same client at every start (the
+            // client reports "installed version 0" against that manifest and exits 42 to apply it,
+            // losing the launch URL each time); on steamdeck_publicbeta the second launch comes up
+            // clean. Seen on device 2026-09-23. So Deck mode takes the Deck channel unless chosen.
+            ?: if (steamDeckMode(context)) "steamdeck_publicbeta" else "publicbeta"
 
     fun setSteamChannel(context: Context, id: String) {
         prefs(context).edit().putString("steamChannel", id).apply()
