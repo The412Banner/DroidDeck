@@ -1,0 +1,4 @@
+#!/bin/sh
+# No Deck dock here. The client calls this from the polkit-helpers directory in Deck mode; a
+# clean exit is "nothing to update".
+exit 0

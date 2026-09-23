@@ -44,6 +44,12 @@ object SessionFiles {
             "usr/bin/jupiter-biosupdate" to "usr/bin/jupiter-biosupdate",
             "usr/bin/steamos-polkit-helpers/steamos-priv-write" to "usr/bin/steamos-polkit-helpers/steamos-priv-write",
             "usr/bin/steamos-polkit-helpers/steamos-set-timezone" to "usr/bin/steamos-polkit-helpers/steamos-set-timezone",
+            // On device the client called these four by their polkit-helpers path, not /usr/bin: the
+            // "Update Error" dialog was steamos-update missing there.
+            "usr/bin/steamos-polkit-helpers/steamos-update" to "usr/bin/steamos-polkit-helpers/steamos-update",
+            "usr/bin/steamos-polkit-helpers/steamos-select-branch" to "usr/bin/steamos-polkit-helpers/steamos-select-branch",
+            "usr/bin/steamos-polkit-helpers/jupiter-biosupdate" to "usr/bin/steamos-polkit-helpers/jupiter-biosupdate",
+            "usr/bin/steamos-polkit-helpers/jupiter-dock-updater" to "usr/bin/steamos-polkit-helpers/jupiter-dock-updater",
         )
         // The desktop's launcher and labwc defaults, only where the desktop package is installed:
         // staging them into a runtime without it would make the desktop look present when it is not.
