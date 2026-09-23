@@ -61,7 +61,16 @@ object SessionFiles {
             "etc/xdg/lxqt/panel.conf" to "etc/xdg/lxqt/panel.conf",
             "usr/lib/firefox/defaults/pref/steamdeck.js" to "usr/lib/firefox/defaults/pref/steamdeck.js",
         )
-        val all = if (File(root, "usr/bin/labwc").isFile) files + desktop else files
+        // The patched gamescope (tools/gamescope): the runtime's own version rebuilt with the ARM64
+        // client fixes, over /usr/local/bin so it comes first in the session's PATH. Only when the
+        // apk carries it - a build without the asset leaves the runtime's copy alone.
+        val optional = arrayOf(
+            "usr/local/bin/gamescope" to "usr/local/bin/gamescope",
+        ).filter { (asset, _) ->
+            val dir = asset.substringBeforeLast('/')
+            runCatching { context.assets.list("linuxfs/$dir")?.contains(asset.substringAfterLast('/')) == true }.getOrDefault(false)
+        }
+        val all = (if (File(root, "usr/bin/labwc").isFile) files + desktop else files) + optional
         for ((asset, relative) in all) {
             val target = File(root, relative)
             val staged = File(target.parentFile, target.name + ".staged")

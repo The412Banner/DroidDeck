@@ -22,7 +22,7 @@ if [ -n "${BL_LOG:-}" ] && [ -z "${BL_INSIDE:-}" ]; then
   exec >>"$BL_LOG" 2>&1
   echo "== bannerlator-session $(date) mode=$mode $*"
   echo "== uid=$(id -u) size=${BL_WIDTH:-?}x${BL_HEIGHT:-?} fps=${BL_FPS:-0} icd=${VK_ICD_FILENAMES:-none}"
-  echo "== gamescope: $(gamescope --version 2>&1 | head -1)"
+  echo "== gamescope: $(gamescope --version 2>&1 | head -1) at $(command -v gamescope)"
   echo "== rootfs: $(cat /.version 2>/dev/null || echo unversioned)"
 fi
 
@@ -70,6 +70,10 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
   fi
   unset bl_icd_lib
 fi
+# The app's gamescope build (tools/gamescope) takes realtime-priority Vulkan queues on this
+# switch instead of on CAP_SYS_NICE, which proot never has; it falls back to normal priority
+# where the driver refuses, and the runtime's own build ignores it.
+export GAMESCOPE_FORCE_VULKAN_REALTIME=${BL_GAMESCOPE_REALTIME:-1}
 export XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 export XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}

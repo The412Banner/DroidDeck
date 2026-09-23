@@ -178,6 +178,16 @@ jobs:
           for f in tools/linuxfs/overlay/usr/bin/* tools/linuxfs/overlay/usr/bin/steamos-polkit-helpers/*; do
             [ -f "$f" ] && install -Dm644 "$f" "$D/${f#tools/linuxfs/overlay/}"
           done
+          # The patched gamescope, when a build of it has been published (tools/gamescope/release.env
+          # names the release and the archive's sha256); see tools/gamescope/PATCHES.md.
+          if [ -f tools/gamescope/release.env ]; then
+            . tools/gamescope/release.env
+            curl -fsSL -o gamescope.tzst "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GAMESCOPE_TAG}/gamescope.tzst"
+            echo "${GAMESCOPE_SHA256}  gamescope.tzst" | sha256sum -c -
+            tar --use-compress-program=unzstd -xf gamescope.tzst -C "$D"
+            test -f "$D/usr/local/bin/gamescope"
+            rm gamescope.tzst
+          fi
           # And the desktop's launcher and labwc defaults, staged over the desktop package's copies.
           install -Dm644 tools/linuxfs/desktop/steamdeck-desktop "$D/usr/local/bin/steamdeck-desktop"
           install -Dm644 tools/linuxfs/desktop/autostart "$D/etc/xdg/labwc/autostart"
