@@ -194,7 +194,7 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
             )
         }
         if (steam && s.directAudio != null && s.mic != null) SettingsGroup("Audio") {
-            ToggleRow(host, "da", "DirectAudio for games", "Games play straight to the device, bypassing PulseAudio: lower latency. Off = PulseAudio for everything.", s.directAudio, onChange = a.onDirectAudio)
+            ToggleRow(host, "da", "DirectAudio", "Games play straight to the device through the relay, bypassing PulseAudio: lower latency. The client's own sound goes through the same relay, which drives the device from outside the session with its adaptive buffer. Off = PulseAudio drives the device itself for everything.", s.directAudio, onChange = a.onDirectAudio)
             ToggleRow(host, "mic", "Microphone", "The device's microphone for voice chat, as the client's input device. Asks for the permission once.", s.mic, onChange = a.onMic)
         }
         if (steam && s.gameStorage != null) SettingsGroup("Game storage") {
