@@ -13,7 +13,8 @@ import java.io.File
  * folder as a hint). Read on a worker thread; nothing here is cached beyond one screen refresh.
  */
 object Library {
-    class SteamGame(val appId: Int, val name: String, val art: File?, val library: String)
+    /** [gameId] is what steam://rungameid/ takes: the appid for a Steam title, the shortcut id for an added game. */
+    class SteamGame(val appId: Int, val name: String, val art: File?, val library: String, val gameId: Long = appId.toLong())
     class Rom(val name: String, val hostPath: File, val guestPath: String, val emulatorId: String, val art: File? = null)
     class Emulator(val id: String, val name: String, val system: String, val program: String, val installed: Boolean, val games: List<Rom>) {
         /** The emulator's own icon, bundled (the runtime keeps them as theme SVGs the app cannot draw). */

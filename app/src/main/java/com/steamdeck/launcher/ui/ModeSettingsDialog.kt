@@ -44,7 +44,13 @@ class ModeSettings(
     val fexPreset: String? = null,
     /** Steam only: the client branch forced on the command line. */
     val steamChannel: String? = null,
+    /** Steam only: the user's own games folder and what was found in it. */
+    val addedGamesDir: String? = null,
+    val addedGames: List<AddedGameRow> = emptyList(),
 )
+
+/** One added game as the settings page shows it: its folder, the chosen .exe, the other .exe files it could be. */
+class AddedGameRow(val folderName: String, val exePath: String, val exeName: String, val candidates: List<Pair<String, String>>)
 
 class ModeSettingsActions(
     val onResolution: (Int) -> Unit,
@@ -65,6 +71,10 @@ class ModeSettingsActions(
     val onPickGameStorageFolder: () -> Unit = {},
     val onFexPreset: (String) -> Unit = {},
     val onSteamChannel: (String) -> Unit = {},
+    val onPickAddedGamesDir: () -> Unit = {},
+    val onClearAddedGamesDir: () -> Unit = {},
+    val onAddedGameExe: (folderName: String, path: String) -> Unit = { _, _ -> },
+    val onPickAddedGameExe: (folderName: String) -> Unit = {},
     val onDismiss: () -> Unit,
 )
 
@@ -146,6 +156,22 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 listOf("publicbeta" to "Public beta", "steamdeck_publicbeta" to "Steam Deck public beta"), s.steamChannel,
                 note = "Public beta is what every session ran on before. Steam Deck public beta is the channel Deck mode needs (on public beta it reinstalls the same client at every start) and the one Armada bootstraps from; Deck mode picks it unless you choose here.",
                 onPick = a.onSteamChannel,
+            )
+        }
+        if (steam && s.addedGamesDir != null) SettingsGroup("Added games") {
+            ActionRow(
+                "Games folder",
+                if (s.addedGamesDir.isEmpty()) "Your own Windows games, one subfolder each, anywhere on internal storage, in the ROMs folder or on the SD-card library. Each goes into the client's library as a non-Steam game under the ARM64 Proton, at the next session start."
+                else s.addedGamesDir + " · " + (if (s.addedGames.isEmpty()) "no game folders with a .exe found" else "${s.addedGames.size} game${if (s.addedGames.size == 1) "" else "s"}"),
+                if (s.addedGamesDir.isEmpty()) "Choose…" else "Change…",
+                onClick = a.onPickAddedGamesDir,
+            )
+            if (s.addedGamesDir.isNotEmpty()) ActionRow("Forget the folder", "The games leave the client's library at the next session start; nothing on disk is touched.", "Forget", onClick = a.onClearAddedGamesDir)
+            for (g in s.addedGames) ChoiceRow(
+                host, "added:" + g.folderName, g.folderName, "Launches ${g.exeName}",
+                g.candidates + ("__pick__" to "Choose another file…"), g.exePath,
+                note = "The .exe files found in the game's folder; the one named after the folder, else the largest, is picked unless you choose.",
+                onPick = { path -> if (path == "__pick__") a.onPickAddedGameExe(g.folderName) else a.onAddedGameExe(g.folderName, path) },
             )
         }
         if (steam && s.fexPreset != null) SettingsGroup("Games") {

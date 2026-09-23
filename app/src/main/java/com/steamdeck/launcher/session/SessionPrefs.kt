@@ -233,6 +233,20 @@ object SessionPrefs {
         prefs(context).edit().putString("steamChannel", id).apply()
     }
 
+    /** The folder of the user's own Windows games (one subfolder each), "" = none. */
+    fun addedGamesDir(context: Context): String = prefs(context).getString("addedGamesDir", "") ?: ""
+
+    fun setAddedGamesDir(context: Context, path: String) {
+        prefs(context).edit().putString("addedGamesDir", path).apply()
+    }
+
+    /** The .exe the user chose for one game folder (by folder name), "" = the scanner's pick. */
+    fun addedGameExe(context: Context, folderName: String): String = prefs(context).getString("addedExe:$folderName", "") ?: ""
+
+    fun setAddedGameExe(context: Context, folderName: String, path: String) {
+        prefs(context).edit().putString("addedExe:$folderName", path).apply()
+    }
+
     /** The app's colour theme (ui/Themes ids); Paper on black unless chosen otherwise. */
     fun theme(context: Context): String = prefs(context).getString("theme", "paper") ?: "paper"
 

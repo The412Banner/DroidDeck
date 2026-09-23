@@ -316,6 +316,14 @@ class SessionService : Service() {
                 .takeIf { it.isFile }?.let { FileUtils.readString(it)?.trim() }
             guest.add("BL_WLR_RENDERER=" + (override?.takeIf { it.isNotEmpty() } ?: SessionPrefs.desktopRenderer(this)))
         }
+        // The user's own games, for the runtime's shortcuts writer to put in the client's library
+        // before the client starts (see frontend/AddedGames and bannerlator-steam-shortcuts).
+        if (SessionState.mode == MODE_STEAM) {
+            val added = com.steamdeck.launcher.frontend.AddedGames.scan(this)
+            val listing = com.steamdeck.launcher.frontend.AddedGames.writeListing(this, added)
+            guest.add("BL_ADDED_GAMES=" + listing.path)
+            if (added.isNotEmpty()) Log.i(TAG, "added games: " + added.joinToString { "${it.name} (${it.exe.name})" })
+        }
         // Where the guest leaves a request for another session (the desktop's Steam launchers).
         guest.add("BL_LAUNCH_DIR=" + sessionRoot.path)
         // The second library's name, for bannerlator-steam-library; the bind itself is made below.

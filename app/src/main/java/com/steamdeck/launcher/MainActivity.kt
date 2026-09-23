@@ -2,6 +2,7 @@ package com.steamdeck.launcher
 
 import android.Manifest
 import android.content.Intent
+import java.io.File
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -113,6 +114,26 @@ class MainActivity : ComponentActivity() {
     private val pickAndroidDriver = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedUri(r.data)?.let { importDriver(it, linux = false) }
     }
+    private val pickAddedGamesDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
+            SessionPrefs.setAddedGamesDir(this, path)
+            addedGamesDir = path
+            refreshAddedGames()
+            refresh()
+        }
+    }
+    private var pendingAddedGame: String? = null
+    private val pickAddedGameExe = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val folder = pendingAddedGame ?: return@registerForActivityResult
+        pendingAddedGame = null
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
+            SessionPrefs.setAddedGameExe(this, folder, path)
+            refreshAddedGames()
+            refresh()
+        }
+    }
+    private var addedGamesDir by mutableStateOf("")
+    private var addedGames by mutableStateOf<List<com.steamdeck.launcher.ui.AddedGameRow>>(emptyList())
     private val pickRomsDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
             SessionPrefs.setRomsDir(this, path)
@@ -183,7 +204,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onSteamGame = { g ->
                             startActivity(Intent(this, SessionActivity::class.java)
-                                .putExtra(SessionService.EXTRA_STEAM_URL, "steam://rungameid/${g.appId}"))
+                                .putExtra(SessionService.EXTRA_STEAM_URL, "steam://rungameid/${g.gameId}"))
                         },
                         onDesktop = {
                             startActivity(Intent(this, SessionActivity::class.java)
@@ -371,6 +392,8 @@ class MainActivity : ComponentActivity() {
                 storageOptions = storageOptions,
                 fexPreset = if (mode == SessionService.MODE_STEAM) fexPreset else null,
                 steamChannel = if (mode == SessionService.MODE_STEAM) steamChannel else null,
+                addedGamesDir = if (mode == SessionService.MODE_STEAM) addedGamesDir else null,
+                addedGames = if (mode == SessionService.MODE_STEAM) addedGames else emptyList(),
             ),
             ModeSettingsActions(
                 onResolution = { cap -> SessionPrefs.setResolutionCap(this, mode, cap); resolutionCap = cap },
@@ -401,6 +424,13 @@ class MainActivity : ComponentActivity() {
                 },
                 onFexPreset = { id -> SessionPrefs.setFexPreset(this, id); fexPreset = id },
                 onSteamChannel = { id -> SessionPrefs.setSteamChannel(this, id); steamChannel = id },
+                onPickAddedGamesDir = { pickAddedGamesDir.launch(InAppFilePicker.buildDirIntent(this, "Choose the folder of your own games", addedGamesDir.ifEmpty { null })) },
+                onClearAddedGamesDir = { SessionPrefs.setAddedGamesDir(this, ""); addedGamesDir = ""; addedGames = emptyList(); refresh() },
+                onAddedGameExe = { folder, path -> SessionPrefs.setAddedGameExe(this, folder, path); refreshAddedGames(); refresh() },
+                onPickAddedGameExe = { folder ->
+                    pendingAddedGame = folder
+                    pickAddedGameExe.launch(InAppFilePicker.buildIntent(this, listOf("exe"), "Choose the game's .exe", File(addedGamesDir, folder).path))
+                },
                 onDismiss = { settingsMode = null },
             ),
         )
@@ -434,11 +464,20 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    /** The added games as the settings page lists them; a scan of the folder, on this thread (one level, small). */
+    private fun refreshAddedGames() {
+        addedGames = com.steamdeck.launcher.frontend.AddedGames.scan(this).map { g ->
+            com.steamdeck.launcher.ui.AddedGameRow(g.folderName(), g.exe.path, g.exe.name, g.candidates.map { c -> c.path to c.name }.distinctBy { it.first })
+        }
+    }
+
     private fun openModeSettings(mode: String) {
         refreshDrivers()
         resolutionCap = SessionPrefs.resolutionCap(this, mode)
         fexPreset = SessionPrefs.fexPreset(this)
         steamChannel = SessionPrefs.steamChannel(this)
+        addedGamesDir = SessionPrefs.addedGamesDir(this)
+        refreshAddedGames()
         shapeMode = SessionPrefs.shapeMode(this)
         hdrOn = SessionPrefs.hdr(this, mode)
         hdrReason = com.steamdeck.launcher.wayland.HdrSupport.probe(this).reason
@@ -574,7 +613,9 @@ class MainActivity : ComponentActivity() {
         } else null
         // The libraries, off the main thread: manifests and a folder scan.
         Thread({
-            val games = if (ready) Library.steamGames(this) else emptyList()
+            val games = if (ready) Library.steamGames(this) + com.steamdeck.launcher.frontend.AddedGames.scan(this).map { g ->
+                Library.SteamGame(g.appId.toInt(), g.name, null, "added", g.gameId)
+            } else emptyList()
             val emus = Library.emulators(this) { id -> DesktopCatalog.installed(this, id) != null }
             ui.post { steamGames = games; emulatorList = emus }
         }, "library").start()
