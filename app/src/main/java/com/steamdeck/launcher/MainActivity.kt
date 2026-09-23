@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
     /** The latest Banners-Turnip release as each driver menu offers it (see [refreshReleaseRows]). */
     private var linuxDownloads by mutableStateOf<List<com.steamdeck.launcher.ui.DownloadRow>>(emptyList())
     private var androidDownloads by mutableStateOf<List<com.steamdeck.launcher.ui.DownloadRow>>(emptyList())
-    private var releaseStatus by mutableStateOf("Check for the latest Turnip")
+    private var releaseStatus by mutableStateOf("Check for new drivers (Banners-Turnip, WinNative)")
     private var releaseChecking = false
     /** Asset name -> download percent, while it downloads. */
     private val releaseProgress = HashMap<String, Int>()
@@ -689,26 +689,28 @@ class MainActivity : ComponentActivity() {
         refreshDrivers()
     }
 
-    /** The download entries and the refresh line, from the release the last check found. */
+    /** The download entries and the refresh line, from what the last check found. */
     private fun refreshReleaseRows() {
-        val release = TurnipReleases.cached(this)
+        val check = TurnipReleases.cached(this)
         val lm = LinuxVulkanDriverManager(this)
         val td = TurnipDriver(this)
-        fun rows(linux: Boolean) = release?.assets.orEmpty()
+        fun rows(linux: Boolean) = check?.assets.orEmpty()
             .filter { it.linux == linux }
             .filter { a -> TurnipReleases.installedId(this, a) { id -> if (linux) lm.isInstalled(id) else td.isInstalled(id) } == null }
             .map { a ->
                 val mb = "%.1f MB".format(a.size / 1_048_576.0)
                 com.steamdeck.launcher.ui.DownloadRow(
-                    a.name, "Download Turnip ${release!!.tag}",
-                    releaseProgress[a.name]?.let { "${a.gpus} · downloading $it%" } ?: "${a.gpus} · $mb",
+                    a.name, "Download ${a.source} ${a.tag}",
+                    releaseProgress[a.name]?.let { "${a.label} · downloading $it%" } ?: "${a.label} · $mb",
                 )
             }
         linuxDownloads = rows(linux = true)
         androidDownloads = rows(linux = false)
-        if (!releaseChecking) releaseStatus = when (release) {
-            null -> "Check for the latest Turnip"
-            else -> "Latest: ${release.tag} · checked ${ago(release.checkedAt)} · tap to refresh"
+        if (!releaseChecking) releaseStatus = when (check) {
+            null -> "Check for new drivers (Banners-Turnip, WinNative)"
+            else -> "Latest: " + check.latest.joinToString(" · ") { "${it.first} ${it.second}" } +
+                (if (check.failed.isEmpty()) "" else " · ${check.failed.joinToString()} unreachable") +
+                " · checked ${ago(check.checkedAt)} · tap to refresh"
         }
     }
 
@@ -726,7 +728,7 @@ class MainActivity : ComponentActivity() {
     private fun checkLatestTurnip() {
         if (releaseChecking) return
         releaseChecking = true
-        releaseStatus = "Checking Banners-Turnip…"
+        releaseStatus = "Checking Banners-Turnip and WinNative…"
         Thread({
             val problem = try { TurnipReleases.refresh(this); null } catch (e: Exception) {
                 Log.w(TAG, "latest Turnip check", e); e.message ?: "check failed"

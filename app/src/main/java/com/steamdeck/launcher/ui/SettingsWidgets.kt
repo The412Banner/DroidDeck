@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -102,9 +103,13 @@ fun AnchoredMenu(open: Boolean, onDismiss: () -> Unit, title: String? = null, no
             exit = fadeOut(Motion.tw(140)) + scaleOut(Motion.tw(140), targetScale = 0.96f, transformOrigin = TransformOrigin(1f, 0f)),
             label = "menu",
         ) {
+            // A long list (a driver menu with its downloads) must not run off the screen: the menu is
+            // capped at most of the window's height and its entries scroll under the fixed title.
+            val maxHeight = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.86f).dp
             Column(
                 modifier = Modifier
                     .widthIn(min = 220.dp, max = 340.dp)
+                    .heightIn(max = maxHeight)
                     .shadow(24.dp, RowShape, ambientColor = Color.Black, spotColor = Color.Black)
                     .clip(RowShape)
                     .background(pal.surfaceVariant.copy(alpha = 0.95f))
@@ -115,7 +120,7 @@ fun AnchoredMenu(open: Boolean, onDismiss: () -> Unit, title: String? = null, no
                     title.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp, color = colors.onSurfaceVariant,
                     modifier = Modifier.padding(start = 10.dp, top = 6.dp, bottom = 6.dp),
                 )
-                content()
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) { content() }
                 if (note != null) {
                     Spacer(Modifier.height(4.dp))
                     Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))

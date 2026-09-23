@@ -23,7 +23,7 @@ import com.steamdeck.launcher.session.SessionService
 
 class DriverRow(val id: String, val name: String, val detail: String, val removable: Boolean)
 
-/** A driver from the latest Banners-Turnip release that is not installed yet; [key] is its asset name. */
+/** A release driver (Banners-Turnip, WinNative) that is not installed yet; [key] is its asset name. */
 class DownloadRow(val key: String, val label: String, val detail: String)
 
 class ModeSettings(
@@ -59,7 +59,7 @@ class ModeSettings(
     /** Latest Banners-Turnip release: what each driver menu offers to download, and the refresh line. */
     val linuxDownloads: List<DownloadRow> = emptyList(),
     val androidDownloads: List<DownloadRow> = emptyList(),
-    val releaseStatus: String = "Check for the latest Turnip",
+    val releaseStatus: String = "Check for new drivers (Banners-Turnip, WinNative)",
 )
 
 /** One added game as the settings page shows it: its folder, the chosen .exe, the other .exe files it could be. */

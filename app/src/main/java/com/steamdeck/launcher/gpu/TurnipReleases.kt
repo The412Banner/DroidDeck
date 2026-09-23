@@ -11,33 +11,106 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * The latest Banners-Turnip release, offered in both driver menus as downloads. Checked only when
- * the user taps refresh - the result is remembered, so the menu shows the last release found
- * without going online. A download goes through the same importer as a zip picked by hand, so it
- * gets the same checks and lands as an ordinary imported driver.
+ * Driver downloads from the Turnip release repos, offered in both driver menus. Checked only when
+ * the user taps refresh - the result is remembered, so the menu shows the last check without going
+ * online. A download goes through the same importer as a zip picked by hand, so it gets the same
+ * checks and lands as an ordinary imported driver.
  *
- * Asset names are `Turnip-<tag>[-variant][-Linux|-Wayland].zip`: the plain ones are AdrenoTools
- * drivers for the display driver menu, `-Linux` ones are glibc drivers for the runtime driver menu,
- * and `-Wayland` ones are for a path this app does not have, so they are never offered.
+ * Each repo's recent releases are read newest first and every driver variant is offered from the
+ * newest release that carries it: a repo that stops publishing one variant (Banners-Turnip's A8xx
+ * Linux build after v26.3.0-20260923) still offers its last one, and a repo with two release lines
+ * (WinNative's Android `v1.x` and Linux `linux-v0.x`) offers the newest of each.
  */
 object TurnipReleases {
-    private const val API = "https://api.github.com/repos/The412Banner/Banners-Turnip/releases/latest"
     private const val PREFS = "turnip_releases"
     private const val KEY_RELEASE = "latest"
     private const val KEY_DOWNLOADS = "downloads"
 
-    class Asset(val name: String, val url: String, val size: Long, val linux: Boolean, val gpus: String)
-    class Release(val tag: String, val assets: List<Asset>, val checkedAt: Long)
+    /** [label] names the variant for the menu: the GPUs it is for, and a build flavour. */
+    class Asset(val source: String, val tag: String, val name: String, val url: String, val size: Long, val linux: Boolean, val label: String)
+    /** [latest] = each source's newest release tag, for the refresh line. */
+    class Check(val assets: List<Asset>, val latest: List<Pair<String, String>>, val failed: List<String>, val checkedAt: Long)
 
-    /** The release found by the last check, or null when the user has never checked. */
-    fun cached(context: Context): Release? {
+    private class Source(val label: String, val repo: String, val classify: (name: String, tag: String) -> Pair<Boolean, String>?)
+
+    private val SOURCES = listOf(
+        // Turnip-<tag>[-variant][-Linux|-Wayland].zip; -Wayland is for a path this app does not have.
+        Source("Banners-Turnip", "The412Banner/Banners-Turnip") { name, tag ->
+            val prefix = "Turnip-$tag"
+            if (!name.startsWith(prefix) || !name.endsWith(".zip")) return@Source null
+            var variant = name.removePrefix(prefix).removeSuffix(".zip")
+            if (variant.endsWith("-Wayland")) return@Source null
+            val linux = variant.endsWith("-Linux")
+            variant = variant.removeSuffix("-Linux")
+            linux to when {
+                variant.isEmpty() -> "Adreno 6xx/7xx"
+                variant == "-A8xx" -> "Adreno 8xx"
+                variant.startsWith("-710-720") -> "Adreno 710/720" + if (variant.contains("Test")) " (test)" else ""
+                else -> variant.trimStart('-')
+            }
+        },
+        // WN-Turnip-<ver>-<b|p>_Axxx.zip (Android) and WN-Linux-Turnip-<ver>-<b|p>_Axxx.zip (Linux):
+        // b = Balanced, p = Performance, Axxx = every Adreno.
+        Source("WinNative", "WinNative-Emu/Drivers") { name, _ ->
+            val m = Regex("""^WN-(Linux-)?Turnip-[^-]+-([a-z]+)_(\w+)\.zip$""").find(name) ?: return@Source null
+            val flavour = when (m.groupValues[2]) { "b" -> "Balanced"; "p" -> "Performance"; else -> m.groupValues[2] }
+            val gpus = if (m.groupValues[3] == "Axxx") "all Adreno" else m.groupValues[3]
+            (m.groupValues[1].isNotEmpty()) to "$gpus · $flavour"
+        },
+    )
+
+    /** The result of the last check, or null when the user has never checked. */
+    fun cached(context: Context): Check? {
         val raw = prefs(context).getString(KEY_RELEASE, null) ?: return null
         return runCatching { parse(JSONObject(raw)) }.getOrNull()
     }
 
-    /** Ask GitHub for the latest release now and remember it. Throws on network or API errors. */
-    fun refresh(context: Context): Release {
-        val c = URL(API).openConnection() as HttpURLConnection
+    /**
+     * Read every source now and remember the result. A source that fails is named in [Check.failed]
+     * and the others still count; throws only when every source failed.
+     */
+    fun refresh(context: Context): Check {
+        val assets = JSONArray()
+        val latest = JSONArray()
+        val failed = ArrayList<String>()
+        var lastError: Exception? = null
+        for (src in SOURCES) {
+            try {
+                val releases = JSONArray(get("https://api.github.com/repos/${src.repo}/releases?per_page=15"))
+                val seen = HashSet<String>()
+                var newest: String? = null
+                for (i in 0 until releases.length()) {
+                    val r = releases.getJSONObject(i)
+                    if (r.optBoolean("draft")) continue
+                    val tag = r.getString("tag_name")
+                    if (newest == null) newest = tag
+                    val list = r.optJSONArray("assets") ?: continue
+                    for (j in 0 until list.length()) {
+                        val a = list.getJSONObject(j)
+                        val name = a.getString("name")
+                        val (linux, label) = src.classify(name, tag) ?: continue
+                        // Newest first: the first release carrying a variant is the one offered.
+                        if (!seen.add("$linux|$label")) continue
+                        assets.put(JSONObject().put("source", src.label).put("tag", tag).put("name", name)
+                            .put("url", a.getString("browser_download_url")).put("size", a.optLong("size"))
+                            .put("linux", linux).put("label", label))
+                    }
+                }
+                if (newest != null) latest.put(JSONObject().put("source", src.label).put("tag", newest))
+            } catch (e: Exception) {
+                failed.add(src.label)
+                lastError = e
+            }
+        }
+        if (failed.size == SOURCES.size) throw lastError ?: IOException("no source answered")
+        val stored = JSONObject().put("assets", assets).put("latest", latest)
+            .put("failed", JSONArray(failed)).put("checkedAt", System.currentTimeMillis())
+        prefs(context).edit().putString(KEY_RELEASE, stored.toString()).apply()
+        return parse(stored)
+    }
+
+    private fun get(url: String): String {
+        val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
         c.readTimeout = 20_000
         c.setRequestProperty("Accept", "application/vnd.github+json")
@@ -46,52 +119,27 @@ object TurnipReleases {
             val code = c.responseCode
             if (code == 403 || code == 429) throw IOException("GitHub's rate limit was hit - try again later")
             if (code != 200) throw IOException("GitHub answered HTTP $code")
-            val body = c.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(body)
-            val tag = json.getString("tag_name")
-            val assets = JSONArray()
-            val list = json.optJSONArray("assets") ?: JSONArray()
-            for (i in 0 until list.length()) {
-                val a = list.getJSONObject(i)
-                assets.put(JSONObject().put("name", a.getString("name"))
-                    .put("url", a.getString("browser_download_url")).put("size", a.optLong("size")))
-            }
-            val stored = JSONObject().put("tag", tag).put("assets", assets).put("checkedAt", System.currentTimeMillis())
-            prefs(context).edit().putString(KEY_RELEASE, stored.toString()).apply()
-            return parse(stored)
+            return c.inputStream.bufferedReader().use { it.readText() }
         } finally {
             c.disconnect()
         }
     }
 
-    private fun parse(json: JSONObject): Release {
-        val tag = json.getString("tag")
+    private fun parse(json: JSONObject): Check {
         val out = ArrayList<Asset>()
         val list = json.getJSONArray("assets")
         for (i in 0 until list.length()) {
             val a = list.getJSONObject(i)
-            classify(a.getString("name"), tag)?.let { (linux, gpus) ->
-                out.add(Asset(a.getString("name"), a.getString("url"), a.optLong("size"), linux, gpus))
-            }
+            out.add(Asset(a.getString("source"), a.getString("tag"), a.getString("name"), a.getString("url"),
+                a.optLong("size"), a.getBoolean("linux"), a.getString("label")))
         }
-        return Release(tag, out, json.optLong("checkedAt"))
-    }
-
-    /** (is it a Linux driver, which GPUs it is for), or null for anything this app cannot use. */
-    internal fun classify(name: String, tag: String): Pair<Boolean, String>? {
-        val prefix = "Turnip-$tag"
-        if (!name.startsWith(prefix) || !name.endsWith(".zip")) return null
-        var variant = name.removePrefix(prefix).removeSuffix(".zip")
-        if (variant.endsWith("-Wayland")) return null
-        val linux = variant.endsWith("-Linux")
-        variant = variant.removeSuffix("-Linux")
-        val gpus = when {
-            variant.isEmpty() -> "Adreno 6xx/7xx"
-            variant == "-A8xx" -> "Adreno 8xx"
-            variant.startsWith("-710-720") -> "Adreno 710/720" + if (variant.contains("Test")) " (test)" else ""
-            else -> variant.trimStart('-')
-        }
-        return linux to gpus
+        val latest = ArrayList<Pair<String, String>>()
+        val l = json.optJSONArray("latest") ?: JSONArray()
+        for (i in 0 until l.length()) l.getJSONObject(i).let { latest.add(it.getString("source") to it.getString("tag")) }
+        val failed = ArrayList<String>()
+        val f = json.optJSONArray("failed") ?: JSONArray()
+        for (i in 0 until f.length()) failed.add(f.getString(i))
+        return Check(out, latest, failed, json.optLong("checkedAt"))
     }
 
     /** The id an asset was installed as, when it was downloaded before and is still installed. */
