@@ -150,7 +150,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/src/main/assets/linuxfs
-          key: preloads-${{ env.PRELOAD_CACHE_VERSION }}-${{ hashFiles('app/src/main/cpp/fakeinput_steam.cpp', 'tools/linuxfs/preload/*.c', 'tools/linuxfs/overlay/usr/local/bin/*', 'tools/linuxfs/overlay/usr/bin/**', 'tools/linuxfs/desktop/*', 'tools/gamescope/release.env') }}
+          key: preloads-${{ env.PRELOAD_CACHE_VERSION }}-${{ hashFiles('app/src/main/cpp/fakeinput_steam.cpp', 'tools/linuxfs/preload/*.c', 'tools/linuxfs/overlay/usr/local/bin/*', 'tools/linuxfs/overlay/usr/bin/**', 'tools/linuxfs/desktop/*', 'tools/gamescope/release.env', 'tools/mangoapp/*') }}
 
       - name: Build libfakeinput.so and libblsession.so (glibc aarch64)
         if: steps.preloads.outputs.cache-hit != 'true'
@@ -191,6 +191,25 @@ jobs:
             test -f "$D/usr/local/bin/gamescope"
             rm gamescope.tzst
           fi
+          # Valve's aarch64 mangoapp for Deck mode's performance overlay, plus the five libraries the
+          # runtime lacks, pinned by sha256 in tools/mangoapp/packages.txt. Stored under the SONAME
+          # each is loaded by, as real files: assets cannot carry symlinks.
+          M="$D/usr/local/lib/mangoapp"
+          mkdir -p "$M" mango-pkgs
+          grep -v '^#' tools/mangoapp/packages.txt | while read -r sum url; do
+            [ -n "$url" ] || continue
+            curl -fsSL --retry 3 -o mango-pkgs/pkg.tar.zst "$url"
+            echo "$sum  mango-pkgs/pkg.tar.zst" | sha256sum -c -
+            tar --use-compress-program=unzstd -xf mango-pkgs/pkg.tar.zst -C mango-pkgs
+            rm mango-pkgs/pkg.tar.zst
+          done
+          install -m644 mango-pkgs/usr/bin/mangoapp "$M/mangoapp"
+          for so in libfmt.so.10 libspdlog.so.1.13 libglfw.so.3 libtraceevent.so.1 libtracefs.so.1; do
+            cp -L "mango-pkgs/usr/lib/$so" "$M/$so"
+          done
+          install -Dm644 tools/mangoapp/mangoapp "$D/usr/local/bin/mangoapp"
+          rm -rf mango-pkgs
+          ls -l "$M"
           # And the desktop's launcher and labwc defaults, staged over the desktop package's copies.
           install -Dm644 tools/linuxfs/desktop/steamdeck-desktop "$D/usr/local/bin/steamdeck-desktop"
           install -Dm644 tools/linuxfs/desktop/autostart "$D/etc/xdg/labwc/autostart"
