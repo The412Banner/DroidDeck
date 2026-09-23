@@ -46,7 +46,7 @@ else
   prepare() { _steamdeck_prepare; }
 fi
 PREP
-makepkg -s --noconfirm --skipchecksums --skippgpcheck
+makepkg -A -s --noconfirm --skipchecksums --skippgpcheck  # -A: the PKGBUILD lists x86_64 only; Arch Linux ARM builds the same file
 ls -l *.pkg.tar.*
 "
 cd "$WORK"
