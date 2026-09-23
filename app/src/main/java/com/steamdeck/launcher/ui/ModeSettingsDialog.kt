@@ -3,6 +3,10 @@ package com.steamdeck.launcher.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,6 +22,9 @@ import com.steamdeck.launcher.session.SessionPrefs
 import com.steamdeck.launcher.session.SessionService
 
 class DriverRow(val id: String, val name: String, val detail: String, val removable: Boolean)
+
+/** A driver from the latest Banners-Turnip release that is not installed yet; [key] is its asset name. */
+class DownloadRow(val key: String, val label: String, val detail: String)
 
 class ModeSettings(
     val mode: String,
@@ -49,6 +56,10 @@ class ModeSettings(
     val addedGamesDirs: List<String>? = null,
     val addedGames: List<AddedGameRow> = emptyList(),
     val addedGamesArt: Boolean = true,
+    /** Latest Banners-Turnip release: what each driver menu offers to download, and the refresh line. */
+    val linuxDownloads: List<DownloadRow> = emptyList(),
+    val androidDownloads: List<DownloadRow> = emptyList(),
+    val releaseStatus: String = "Check for the latest Turnip",
 )
 
 /** One added game as the settings page shows it: its folder, the chosen .exe, the other .exe files it could be. */
@@ -63,6 +74,9 @@ class ModeSettingsActions(
     val onSelectLinux: (String) -> Unit,
     val onImportLinux: () -> Unit,
     val onRemoveLinux: (String) -> Unit,
+    val onRefreshReleases: () -> Unit = {},
+    /** Asset name of the release driver to download. */
+    val onDownloadDriver: (String) -> Unit = {},
     val onSelectAndroid: (String) -> Unit,
     val onImportAndroid: () -> Unit,
     val onRemoveAndroid: (String) -> Unit,
@@ -131,12 +145,16 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 (if (steam) "Used by Steam and games." else "Used by desktop apps.") + " Applies next session.",
                 s.linuxRows, s.linuxSelected, importLabel = "Import Turnip zip…",
                 onSelect = a.onSelectLinux, onRemove = a.onRemoveLinux, onImport = a.onImportLinux,
+                downloads = s.linuxDownloads, releaseStatus = s.releaseStatus,
+                onRefresh = a.onRefreshReleases, onDownload = a.onDownloadDriver,
             )
             DriverRowMenu(
                 host, "panel", "Display driver",
                 "Used by the compositor in both modes. Restart the app to apply.",
                 s.androidRows, s.androidSelected, importLabel = "Import an AdrenoTools zip…",
                 onSelect = a.onSelectAndroid, onRemove = a.onRemoveAndroid, onImport = a.onImportAndroid,
+                downloads = s.androidDownloads, releaseStatus = s.releaseStatus,
+                onRefresh = a.onRefreshReleases, onDownload = a.onDownloadDriver,
             )
         }
         SettingsGroup(if (steam) "Touch & controls" else "Touch") {
@@ -263,9 +281,12 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
 private fun DriverRowMenu(
     host: MenuHost, key: String, label: String, hint: String, rows: List<DriverRow>, selected: String, importLabel: String,
     onSelect: (String) -> Unit, onRemove: (String) -> Unit, onImport: () -> Unit,
+    downloads: List<DownloadRow> = emptyList(), releaseStatus: String? = null,
+    onRefresh: () -> Unit = {}, onDownload: (String) -> Unit = {},
 ) {
     val open = host.open == key
     val colors = MaterialTheme.colorScheme
+    var confirmDelete by remember { mutableStateOf<DriverRow?>(null) }
     SettingsRow(label, hint, highlighted = open) {
         androidx.compose.foundation.layout.Box {
             ValueChip(rows.firstOrNull { it.id == selected }?.name ?: rows.firstOrNull()?.name ?: "-", open) { host.open = if (open) null else key }
@@ -273,15 +294,35 @@ private fun DriverRowMenu(
                 for (row in rows) MenuItem(
                     row.name, checked = row.id == selected, detail = row.detail.ifEmpty { null },
                     trailing = if (row.removable) ({
-                        Text(
-                            "✕", fontSize = 12.sp, color = colors.onSurfaceVariant,
-                            modifier = Modifier.size(24.dp).padding(4.dp).clickable { onRemove(row.id); host.open = null },
+                        androidx.compose.material3.Icon(
+                            Icons.Outlined.Delete, contentDescription = "Delete ${row.name}",
+                            tint = colors.onSurfaceVariant,
+                            modifier = Modifier.size(32.dp).clickable { confirmDelete = row }.padding(6.dp),
                         )
                     }) else null,
                 ) { onSelect(row.id); host.open = null }
+                // The latest Banners-Turnip release: what is not installed yet, then the refresh line.
+                // Tapping either keeps the menu open, so the progress and the result show in place.
+                for (d in downloads) MenuItem(
+                    d.label, checked = false, detail = d.detail,
+                    leading = { androidx.compose.material3.Icon(Icons.Outlined.Download, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp)) },
+                ) { onDownload(d.key) }
+                if (releaseStatus != null) MenuItem(
+                    releaseStatus, checked = false,
+                    leading = { androidx.compose.material3.Icon(Icons.Outlined.Refresh, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp)) },
+                ) { onRefresh() }
                 MenuItem(importLabel, checked = false) { host.open = null; onImport() }
             }
         }
+    }
+    confirmDelete?.let { row ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("Delete ${row.name}?") },
+            text = { Text("Its files are removed from the app. If it is the driver in use, the default takes its place.", fontSize = 13.sp) },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { confirmDelete = null; onRemove(row.id) }) { Text("Delete") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
+        )
     }
 }
 
