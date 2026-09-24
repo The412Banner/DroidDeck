@@ -5,6 +5,19 @@
 # Staged by the app over the desktop package's copy on every launch, so a fix here reaches an
 # installed desktop without re-downloading the package.
 set -u
+restore_desktop_steam_compat() {
+  local steam_root=${XDG_DATA_HOME:-${HOME:-/root}/.local/share}/Steam
+  local compat_dir=$steam_root/compatibilitytools.d/bannerlator-proton-arm64
+  local compat_disabled=$steam_root/.droiddeck-proton-arm64.desktop-disabled
+  if { [ -e "$compat_disabled" ] || [ -L "$compat_disabled" ]; } &&
+     [ ! -e "$compat_dir" ] && [ ! -L "$compat_dir" ]; then
+    mv "$compat_disabled" "$compat_dir" && echo "== desktop: restored DroidDeck Proton at session exit"
+  fi
+}
+trap 'restore_desktop_steam_compat; exit 143' TERM HUP
+trap 'restore_desktop_steam_compat; exit 130' INT
+trap restore_desktop_steam_compat EXIT
+
 export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=LXQt XDG_SESSION_DESKTOP=lxqt
 export QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland,x11 SDL_VIDEODRIVER=wayland,x11
 export QT_QPA_PLATFORMTHEME=lxqt
@@ -107,10 +120,10 @@ if [ ! -f /var/cache/fontconfig/.droiddeck-built ] && command -v fc-cache >/dev/
   fc-cache -f >/dev/null 2>&1 && touch /var/cache/fontconfig/.droiddeck-built
   echo "== fontconfig: cache rebuilt, default sans is $(fc-match sans-serif 2>/dev/null)"
 fi
-# The menu's "Steam" / "Steam Big Picture" entries and one entry per installed game: all of them
-# hand off to the app (bannerlator-steam-launch), since the client cannot draw on this desktop.
+# The menu's "Steam" entry and installed-game links open the classic client inside LXQt.
+# "Steam Big Picture" remains an explicit handoff to its own Gamescope session.
 export BL_DESKTOP=1
-ln -sf /usr/local/bin/bannerlator-steam-launch /usr/local/bin/steamdeck-steam 2>/dev/null
+ln -sf /usr/local/bin/bannerlator-steam-shim /usr/local/bin/steamdeck-steam 2>/dev/null
 ln -sf /usr/local/bin/bannerlator-steam-shim /usr/local/bin/steam 2>/dev/null
 python3 /usr/local/bin/bannerlator-desktop-games 2>&1 | sed 's/^/[games] /'
 # Player 1 on the controller in every emulator that has no profile of its own yet - now, and again

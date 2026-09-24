@@ -50,6 +50,8 @@ docker run --rm --platform linux/amd64 \
             install -Dm644 "$script" "$d/usr/local/bin/$(basename "$script")"
         done
         install -Dm644 tools/linuxfs/desktop/droiddeck-desktop "$d/usr/local/bin/droiddeck-desktop"
+        install -Dm644 tools/linuxfs/desktop/droiddeck-gpu "$d/usr/local/bin/droiddeck-gpu"
+        install -Dm644 tools/linuxfs/desktop/droiddeck-desktop-gpu "$d/usr/local/bin/droiddeck-desktop-gpu"
         install -Dm644 tools/linuxfs/desktop/autostart "$d/etc/xdg/labwc/autostart"
         install -Dm644 tools/linuxfs/desktop/rc.xml "$d/etc/xdg/labwc/rc.xml"
         install -Dm644 tools/linuxfs/desktop/panel.conf "$d/etc/xdg/lxqt/panel.conf"
@@ -118,6 +120,27 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# The desktop GPU renderer needs DroidDeck's wlroots allocator patch. The upstream wlroots package
+# treats Android's KGSL stand-in as DRM and fails while creating a GBM allocator; keep the local APK
+# build aligned with CI by staging the pinned release asset before Gradle packages linuxfs/.
+if [[ -f "${repo_root}/tools/wlroots/release.env" ]]; then
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "gh is required to download the pinned wlroots release used by the desktop." >&2
+        exit 1
+    fi
+    # shellcheck disable=SC1091
+    source "${repo_root}/tools/wlroots/release.env"
+    origin_url=$(git -C "${repo_root}" remote get-url origin)
+    origin_slug=$(sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##' <<<"${origin_url}")
+    github_repository=${GITHUB_REPOSITORY:-${origin_slug}}
+    wlroots_archive="${staging_dir}/wlroots.tzst"
+    gh release download "${WLROOTS_TAG}" -R "${github_repository}" -p wlroots.tzst -O "${wlroots_archive}"
+    echo "${WLROOTS_SHA256}  ${wlroots_archive}" | shasum -a 256 -c -
+    mkdir -p "${repo_root}/app/src/main/assets/linuxfs"
+    tar --use-compress-program=unzstd -xf "${wlroots_archive}" -C "${repo_root}/app/src/main/assets/linuxfs"
+    test -f "${repo_root}/app/src/main/assets/linuxfs/usr/local/lib/droiddeck-wlroots/libwlroots-0.20.so"
+fi
 
 pa_source=${DROIDDECK_PA13_SOURCE_DIR:-"${staging_dir}/pulseaudio-13.0"}
 if [[ -z "${DROIDDECK_PA13_SOURCE_DIR:-}" ]]; then

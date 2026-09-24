@@ -36,6 +36,12 @@ swaybg -m fill -i /usr/share/backgrounds/steamdeck.png &
 run pcmanfm-qt pcmanfm-qt --desktop --profile lxqt
 run lxqt-panel lxqt-panel
 /usr/lib/xdg-desktop-portal-wlr >/dev/null 2>&1 &
+if [ "${BL_DESKTOP_STEAM_UI:-0}" = 1 ]; then
+  (
+    sleep 3
+    /usr/local/bin/bannerlator-steam-desktop
+  ) &
+fi
 # Remote runs, for driving the desktop from a debugger: with ~/.droiddeck-remote-run present (only
 # the app or root can create it), each script dropped into ~/.cache/droiddeck/run/ is run once,
 # inside the session with its environment, its output tagged into the desktop log.

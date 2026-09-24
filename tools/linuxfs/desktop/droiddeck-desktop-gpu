@@ -14,7 +14,7 @@ HOME = os.environ.get("HOME", "/root")
 SYSTEM_DIR = "/usr/share/applications"
 USER_DIR = os.path.join(HOME, ".local/share/applications")
 MARK = "X-DroidDeck-GPU=1"
-# The client and its games already hand themselves to the app (bannerlator-steam-launch).
+# Steam and its game links keep their LXQt launch path; this wrapper is for other desktop games.
 SKIP = re.compile(r"^(steam|droiddeck-game-|droiddeck-steam|steamdeck-)", re.I)
 
 

@@ -264,7 +264,8 @@ class MainActivity : ComponentActivity() {
                         onPlay = { startSession(Intent(this, SessionActivity::class.java)) },
                         onPlayDesktopUi = {
                             startSession(Intent(this, SessionActivity::class.java)
-                                .putExtra(SessionService.EXTRA_STEAM_UI, "desktop"))
+                                .putExtra(SessionService.EXTRA_MODE, SessionService.MODE_DESKTOP)
+                                .putExtra(SessionService.EXTRA_DESKTOP_STEAM_UI, true))
                         },
                         onSteamGame = { g ->
                             startActivity(Intent(this, SessionActivity::class.java)

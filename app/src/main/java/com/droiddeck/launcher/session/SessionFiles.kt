@@ -30,6 +30,8 @@ object SessionFiles {
             "usr/local/bin/bannerlator-session" to "usr/local/bin/bannerlator-session",
             "usr/local/bin/bannerlator-steam-compat" to "usr/local/bin/bannerlator-steam-compat",
             "usr/local/bin/bannerlator-steam-install" to "usr/local/bin/bannerlator-steam-install",
+            "usr/local/bin/bannerlator-steam-desktop" to "usr/local/bin/bannerlator-steam-desktop",
+            "usr/local/bin/bannerlator-steam-network" to "usr/local/bin/bannerlator-steam-network",
             "usr/local/bin/bannerlator-steam-library" to "usr/local/bin/bannerlator-steam-library",
             "usr/local/bin/bannerlator-seed-redists" to "usr/local/bin/bannerlator-seed-redists",
             "usr/local/bin/bannerlator-proton-extra" to "usr/local/bin/bannerlator-proton-extra",

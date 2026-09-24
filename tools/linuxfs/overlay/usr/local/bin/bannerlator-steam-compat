@@ -502,7 +502,14 @@ def main():
     steam_root = sys.argv[1]
     tools = os.path.join(steam_root, "compatibilitytools.d")
     os.makedirs(tools, exist_ok=True)
-    build_tool(os.path.join(tools, TOOL))
+    desktop_disabled = os.path.join(steam_root, ".droiddeck-proton-arm64.desktop-disabled")
+    tool_dir = os.path.join(tools, TOOL)
+    # A killed LXQt session may not have run bannerlator-session's normal exit hook. Put the
+    # generated tool back before a Gamescope Steam session registers it again.
+    if os.path.lexists(desktop_disabled) and not os.path.lexists(tool_dir):
+        os.rename(desktop_disabled, tool_dir)
+        print("bannerlator-steam-compat: restored the desktop-hidden Proton registration")
+    build_tool(tool_dir)
     extras = adopt_extras(tools)
     for name, directory in sorted(extras.items()):
         print("bannerlator-steam-compat: adopted %s as %s" % (directory, name))

@@ -168,9 +168,11 @@ class SessionService : Service() {
         SessionState.programArgs = intent?.getStringArrayExtra(EXTRA_PROGRAM_ARGS)?.toList().orEmpty()
         SessionState.steamUi = intent?.getStringExtra(EXTRA_STEAM_UI)
         SessionState.steamUrl = intent?.getStringExtra(EXTRA_STEAM_URL)
+        SessionState.desktopSteamUi = intent?.getBooleanExtra(EXTRA_DESKTOP_STEAM_UI, false) == true
         // Another Steam client on the device signs ours out seconds after every login; the one that
-        // does it here runs from boot without being opened. Only the Steam session signs in.
-        if (SessionState.mode == MODE_STEAM) RivalClients.stopBeforeSession(this)
+        // does it here runs from boot without being opened. Stop it before either managed client
+        // path signs in.
+        if (SessionState.mode == MODE_STEAM || SessionState.desktopSteamUi) RivalClients.stopBeforeSession(this)
         SessionState.running = true
         SessionState.firstFrameSeen = false
         // This session's number, claimed here and not when its process starts: the session it
@@ -429,10 +431,14 @@ class SessionService : Service() {
             val override = File(Environment.getExternalStorageDirectory(), "Download/droiddeck-wlr-renderer")
                 .takeIf { it.isFile }?.let { FileUtils.readString(it)?.trim() }
             guest.add("BL_WLR_RENDERER=" + (override?.takeIf { it.isNotEmpty() } ?: SessionPrefs.desktopRenderer(this)))
+            if (SessionState.desktopSteamUi) {
+                guest.add("BL_DESKTOP_STEAM_UI=1")
+                guest.add("BL_STEAM_CHANNEL=" + SessionPrefs.steamChannel(this))
+            }
         }
         // The user's own games, for the runtime's shortcuts writer to put in the client's library
         // before the client starts (see frontend/AddedGames and bannerlator-steam-shortcuts).
-        if (SessionState.mode == MODE_STEAM) {
+        if (SessionState.mode == MODE_STEAM || SessionState.desktopSteamUi) {
             val added = com.droiddeck.launcher.frontend.AddedGames.scan(this)
             val listing = com.droiddeck.launcher.frontend.AddedGames.writeListing(this, added)
             guest.add("BL_ADDED_GAMES=" + listing.path)
@@ -567,7 +573,7 @@ class SessionService : Service() {
 
         // Whether the client signs in to Valve or starts offline: read once, while it starts, and
         // rewritten by the client when it exits, so it is set again here at every session start.
-        if (SessionState.mode == MODE_STEAM) OfflineMode.apply(this, root)
+        if (SessionState.mode == MODE_STEAM || SessionState.desktopSteamUi) OfflineMode.apply(this, root)
 
         val networkLink = LinuxNetworkLinkComponent(this, root)
         networkLink.attach(this)
@@ -695,9 +701,9 @@ class SessionService : Service() {
     }
 
     /**
-     * The desktop's Steam launchers cannot start the client where they are (no dma-buf on the
-     * desktop), so they leave `steam-launch` in the session directory instead: which UI, and a
-     * steam:// URL or nothing. This ends the session and hands the activity the one to start.
+     * Explicit Big Picture launches from the desktop leave `steam-launch` in the session
+     * directory. This ends the desktop session and hands the activity the Gamescope session to
+     * start. The classic client now launches directly in LXQt.
      */
     private var launchWatcher: android.os.FileObserver? = null
 
@@ -999,16 +1005,19 @@ class SessionService : Service() {
         /** MODE_STEAM: "desktop" for the client's desktop UI (default Big Picture); a steam:// URL to hand it. */
         const val EXTRA_STEAM_UI = "steamUi"
         const val EXTRA_STEAM_URL = "steamUrl"
+        const val EXTRA_DESKTOP_STEAM_UI = "desktopSteamUi"
 
         fun start(
             context: Context, mode: String = MODE_STEAM, program: String? = null,
             steamUi: String? = null, steamUrl: String? = null, programArgs: Array<String>? = null,
+            desktopSteamUi: Boolean = false,
         ) {
             val intent = Intent(context, SessionService::class.java).putExtra(EXTRA_MODE, mode)
             if (program != null) intent.putExtra(EXTRA_PROGRAM, program)
             if (programArgs != null) intent.putExtra(EXTRA_PROGRAM_ARGS, programArgs)
             if (steamUi != null) intent.putExtra(EXTRA_STEAM_UI, steamUi)
             if (steamUrl != null) intent.putExtra(EXTRA_STEAM_URL, steamUrl)
+            if (desktopSteamUi) intent.putExtra(EXTRA_DESKTOP_STEAM_UI, true)
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
             else context.startService(intent)
         }

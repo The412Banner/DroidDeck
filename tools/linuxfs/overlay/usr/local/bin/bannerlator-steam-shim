@@ -1,12 +1,23 @@
 #!/bin/bash
-# `steam` on the desktop. The client writes a menu entry per installed game that runs
-# `steam steam://rungameid/<id>`, and its own launchers say `steam`; neither can run the client
-# here (no dma-buf on the desktop), so on the desktop this hands off to the app for a Steam session
-# in the client's desktop UI under gamescope. Anywhere else it is the client itself.
+# `steam` on the desktop. Launch the classic client inside LXQt; explicit Big Picture menu entries
+# still use bannerlator-steam-launch to hand off to a Gamescope session.
 set -u
 if [ "${BL_DESKTOP:-}" = 1 ]; then
   url=
-  for arg in "$@"; do case $arg in steam://*) url=$arg ;; esac; done
-  exec /usr/local/bin/bannerlator-steam-launch desktop ${url:+"$url"}
+  ui=desktop
+  args=()
+  for arg in "$@"; do
+    case $arg in
+      desktop) ui=desktop ;;
+      bigpicture|--bigpicture|-bigpicture|--gamepadui|-gamepadui) ui=bigpicture ;;
+      steam://*) url=$arg; args+=("$arg") ;;
+      *[!0-9]*) args+=("$arg") ;;
+      *) url=$arg; args+=("steam://rungameid/$arg") ;;
+    esac
+  done
+  if [ "$ui" = bigpicture ]; then
+    exec /usr/local/bin/bannerlator-steam-launch bigpicture ${url:+"$url"}
+  fi
+  exec /usr/local/bin/bannerlator-steam-desktop "${args[@]}"
 fi
 exec "${HOME:-/root}/.local/share/Steam/steamrtarm64/steam" "$@"

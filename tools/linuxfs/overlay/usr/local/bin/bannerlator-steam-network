@@ -1,0 +1,46 @@
+#!/bin/bash
+# Give Steam the NetworkManager service it expects on the system bus. Android owns network
+# selection, so the companion reports the current route rather than trying to manage Wi-Fi.
+set -u
+
+if ! command -v dbus-daemon >/dev/null 2>&1 || ! command -v bannerlator-netmanager >/dev/null 2>&1; then
+  echo "== network: no dbus-daemon or netmanager in this runtime; Steam will show no connection"
+  exit 0
+fi
+
+mkdir -p /run/dbus /usr/local/share/bannerlator
+cat > /usr/local/share/bannerlator/system-bus.conf <<'BUSCONF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>system</type>
+  <listen>unix:path=/run/dbus/system_bus_socket</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow user="*"/>
+    <allow own="*"/>
+    <allow send_destination="*"/>
+    <allow receive_sender="*"/>
+  </policy>
+</busconfig>
+BUSCONF
+
+if ! pgrep -f 'dbus-daemon.*system-bus.conf' >/dev/null 2>&1; then
+  rm -f /run/dbus/system_bus_socket
+  dbus-daemon --config-file=/usr/local/share/bannerlator/system-bus.conf --nofork --nopidfile &
+  bus_pid=$!
+  for _ in $(seq 1 50); do
+    [ -S /run/dbus/system_bus_socket ] && break
+    sleep 0.1
+  done
+  if [ ! -S /run/dbus/system_bus_socket ]; then
+    kill "$bus_pid" 2>/dev/null || true
+    echo "== network: system bus did not come up; Steam will show no connection"
+    exit 0
+  fi
+fi
+
+if ! pgrep -f '/usr/local/bin/bannerlator-netmanager' >/dev/null 2>&1; then
+  bannerlator-netmanager &
+fi
+echo "== network: system bus up, NetworkManager stand-in running"

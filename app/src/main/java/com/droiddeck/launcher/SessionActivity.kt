@@ -517,6 +517,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                 intent.getStringExtra(SessionService.EXTRA_STEAM_UI),
                 intent.getStringExtra(SessionService.EXTRA_STEAM_URL),
                 intent.getStringArrayExtra(SessionService.EXTRA_PROGRAM_ARGS),
+                intent.getBooleanExtra(SessionService.EXTRA_DESKTOP_STEAM_UI, false),
             )
         }
         applyFrameGen()

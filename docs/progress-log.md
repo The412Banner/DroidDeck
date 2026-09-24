@@ -7,6 +7,32 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
+## 2026-09-24 (evening) - classic Steam in the LXQt desktop
+
+State: **tested on the AYN Thor** with `fix/steam-desktop-in-lxqt`. The app's **Steam Desktop UI**
+action now starts a desktop session and autostarts the classic Steam client in LXQt. Steam opens to
+the Library with its Store / Library / Community header and game sidebar, the LXQt panel remains
+visible, the process uses `-nobigpicture`, and no Gamescope process is present.
+
+- **Cause of the long login**: when `bannerlator-proton-arm64` is visible to Steam's compatibility
+  scanner at client startup, its post-logon callback times out (`Waiting for compat in post-logon
+  timed out`); one Thor run was still on “Loading user data” after two minutes. The desktop launcher
+  registers Proton as usual, moves only that generated registration outside the scanner during the
+  initial login, and restores it on Steam's success callback. The desktop and session exit hooks
+  restore it if login fails or the session ends early; a later Gamescope Steam launch also restores
+  a copy left by an interrupted desktop session.
+- **Rendering**: the desktop path uses Steam's software CEF renderer. Local builds now stage the
+  same pinned patched wlroots and GPU helper binaries as CI; upstream wlroots' GBM allocator cannot
+  use Thor's KGSL fake DRM device.
+- **Device evidence**: with Proton hidden through initial login then restored, the Library rendered
+  in LXQt and Steam reached its Library update screen. The classic process command line had
+  `-nobigpicture -clientbeta publicbeta -no-cef-sandbox -cef-disable-gpu -cef-ozone-platform=x11`
+  and `steam://open/library`; the compositor was `labwc`, with no `gamescope` process. The local
+  release APK (`43e48c1e…`) was installed on Thor for the final run.
+- **Checks**: `tools/build_local.sh` completed and reported `every NEEDED resolves`; shell syntax,
+  Python AST parsing for `bannerlator-steam-compat`, and `git diff --check` passed. The desktop
+  Library was verified on-device; game launching from the Library was outside this check.
+
 ## 2026-09-24 (afternoon) - main `94f9935`: PS1, controller focus, own signing key, CI hardening
 
 State: **main = `94f9935`** (PR #41 merge), main build run 36036219740 - the first one signed with

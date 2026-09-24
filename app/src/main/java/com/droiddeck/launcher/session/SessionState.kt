@@ -20,6 +20,8 @@ object SessionState {
     /** MODE_STEAM: "desktop" for the client's desktop UI, else Big Picture; and a steam:// URL to hand it. */
     var steamUi: String? = null
     var steamUrl: String? = null
+    /** MODE_DESKTOP: start the classic Steam client from the LXQt session autostart. */
+    var desktopSteamUi = false
     /** A session the guest asked for (the desktop's Steam launchers): started by the activity once this one has ended. */
     var relaunch: android.content.Intent? = null
     /** HDR10 was asked for and the panel can show it: the compositor was told, and the session

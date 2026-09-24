@@ -28,7 +28,17 @@ fi
 
 # Until the runtime is stable, Steam's own logs are copied beside the session log at exit so a
 # failed launch can be handed over as one folder.
+restore_desktop_steam_compat() {
+  local steam_root=${XDG_DATA_HOME:-$HOME/.local/share}/Steam
+  local compat_dir=$steam_root/compatibilitytools.d/bannerlator-proton-arm64
+  local compat_disabled=$steam_root/.droiddeck-proton-arm64.desktop-disabled
+  if { [ -e "$compat_disabled" ] || [ -L "$compat_disabled" ]; } &&
+     [ ! -e "$compat_dir" ] && [ ! -L "$compat_dir" ]; then
+    mv "$compat_disabled" "$compat_dir" && echo "== desktop: restored DroidDeck Proton at session exit"
+  fi
+}
 collect_steam_logs() {
+  restore_desktop_steam_compat
   [ -n "${BL_DEBUG_DIR:-}" ] || return 0
   local steam_root=${XDG_DATA_HOME:-$HOME/.local/share}/Steam
   mkdir -p "$BL_DEBUG_DIR/steam" 2>/dev/null || return 0

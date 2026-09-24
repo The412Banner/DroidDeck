@@ -1,0 +1,139 @@
+#!/bin/bash
+# Start the classic Steam client inside the current LXQt session.
+set -u
+
+steam_root=${XDG_DATA_HOME:-${HOME:-/root}/.local/share}/Steam
+log_dir=${BL_DEBUG_DIR:-${HOME:-/root}/.cache/droiddeck}
+mkdir -p "$log_dir" 2>/dev/null || true
+exec >>"$log_dir/steam-desktop.log" 2>&1
+
+echo "== bannerlator-steam-desktop $(date -u '+%Y-%m-%d %H:%M:%S UTC') display=${DISPLAY:-unset} wayland=${WAYLAND_DISPLAY:-unset} renderer=${WLR_RENDERER:-unset}"
+if [ ! -x "$steam_root/steamrtarm64/steam" ]; then
+  bannerlator-steam-install || exit $?
+fi
+
+# Keep the libraries and compatibility tool ready for launches from this client instance too.
+bannerlator-steam-library "$steam_root" || true
+bannerlator-steam-compat "$steam_root" || true
+compat_dir=$steam_root/compatibilitytools.d/bannerlator-proton-arm64
+compat_disabled=$steam_root/.droiddeck-proton-arm64.desktop-disabled
+restore_steam_compat() {
+  reason=${1:-after Steam exited}
+  if { [ -e "$compat_disabled" ] || [ -L "$compat_disabled" ]; } &&
+     [ ! -e "$compat_dir" ] && [ ! -L "$compat_dir" ]; then
+    if mv "$compat_disabled" "$compat_dir"; then
+      echo "== desktop: restored DroidDeck Proton $reason"
+    fi
+  fi
+}
+trap 'restore_steam_compat; exit 143' TERM HUP
+trap 'restore_steam_compat; exit 130' INT
+trap restore_steam_compat EXIT
+
+# A menu or shortcut can call this helper again after Steam is already up. Forward it to the
+# running client before touching the compatibility directory.
+steam_bin=$steam_root/steamrtarm64/steam
+if pgrep -f '[/]steamrtarm64/steam' >/dev/null 2>&1; then
+  if [ "$#" -gt 0 ]; then exec "$steam_bin" "$@"; fi
+  exit 0
+fi
+
+if { [ -e "$compat_dir" ] || [ -L "$compat_dir" ]; } &&
+   [ ! -e "$compat_disabled" ] && [ ! -L "$compat_disabled" ]; then
+  if mv "$compat_dir" "$compat_disabled"; then
+    echo "== desktop: hid DroidDeck Proton from Steam's startup compatibility scan"
+  else
+    echo "== desktop: could not hide DroidDeck Proton; leaving its registration in place"
+  fi
+elif [ -e "$compat_disabled" ] || [ -L "$compat_disabled" ]; then
+  if { [ -e "$compat_dir" ] || [ -L "$compat_dir" ]; }; then
+    compat_previous=$steam_root/.droiddeck-proton-arm64.desktop-previous-$(date +%s)
+    compat_previous_index=0
+    while [ -e "$compat_previous" ] || [ -L "$compat_previous" ]; do
+      compat_previous_index=$((compat_previous_index + 1))
+      compat_previous=$steam_root/.droiddeck-proton-arm64.desktop-previous-$(date +%s)-$compat_previous_index
+    done
+    if mv "$compat_disabled" "$compat_previous" && mv "$compat_dir" "$compat_disabled"; then
+      echo "== desktop: preserved an older hidden Proton copy and hid the active registration"
+    else
+      echo "== desktop: could not isolate both Proton registrations; leaving them in place"
+    fi
+  else
+    echo "== desktop: DroidDeck Proton is already outside Steam's compatibility scan"
+  fi
+else
+  echo "== desktop: no registered DroidDeck Proton tool to hide"
+fi
+bannerlator-seed-redists "$steam_root" || true
+if [ -n "${BL_ADDED_GAMES:-}" ]; then
+  bannerlator-steam-shortcuts "$steam_root" "$BL_ADDED_GAMES" || true
+fi
+
+channel=${BL_STEAM_CHANNEL:-publicbeta}
+beta_file=$steam_root/package/beta
+if [ "$(cat "$beta_file" 2>/dev/null)" != "$channel" ]; then
+  printf '%s\n' "$channel" >"$beta_file.tmp" && mv -f "$beta_file.tmp" "$beta_file"
+fi
+
+# This route starts Steam outside bannerlator-session's Gamescope mode. Supply the same Android
+# NetworkManager view that the regular Steam session sets up before the client starts.
+bannerlator-steam-network || true
+
+# An Android-killed client leaves both Steam's crash marker and Chromium singleton locks behind.
+if ! pgrep -f 'steamwebhelper|steamrtarm64/steam' >/dev/null 2>&1; then
+  for file in "$steam_root/.crash" "$steam_root/steam.pid" \
+              "$steam_root/config/htmlcache/SingletonLock" \
+              "$steam_root/config/htmlcache/SingletonCookie" \
+              "$steam_root/config/htmlcache/SingletonSocket"; do
+    [ ! -e "$file" ] && [ ! -L "$file" ] || rm -f "$file"
+  done
+fi
+
+export STEAM_RUNTIME=1
+export LD_LIBRARY_PATH=$steam_root/steamrtarm64:$steam_root/steamrtarm64/panorama${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export SDL_VIDEO_X11_DGAMOUSE=0
+[ -d /usr/share/guestos/fex-mesa ] && export FEX_ROOTFS=/usr/share/guestos/fex-mesa
+
+cef_renderer=${BL_STEAM_DESKTOP_CEF_RENDERER:-software}
+case $cef_renderer in
+  software)
+    cef_args=(-cef-disable-gpu -cef-ozone-platform=x11)
+    ;;
+  wayland) cef_args=(-cef-force-gpu -cef-ozone-platform=wayland -cef-use-gl=angle -cef-use-angle=vulkan) ;;
+  vulkan) cef_args=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan) ;;
+  *) cef_renderer=software; cef_args=(-cef-disable-gpu -cef-ozone-platform=x11) ;;
+esac
+if [ "$#" -eq 0 ]; then
+  set -- steam://open/library
+fi
+echo "== starting classic Steam in LXQt ($cef_renderer CEF): -nobigpicture -clientbeta $channel ${cef_args[*]} $*"
+
+# Steam stalls its post-logon callback on this runtime while this tool is visible to its
+# compatibility scanner. Keep it hidden just through the first successful login, then put it back
+# so games launched from the desktop can use it too. The session exit hook below is the fallback
+# for offline logins, client failures, and a session stopped before this loop completes.
+login_log=$steam_root/logs/steamui_login.txt
+mkdir -p "$(dirname "$login_log")" 2>/dev/null || true
+login_offset=$(wc -c <"$login_log" 2>/dev/null || printf '0')
+"$steam_bin" -nobigpicture -clientbeta "$channel" \
+  -no-cef-sandbox "${cef_args[@]}" "$@" &
+steam_pid=$!
+login_succeeded=0
+for _ in $(seq 1 120); do
+  current_size=$(wc -c <"$login_log" 2>/dev/null || printf '0')
+  if [ "$current_size" -lt "$login_offset" ]; then login_offset=0; fi
+  if [ "$current_size" -gt "$login_offset" ] &&
+     tail -c +$((login_offset + 1)) "$login_log" 2>/dev/null | grep -Fq 'SetLoginState: Success'; then
+    restore_steam_compat 'after Steam login succeeded'
+    login_succeeded=1
+    break
+  fi
+  sleep 1
+done
+if [ "$login_succeeded" = 0 ]; then
+  restore_steam_compat 'after the login wait expired'
+fi
+
+# Some Steam builds daemonize the launcher after the main client is attached to an existing
+# process. `wait` is still required here: it keeps autostart from returning while Steam starts.
+wait "$steam_pid"
