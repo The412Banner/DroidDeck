@@ -1,0 +1,169 @@
+name: PR Release Publish
+
+on:
+  workflow_run:
+    workflows:
+      - Build APK
+    types:
+      - completed
+
+concurrency:
+  group: pr-release-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      pull-requests: read
+    env:
+      SOURCE_REPO: ${{ github.repository }}
+      TARGET_REPO: maxjivi05/DroidDeck-CI
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      SIGNING_CERT_SHA256: a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc
+    steps:
+      - name: Resolve the pull request
+        id: scope
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_TOKEN: ${{ secrets.DROIDDECK_CI_TOKEN }}
+          RUN_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CI_TOKEN" ]; then
+            echo "::warning::DROIDDECK_CI_TOKEN is not set; nothing is published to $TARGET_REPO"
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pr_number="$RUN_PR_NUMBER"
+          if [ -z "$pr_number" ]; then
+            head_owner=${HEAD_REPO%%/*}
+            pr_number=$(gh pr list --repo "$SOURCE_REPO" --state all --head "$HEAD_BRANCH" \
+              --json number,headRefOid,headRepositoryOwner \
+              --jq "map(select(.headRepositoryOwner.login == \"$head_owner\" and .headRefOid == \"$HEAD_SHA\")) | first | .number // \"\"")
+          fi
+          if [ -z "$pr_number" ]; then
+            echo "No pull request found for $HEAD_REPO $HEAD_BRANCH at $HEAD_SHA"
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api "repos/$SOURCE_REPO/pulls/$pr_number" > pr.json
+          base_repo=$(jq -r '.base.repo.full_name // ""' pr.json)
+          pr_head=$(jq -r '.head.sha' pr.json)
+          if [ "$base_repo" != "$SOURCE_REPO" ]; then
+            echo "PR #$pr_number targets $base_repo, not $SOURCE_REPO"
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$pr_head" != "$HEAD_SHA" ]; then
+            echo "PR #$pr_number has moved on to $pr_head; its own build publishes it"
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          short_sha=$(printf '%s' "$HEAD_SHA" | cut -c1-5)
+          {
+            echo "allowed=true"
+            echo "pr_number=$pr_number"
+            echo "tag=pr-$pr_number"
+            echo "apk=DroidDeck-PR.$pr_number-$short_sha.apk"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download the APK
+        if: steps.scope.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APK_NAME: ${{ steps.scope.outputs.apk }}
+        run: |
+          set -euo pipefail
+          gh run download "$RUN_ID" --repo "$SOURCE_REPO" --name droiddeck-apk --dir downloaded
+          found=$(find downloaded -name '*.apk')
+          test "$(printf '%s\n' "$found" | grep -c .)" = 1
+          mkdir -p release-assets
+          mv "$found" "release-assets/$APK_NAME"
+
+      - name: Check the signing key
+        if: steps.scope.outputs.allowed == 'true'
+        env:
+          APK_NAME: ${{ steps.scope.outputs.apk }}
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          certs=$("$build_tools/apksigner" verify --print-certs "release-assets/$APK_NAME")
+          printf '%s\n' "$certs"
+          signers=$(printf '%s\n' "$certs" | grep -c 'certificate SHA-256 digest')
+          digest=$(printf '%s\n' "$certs" | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
+          if [ "$signers" != 1 ] || [ "$digest" != "$SIGNING_CERT_SHA256" ]; then
+            echo "::error::$APK_NAME is not signed with the CI key, so it would not install over earlier builds"
+            exit 1
+          fi
+
+      - name: Write the release notes
+        if: steps.scope.outputs.allowed == 'true'
+        id: notes
+        env:
+          PR_NUMBER: ${{ steps.scope.outputs.pr_number }}
+          APK_NAME: ${{ steps.scope.outputs.apk }}
+        run: |
+          set -euo pipefail
+          title=$(jq -r '.title' pr.json | tr '\r\n' '  ' | sed 's/[[:space:]]\+/ /g; s/ $//')
+          author=$(jq -r '.user.login // "unknown"' pr.json)
+          url=$(jq -r '.html_url' pr.json)
+          body=$(jq -r '.body // ""' pr.json)
+          head_ref=$(jq -r '.head.ref' pr.json)
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          {
+            printf '# PR #%s\n\n' "$PR_NUMBER"
+            printf 'Title: %s\n\n' "$title"
+            printf 'Author: @%s\n\n' "$author"
+            printf 'Source PR: %s\n' "$url"
+            printf 'Source branch: %s\n' "$head_ref"
+            printf 'Source commit: `%s`\n' "$HEAD_SHA"
+            printf 'Build workflow run: https://github.com/%s/actions/runs/%s\n\n' "$SOURCE_REPO" "$RUN_ID"
+            printf '## What This PR Is About\n\n'
+            if [ -n "$body" ]; then
+              printf '%s\n' "$body"
+            else
+              printf 'No PR description was provided.\n'
+            fi
+            printf '\n## Attached Artifacts\n\n'
+            printf -- '- %s\n' "$APK_NAME"
+            printf '\nBuilt from source commit `%s`, signed with the CI key (SHA-256 `%s`), so it installs over any other DroidDeck CI build.\n' \
+              "$(printf '%s' "$HEAD_SHA" | cut -c1-5)" "$SIGNING_CERT_SHA256"
+          } > release-notes.md
+
+      - name: Publish to DroidDeck-CI
+        if: steps.scope.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DROIDDECK_CI_TOKEN }}
+          PR_NUMBER: ${{ steps.scope.outputs.pr_number }}
+          TAG: ${{ steps.scope.outputs.tag }}
+          APK_NAME: ${{ steps.scope.outputs.apk }}
+          PR_TITLE: ${{ steps.notes.outputs.title }}
+        run: |
+          set -euo pipefail
+          title="PR #$PR_NUMBER: $PR_TITLE"
+          if view_out=$(gh api "repos/$TARGET_REPO/releases/tags/$TAG" 2>&1); then
+            gh release edit "$TAG" --repo "$TARGET_REPO" --title "$title" --notes-file release-notes.md --prerelease
+          elif printf '%s' "$view_out" | grep -qi 'Not Found'; then
+            gh release create "$TAG" --repo "$TARGET_REPO" --target main --title "$title" --notes-file release-notes.md --prerelease \
+              || gh release edit "$TAG" --repo "$TARGET_REPO" --title "$title" --notes-file release-notes.md --prerelease
+          else
+            printf '%s\n' "$view_out"
+            exit 1
+          fi
+          gh api "repos/$TARGET_REPO/releases/tags/$TAG" \
+            --jq '.assets[] | select(.name | endswith(".apk")) | .id' |
+            while IFS= read -r asset_id; do
+              gh api --method DELETE "repos/$TARGET_REPO/releases/assets/$asset_id" >/dev/null
+            done
+          gh release upload "$TAG" "release-assets/$APK_NAME" --repo "$TARGET_REPO" --clobber
+          gh release view "$TAG" --repo "$TARGET_REPO" --json url --jq '"Published: \(.url)"'
