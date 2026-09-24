@@ -13,6 +13,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.Display
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -92,8 +93,29 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     private var pendingBackAction: Runnable? = null
     private var drawerDirectionKey = KeyEvent.KEYCODE_UNKNOWN
     private var drawerDirectionDownTime = 0L
-    private var drawerDirectionLastRepeat = 0L
     private var drawerDirectionDeviceId = -1
+    private var drawerDirectionRepeatCount = 0
+    private val drawerFirstRepeatDelayMs = ViewConfiguration.getKeyRepeatTimeout().toLong()
+    private val drawerSlowRepeatIntervalMs = maxOf(
+        ViewConfiguration.getKeyRepeatDelay().toLong(), DRAWER_SLOW_REPEAT_FLOOR_MS,
+    )
+    private val drawerDirectionRepeat = object : Runnable {
+        override fun run() {
+            if (drawerDirectionKey == KeyEvent.KEYCODE_UNKNOWN) return
+
+            val now = SystemClock.uptimeMillis()
+            val heldMs = now - drawerDirectionDownTime
+            val progress = ((heldMs - drawerFirstRepeatDelayMs).toFloat() / DRAWER_REPEAT_ACCELERATION_MS)
+                .coerceIn(0f, 1f)
+            val intervalMs = (
+                drawerSlowRepeatIntervalMs +
+                    (DRAWER_FAST_REPEAT_INTERVAL_MS - drawerSlowRepeatIntervalMs) * progress
+                ).toLong()
+
+            dispatchDrawerKey(KeyEvent.ACTION_DOWN, ++drawerDirectionRepeatCount, now)
+            uiHandler.postDelayed(this, intervalMs)
+        }
+    }
     private val resumeKeysDown = mutableSetOf<Pair<Int, Int>>()
 
     // Compose reads these; the activity writes them.
@@ -756,7 +778,11 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         if (drawerOpen && event.device != null && PadBridge.isFromController(event.device)) {
-            dispatchDrawerDirection(event)
+            if (event.actionMasked == MotionEvent.ACTION_MOVE &&
+                event.isFromSource(InputDevice.SOURCE_JOYSTICK)
+            ) {
+                dispatchDrawerDirection(event)
+            }
             return true
         }
         if (drawerDirectionKey != KeyEvent.KEYCODE_UNKNOWN) releaseDrawerDirection()
@@ -769,36 +795,62 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     private fun dispatchDrawerDirection(event: MotionEvent) {
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
         val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        val x = if (abs(hatX) > 0.4f) hatX else event.getAxisValue(MotionEvent.AXIS_X)
-        val y = if (abs(hatY) > 0.4f) hatY else event.getAxisValue(MotionEvent.AXIS_Y)
+        val hatActive = maxOf(abs(hatX), abs(hatY)) >= DRAWER_HAT_THRESHOLD
+        val x = if (hatActive) hatX else centeredStickAxis(event, MotionEvent.AXIS_X)
+        val y = if (hatActive) hatY else centeredStickAxis(event, MotionEvent.AXIS_Y)
+        val directionThreshold = if (drawerDirectionKey == KeyEvent.KEYCODE_UNKNOWN) {
+            DRAWER_STICK_ENTER_THRESHOLD
+        } else {
+            DRAWER_STICK_EXIT_THRESHOLD
+        }
+        val previousWasHorizontal = drawerDirectionKey == KeyEvent.KEYCODE_DPAD_LEFT ||
+            drawerDirectionKey == KeyEvent.KEYCODE_DPAD_RIGHT
+        val horizontalWins = if (previousWasHorizontal) {
+            abs(x) >= abs(y) * DRAWER_ACTIVE_DIRECTION_MARGIN
+        } else {
+            abs(x) > abs(y) * DRAWER_DIRECTION_MARGIN
+        }
         val keyCode = when {
-            maxOf(abs(x), abs(y)) < 0.45f -> KeyEvent.KEYCODE_UNKNOWN
-            abs(x) > abs(y) && x < 0f -> KeyEvent.KEYCODE_DPAD_LEFT
-            abs(x) > abs(y) -> KeyEvent.KEYCODE_DPAD_RIGHT
+            maxOf(abs(x), abs(y)) < directionThreshold -> KeyEvent.KEYCODE_UNKNOWN
+            horizontalWins && x < 0f -> KeyEvent.KEYCODE_DPAD_LEFT
+            horizontalWins -> KeyEvent.KEYCODE_DPAD_RIGHT
             y < 0f -> KeyEvent.KEYCODE_DPAD_UP
             else -> KeyEvent.KEYCODE_DPAD_DOWN
         }
         val now = SystemClock.uptimeMillis()
-        if (keyCode != drawerDirectionKey) {
-            Log.i(TAG, "drawer axis source=${event.source} x=$x y=$y direction=$keyCode")
-            releaseDrawerDirection()
-            if (keyCode == KeyEvent.KEYCODE_UNKNOWN) return
-            drawerDirectionKey = keyCode
-            drawerDirectionDeviceId = event.deviceId
-            drawerDirectionDownTime = now
-            drawerDirectionLastRepeat = now
-            dispatchDrawerKey(KeyEvent.ACTION_DOWN, 0, now)
-        } else if (keyCode != KeyEvent.KEYCODE_UNKNOWN && now - drawerDirectionLastRepeat >= 240L) {
-            drawerDirectionLastRepeat = now
-            dispatchDrawerKey(KeyEvent.ACTION_DOWN, 1, now)
-        }
+        if (keyCode == drawerDirectionKey) return
+
+        Log.i(TAG, "drawer axis source=${event.source} x=$x y=$y direction=$keyCode")
+        releaseDrawerDirection()
+        if (keyCode == KeyEvent.KEYCODE_UNKNOWN) return
+
+        drawerDirectionKey = keyCode
+        drawerDirectionDeviceId = event.deviceId
+        drawerDirectionDownTime = now
+        drawerDirectionRepeatCount = 0
+        dispatchDrawerKey(KeyEvent.ACTION_DOWN, 0, now)
+        uiHandler.postDelayed(drawerDirectionRepeat, drawerFirstRepeatDelayMs)
+    }
+
+    /** Use Android's per-device flat region, then rescale the remaining stick travel to 0..1. */
+    private fun centeredStickAxis(event: MotionEvent, axis: Int): Float {
+        val value = event.getAxisValue(axis)
+        val flat = (event.device?.getMotionRange(axis, event.source)?.flat ?: 0f)
+            .coerceIn(0f, 0.95f)
+        val magnitude = abs(value)
+        if (magnitude <= flat) return 0f
+
+        val centered = ((magnitude - flat) / (1f - flat)).coerceIn(0f, 1f)
+        return if (value < 0f) -centered else centered
     }
 
     private fun releaseDrawerDirection() {
+        uiHandler.removeCallbacks(drawerDirectionRepeat)
         if (drawerDirectionKey == KeyEvent.KEYCODE_UNKNOWN) return
         dispatchDrawerKey(KeyEvent.ACTION_UP, 0, SystemClock.uptimeMillis())
         drawerDirectionKey = KeyEvent.KEYCODE_UNKNOWN
         drawerDirectionDeviceId = -1
+        drawerDirectionRepeatCount = 0
     }
 
     private fun dispatchDrawerKey(action: Int, repeatCount: Int, eventTime: Long) {
@@ -806,7 +858,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             drawerDirectionDownTime, eventTime, action, drawerDirectionKey,
             repeatCount, 0, drawerDirectionDeviceId, 0, 0, InputDevice.SOURCE_DPAD,
         )
-        if (action == KeyEvent.ACTION_DOWN) {
+        if (action == KeyEvent.ACTION_DOWN && repeatCount == 0) {
             Log.i(TAG, "drawer synthetic key=${KeyEvent.keyCodeToString(drawerDirectionKey)} viewFocused=${sessionOverlay.hasFocus()}")
         }
         super.dispatchKeyEvent(event)
@@ -1086,6 +1138,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     override fun onPause() {
         (getSystemService(INPUT_SERVICE) as? InputManager)?.unregisterInputDeviceListener(deviceListener)
+        releaseDrawerDirection()
         // A button held when the app goes away would stay held in the ring for the whole session.
         onScreenControls?.releaseAll()
         keyboard?.takeIf { it.shown }?.hide()
@@ -1120,6 +1173,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         // Deliberately does NOT end the session: this activity can be destroyed while the user is
         // in another app, and the whole point of the service is that Steam survives that.
         watching = false
+        releaseDrawerDirection()
         pendingBackAction?.let(uiHandler::removeCallbacks)
         pendingBackAction = null
         closeSecondScreen(reset = true)
@@ -1139,6 +1193,14 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     companion object {
         private const val TAG = "SessionActivity"
         private const val BACK_DOUBLE_PRESS_TIMEOUT_MS = 500L
+        private const val DRAWER_HAT_THRESHOLD = 0.5f
+        private const val DRAWER_STICK_ENTER_THRESHOLD = 0.55f
+        private const val DRAWER_STICK_EXIT_THRESHOLD = 0.35f
+        private const val DRAWER_DIRECTION_MARGIN = 1.15f
+        private const val DRAWER_ACTIVE_DIRECTION_MARGIN = 0.85f
+        private const val DRAWER_SLOW_REPEAT_FLOOR_MS = 240L
+        private const val DRAWER_FAST_REPEAT_INTERVAL_MS = 90L
+        private const val DRAWER_REPEAT_ACCELERATION_MS = 1_400L
         /** Compositor scale modes (Container.FULLSCREEN_* values): 1 = fit with bars, centred. */
         private const val SCALE_FIT = 1
         private const val ALIGN_CENTER = 0
