@@ -77,6 +77,18 @@ android {
         }
     }
 
+    flavorDimensions += "edition"
+    productFlavors {
+        home {
+            dimension "edition"
+            buildConfigField "boolean", "SUPPORTS_HOME_ROLE", "true"
+        }
+        nonLauncher {
+            dimension "edition"
+            buildConfigField "boolean", "SUPPORTS_HOME_ROLE", "false"
+        }
+    }
+
     externalNativeBuild {
         cmake {
             path 'src/main/cpp/CMakeLists.txt'

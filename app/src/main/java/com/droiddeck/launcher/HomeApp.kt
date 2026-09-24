@@ -23,6 +23,7 @@ object HomeApp {
     )
 
     fun isDefault(context: Context): Boolean {
+        if (!BuildConfig.SUPPORTS_HOME_ROLE) return false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val roles = context.getSystemService(RoleManager::class.java)
             if (roles?.isRoleAvailable(RoleManager.ROLE_HOME) == true) {
@@ -49,6 +50,7 @@ object HomeApp {
     }
 
     fun roleRequestIntent(context: Context): Intent? {
+        if (!BuildConfig.SUPPORTS_HOME_ROLE) return null
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
         val roles = context.getSystemService(RoleManager::class.java) ?: return null
         if (!roles.isRoleAvailable(RoleManager.ROLE_HOME) || roles.isRoleHeld(RoleManager.ROLE_HOME)) return null
@@ -93,6 +95,7 @@ object HomeApp {
         SessionState.running && SessionState.mode == SessionService.MODE_STEAM
 
     fun openSystemHomeSettings(context: Context) {
+        if (!BuildConfig.SUPPORTS_HOME_ROLE) return
         try {
             context.startActivity(settingsIntent())
         } catch (_: Exception) {

@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 sdk_dir=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-"${HOME}/Library/Android/sdk"}}
 adb_bin=${ADB:-${sdk_dir}/platform-tools/adb}
-apk=${1:-"${repo_root}/app/build/outputs/apk/release/app-release.apk"}
+apk=${1:-"${repo_root}/app/build/outputs/apk/home/release/app-home-release.apk"}
 
 if [[ ! -x "${adb_bin}" ]]; then
     echo "adb not found at ${adb_bin}; set ADB or ANDROID_HOME." >&2

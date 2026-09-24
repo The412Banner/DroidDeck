@@ -54,23 +54,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Android owns the Home key. This small translucent Home handler routes the resulting
-             Home launch either back into a running Steam session or to the regular front end. -->
-        <activity
-            android:name=".HomeActivity"
-            android:exported="true"
-            android:excludeFromRecents="true"
-            android:noHistory="true"
-            android:taskAffinity="${applicationId}.home"
-            android:screenOrientation="sensorLandscape"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.HOME" />
-            </intent-filter>
-        </activity>
-
         <!--
             A session keeps a Surface, a compositor thread and a proot tree alive; a configuration
             change must not tear that down and rebuild it, so the activity handles them itself.

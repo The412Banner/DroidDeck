@@ -33,6 +33,8 @@ on:
       - 'LICENSE'
       - '.gitignore'
   workflow_dispatch:
+  release:
+    types: [ published ]
 
 permissions:
   contents: read
@@ -333,16 +335,52 @@ jobs:
           DROIDDECK_BUILD_LABEL: ${{ steps.build-label.outputs.label }}
         run: |
           set -o pipefail
-          ./gradlew assembleRelease --console=plain -PndkVersion="$NDK_VERSION" 2>&1 | tee /tmp/build.log
+          ./gradlew assembleHomeRelease assembleNonLauncherRelease --console=plain -PndkVersion="$NDK_VERSION" 2>&1 | tee /tmp/build.log
 
       - name: Describe the apk
         run: |
           set -euo pipefail
-          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
-          echo "apk: $APK"
-          ls -l "$APK"
-          sha256sum "$APK"
-          unzip -l "$APK" | grep -E 'lib/arm64-v8a|assets/linuxfs' | awk 'NR <= 30'  # awk reads to the end: head would break the pipe under pipefail
+          for VARIANT in home nonLauncher; do
+            APK=$(find "app/build/outputs/apk/$VARIANT/release" -maxdepth 1 -name '*.apk' -print -quit)
+            test -n "$APK" || { echo "::error::missing $VARIANT release apk"; exit 1; }
+            echo "apk ($VARIANT): $APK"
+            ls -l "$APK"
+            sha256sum "$APK"
+            unzip -l "$APK" | grep -E 'lib/arm64-v8a|assets/linuxfs' | awk 'NR <= 30'  # awk reads to the end: head would break the pipe under pipefail
+          done
+
+      - name: Check launcher manifest variants
+        run: |
+          set -euo pipefail
+          AAPT=$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name aapt -type f | sort -V | tail -1)
+          HOME_APK=$(find app/build/outputs/apk/home/release -maxdepth 1 -name '*.apk' -print -quit)
+          NON_LAUNCHER_APK=$(find app/build/outputs/apk/nonLauncher/release -maxdepth 1 -name '*.apk' -print -quit)
+          test -n "$HOME_APK" && test -n "$NON_LAUNCHER_APK"
+          HOME_BADGING=$("$AAPT" dump badging "$HOME_APK" | head -1)
+          NON_LAUNCHER_BADGING=$("$AAPT" dump badging "$NON_LAUNCHER_APK" | head -1)
+          test "$HOME_BADGING" = "$NON_LAUNCHER_BADGING" \
+            || { echo "::error::APK package identity or version differs between editions"; exit 1; }
+          [[ "$HOME_BADGING" == "package: name='com.droiddeck.launcher'"* ]] \
+            || { echo "::error::unexpected APK application ID: $HOME_BADGING"; exit 1; }
+          HOME_MANIFEST=$("$AAPT" dump xmltree "$HOME_APK" AndroidManifest.xml)
+          NON_LAUNCHER_MANIFEST=$("$AAPT" dump xmltree "$NON_LAUNCHER_APK" AndroidManifest.xml)
+          for manifest in "$HOME_MANIFEST" "$NON_LAUNCHER_MANIFEST"; do
+            grep -Fq 'com.droiddeck.launcher.MainActivity' <<<"$manifest"
+            grep -Fq 'android.intent.category.LAUNCHER' <<<"$manifest"
+            grep -Fq 'android:isGame' <<<"$manifest"
+            grep -Fq 'android:appCategory' <<<"$manifest"
+          done
+          grep -Fq 'com.droiddeck.launcher.HomeActivity' <<<"$HOME_MANIFEST"
+          grep -Fq 'android.intent.category.HOME' <<<"$HOME_MANIFEST"
+          if grep -Fq 'android.intent.category.HOME' <<<"$NON_LAUNCHER_MANIFEST"; then
+            echo "::error::Non-Launcher APK unexpectedly registers a Home activity"
+            exit 1
+          fi
+          if grep -Fq 'com.droiddeck.launcher.HomeActivity' <<<"$NON_LAUNCHER_MANIFEST"; then
+            echo "::error::Non-Launcher APK unexpectedly declares HomeActivity"
+            exit 1
+          fi
+          echo "Home and Non-Launcher manifest entries match their variants"
 
       # Every NEEDED of every library we ship must resolve inside the apk or on the device. The
       # first build shipped libwayland-server.so without libffi.so, and the app died on
@@ -350,28 +388,34 @@ jobs:
       - name: Check the native dependency closure
         run: |
           set -euo pipefail
-          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
-          WORK=$(mktemp -d)
-          unzip -q "$APK" 'lib/arm64-v8a/*' -d "$WORK"
-          cd "$WORK/lib/arm64-v8a"
-          # Provided by the platform, so never packaged. libstdc++.so is Android's minimal system
-          # C++ runtime; the Termux PTY JNI library has this in its NEEDED list.
-          SYSTEM="libc.so libm.so libdl.so liblog.so libandroid.so libz.so libvulkan.so libstdc++.so
-                  libGLESv2.so libEGL.so libnativewindow.so libjnigraphics.so libaaudio.so
-                  libOpenSLES.so libmediandk.so libcamera2ndk.so libsync.so libneuralnetworks.so"
-          fail=0
-          for so in *.so; do
-            for need in $(readelf -d "$so" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p'); do
-              [ -f "$need" ] && continue
-              # $SYSTEM spans lines; unquoted echo folds its newlines to spaces, or the last
-              # name on each line could never match (libaaudio.so did not, for the relay helper).
-              case " $(echo $SYSTEM) " in *" $need "*) continue ;; esac
-              echo "::error::$so needs $need, which is neither in the apk nor a platform library"
-              fail=1
-            done
+          for VARIANT in home nonLauncher; do
+            APK=$(find "app/build/outputs/apk/$VARIANT/release" -maxdepth 1 -name '*.apk' -print -quit)
+            test -n "$APK" || { echo "::error::missing $VARIANT release apk"; exit 1; }
+            (
+              WORK=$(mktemp -d)
+              trap 'rm -rf "$WORK"' EXIT
+              unzip -q "$APK" 'lib/arm64-v8a/*' -d "$WORK"
+              cd "$WORK/lib/arm64-v8a"
+              # Provided by the platform, so never packaged. libstdc++.so is Android's minimal system
+              # C++ runtime; the Termux PTY JNI library has this in its NEEDED list.
+              SYSTEM="libc.so libm.so libdl.so liblog.so libandroid.so libz.so libvulkan.so libstdc++.so
+                      libGLESv2.so libEGL.so libnativewindow.so libjnigraphics.so libaaudio.so
+                      libOpenSLES.so libmediandk.so libcamera2ndk.so libsync.so libneuralnetworks.so"
+              fail=0
+              for so in *.so; do
+                for need in $(readelf -d "$so" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p'); do
+                  [ -f "$need" ] && continue
+                  # $SYSTEM spans lines; unquoted echo folds its newlines to spaces, or the last
+                  # name on each line could never match (libaaudio.so did not, for the relay helper).
+                  case " $(echo $SYSTEM) " in *" $need "*) continue ;; esac
+                  echo "::error::$VARIANT: $so needs $need, which is neither in the apk nor a platform library"
+                  fail=1
+                done
+              done
+              [ "$fail" = 0 ] && echo "$VARIANT: every NEEDED resolves"
+              exit "$fail"
+            )
           done
-          [ "$fail" = 0 ] && echo "every NEEDED resolves"
-          exit $fail
 
       # AGP signs with v2+v3 and drops v1 whenever minSdk is 24 or higher, and setting
       # enableV1Signing in the DSL does not move it. Re-signing here with apksigner is the one way
@@ -379,36 +423,53 @@ jobs:
       - name: Sign with the testkey (v1 + v2 + v3)
         run: |
           set -euo pipefail
-          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
           TOOLS=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -type d | sort -V | tail -1)
-          "$TOOLS/zipalign" -p -f 4 "$APK" "$APK.aligned"
-          "$TOOLS/apksigner" sign \
-            --ks keystore/testkey.p12 --ks-type PKCS12 --ks-pass pass:android \
-            --ks-key-alias testkey --key-pass pass:android \
-            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
-            --out "$APK" "$APK.aligned"
-          rm -f "$APK.aligned" "$APK.idsig"
+          for VARIANT in home nonLauncher; do
+            APK=$(find "app/build/outputs/apk/$VARIANT/release" -maxdepth 1 -name '*.apk' -print -quit)
+            test -n "$APK" || { echo "::error::missing $VARIANT release apk"; exit 1; }
+            "$TOOLS/zipalign" -p -f 4 "$APK" "$APK.aligned"
+            "$TOOLS/apksigner" sign \
+              --ks keystore/testkey.p12 --ks-type PKCS12 --ks-pass pass:android \
+              --ks-key-alias testkey --key-pass pass:android \
+              --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+              --out "$APK" "$APK.aligned"
+            rm -f "$APK.aligned" "$APK.idsig"
+          done
 
       # The apk must stay installable over the last one, and on every Android version: that means
       # one stable key and all three signature schemes. Cheap to assert, easy to lose silently.
       - name: Check the signature
         run: |
           set -euo pipefail
-          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-          # --min-sdk-version 21: apksigner only verifies the schemes an apk's own minSdk requires,
-          # so at minSdk 26 it reports v1 as false whether or not the JAR signature is there.
-          # Asking it to verify from 21 makes it actually look.
-          "$APKSIGNER" verify --min-sdk-version 21 --verbose --print-certs "$APK" | tee /tmp/sig.txt
-          # And the files themselves, which is what an old installer reads.
-          unzip -l "$APK" | grep -qE 'META-INF/.*\.(SF|RSA|DSA)$' \
-            || { echo "::error::apk carries no JAR signature files"; exit 1; }
-          for scheme in "v1 scheme (JAR signing): true" "v2 scheme (APK Signature Scheme v2): true" \
-                        "v3 scheme (APK Signature Scheme v3): true"; do
-            grep -qF "$scheme" /tmp/sig.txt || { echo "::error::apk is not signed with $scheme"; exit 1; }
+          for VARIANT in home nonLauncher; do
+            APK=$(find "app/build/outputs/apk/$VARIANT/release" -maxdepth 1 -name '*.apk' -print -quit)
+            test -n "$APK" || { echo "::error::missing $VARIANT release apk"; exit 1; }
+            signature_output=$("$APKSIGNER" verify --min-sdk-version 21 --verbose --print-certs "$APK")
+            printf '%s\n' "$signature_output"
+            # --min-sdk-version 21 makes apksigner verify v1 as well as v2/v3 on this minSdk 26 app.
+            unzip -l "$APK" | grep -qE 'META-INF/.*\.(SF|RSA|DSA)$' \
+              || { echo "::error::$VARIANT apk carries no JAR signature files"; exit 1; }
+            for scheme in "v1 scheme (JAR signing): true" "v2 scheme (APK Signature Scheme v2): true" \
+                          "v3 scheme (APK Signature Scheme v3): true"; do
+              grep -qF "$scheme" <<<"$signature_output" || { echo "::error::$VARIANT apk is not signed with $scheme"; exit 1; }
+            done
+            grep -qi "CN=Android, OU=Android, O=Android" <<<"$signature_output" \
+              || { echo "::error::$VARIANT apk is not signed with the AOSP testkey"; exit 1; }
           done
-          grep -qi "CN=Android, OU=Android, O=Android" /tmp/sig.txt \
-            || { echo "::error::apk is not signed with the AOSP testkey"; exit 1; }
+
+      - name: Prepare named APKs
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/droiddeck-home" "$RUNNER_TEMP/droiddeck-non-launcher"
+          HOME_APK=$(find app/build/outputs/apk/home/release -maxdepth 1 -name '*.apk' -print -quit)
+          NON_LAUNCHER_APK=$(find app/build/outputs/apk/nonLauncher/release -maxdepth 1 -name '*.apk' -print -quit)
+          test -n "$HOME_APK" && test -n "$NON_LAUNCHER_APK"
+          AAPT=$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name aapt -type f | sort -V | tail -1)
+          VERSION=$("$AAPT" dump badging "$HOME_APK" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          test -n "$VERSION" || { echo "::error::could not read APK version name"; exit 1; }
+          cp "$HOME_APK" "$RUNNER_TEMP/droiddeck-home/DroidDeck-$VERSION.apk"
+          cp "$NON_LAUNCHER_APK" "$RUNNER_TEMP/droiddeck-non-launcher/DroidDeck-$VERSION-Non-Launcher.apk"
 
       # ── The pull-request report ──────────────────────────────────────────────────────────
       # One comment per pull request, rewritten on every push: whether it merges, and when the
@@ -435,7 +496,7 @@ jobs:
               success)
                 echo "###  Build passed"
                 echo
-                echo "The apk is the \`droiddeck-apk\` artifact on [this run]($RUN_URL) (signed with the same test key as every build, so it installs over any other)."
+                echo "Both APKs are available on [this run]($RUN_URL): \`droiddeck-home-apk\` and \`droiddeck-non-launcher-apk\`. They share the application ID and signing key, so installing one over the other retains app data."
                 ;;
               failure)
                 echo "### ERROR: Build failed"
@@ -474,9 +535,46 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: droiddeck-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: droiddeck-home-apk
+          path: ${{ runner.temp }}/droiddeck-home/DroidDeck-*.apk
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: droiddeck-non-launcher-apk
+          path: ${{ runner.temp }}/droiddeck-non-launcher/DroidDeck-*-Non-Launcher.apk
           if-no-files-found: error
           retention-days: 30
           # An apk is a zip already; compressing it again buys nothing and costs seconds.
           compression-level: 0
+
+  publish_release:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: droiddeck-home-apk
+          path: ${{ runner.temp }}/release/home
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: droiddeck-non-launcher-apk
+          path: ${{ runner.temp }}/release/non-launcher
+
+      - name: Attach both APKs to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          HOME_APK=$(find "$RUNNER_TEMP/release/home" -type f -name 'DroidDeck-*.apk' -print -quit)
+          NON_LAUNCHER_APK=$(find "$RUNNER_TEMP/release/non-launcher" -type f -name 'DroidDeck-*-Non-Launcher.apk' -print -quit)
+          test -n "$HOME_APK" && test -n "$NON_LAUNCHER_APK"
+          gh release upload "$RELEASE_TAG" "$HOME_APK" "$NON_LAUNCHER_APK" \
+            --clobber --repo "$GITHUB_REPOSITORY"

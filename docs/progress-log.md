@@ -126,18 +126,19 @@ State: **main = `90c7574`** (PR #14 merge), main build run 35895701784. No tag, 
   shipped, untested); FlatOut shrinking after Resume (gamescope forcing the swapchain extent).
 
 ## Release pipeline (how every version is cut)
-1. Work on `main`, pushed → `Build APK` runs `assembleRelease` (AOSP test key, v1+v2+v3 re-signed
-   by CI with zipalign + apksigner) → artifact `steamdeck-apk`. Dev builds keep the last release's
+1. Work on `main`, pushed → `Build APK` runs `assembleHomeRelease assembleNonLauncherRelease`;
+   CI re-signs both APKs with the AOSP test key using v1+v2+v3, zipaligns them, and uploads
+   `droiddeck-home-apk` and `droiddeck-non-launcher-apk`. Dev builds keep the last release's
    versionCode/versionName; a release bumps both in `app/build.gradle` in its own commit.
-2. Verify: `gh run view <id> --json conclusion` (never trust a run listing's first row - a
-   `workflow_dispatch` run gets cancelled by concurrency in favour of the push-triggered one),
-   download the artifact, sha256 it.
-3. Stage: `cp` to `/sdcard/Download/SteamDeck-rN.apk` (dev) or `SteamDeck-X.Y.Z.apk` (release).
-   Never `pm install` - the maintainer installs.
-4. Private release `X.Y.Z` targeting the **full 40-char sha** (a short sha is refused), notes from
-   the draft in the session scratchpad, `--latest`. Public release `SteamDeck-X.Y.Z` on
-   winlator-contents with the README-style notes; one public release per version.
-5. README ledger, this log, memory.
+2. Verify both CI artifacts and record each SHA-256. Use artifacts from the successful run for
+   the exact release commit.
+3. Stage the chosen APK on a device if needed; never `pm install` - the maintainer installs.
+   `tools/deploy_local.sh` defaults to the Home-enabled APK and accepts the Non-Launcher APK path.
+4. Publish the release on `The412Banner/DroidDeck`. The `release.published` workflow builds the
+   tagged commit and attaches `DroidDeck-X.Y.Z.apk` and `DroidDeck-X.Y.Z-Non-Launcher.apk`; verify
+   both assets and their SHA-256 values after the workflow succeeds. The APKs share an application
+   ID and signing key, so they replace one another and retain app data; they cannot coexist.
+5. Update the README and this log with the release evidence.
 
 ## Timeline
 - **2026-09-19 - 0.1 groundwork.** Lifted out of Bannerlator's gamescope runtime on the user's

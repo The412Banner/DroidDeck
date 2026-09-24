@@ -248,6 +248,7 @@ class MainActivity : ComponentActivity() {
                         pageKey = sm?.let { "settings:$it" } ?: if (showPerformance) "performance" else if (showProtons) "protons" else null,
                         theme = theme,
                         isHomeApp = homeAppSelected,
+                        supportsHomeRole = BuildConfig.SUPPORTS_HOME_ROLE,
                         defaultHomeLabel = defaultHomeLabel,
                         androidApps = androidApps,
                         secondScreenDisplays = secondScreenDisplays,

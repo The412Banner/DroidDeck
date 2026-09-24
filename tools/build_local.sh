@@ -154,22 +154,29 @@ bundle_replaced=1
 mv "${staging_dir}/pulseaudio.tzst" "${bundle_asset}"
 
 cd "${repo_root}"
-./gradlew assembleRelease -PndkVersion="${ndk_version}"
+./gradlew assembleHomeRelease assembleNonLauncherRelease -PndkVersion="${ndk_version}"
 cp -p "${bundle_backup}" "${bundle_asset}"
 bundle_replaced=0
 
-apk="${repo_root}/app/build/outputs/apk/release/app-release.apk"
-audio_check="${staging_dir}/audio-check"
-mkdir -p "${audio_check}"
-unzip -p "${apk}" assets/pulseaudio.tzst | zstd -dc | tar -xf - -C "${audio_check}"
-for audio_file in \
-    pactl \
-    modules/arm64/module-aaudio-sink.so \
-    modules/arm64/module-directaudio-sink.so; do
-    if [[ ! -f "${audio_check}/${audio_file}" ]]; then
-        echo "APK audio bundle is missing ${audio_file}." >&2
+home_apk="${repo_root}/app/build/outputs/apk/home/release/app-home-release.apk"
+non_launcher_apk="${repo_root}/app/build/outputs/apk/nonLauncher/release/app-nonLauncher-release.apk"
+for apk in "${home_apk}" "${non_launcher_apk}"; do
+    if [[ ! -f "${apk}" ]]; then
+        echo "Expected APK not found: ${apk}" >&2
         exit 1
     fi
+    audio_check="${staging_dir}/audio-check-$(basename "${apk}")"
+    mkdir -p "${audio_check}"
+    unzip -p "${apk}" assets/pulseaudio.tzst | zstd -dc | tar -xf - -C "${audio_check}"
+    for audio_file in \
+        pactl \
+        modules/arm64/module-aaudio-sink.so \
+        modules/arm64/module-directaudio-sink.so; do
+        if [[ ! -f "${audio_check}/${audio_file}" ]]; then
+            echo "APK ${apk} audio bundle is missing ${audio_file}." >&2
+            exit 1
+        fi
+    done
 done
 
 build_tools=$(find "${sdk_dir}/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)
@@ -178,50 +185,59 @@ if [[ ! -x "${build_tools}/zipalign" || ! -x "${build_tools}/apksigner" ]]; then
     exit 1
 fi
 
-"${build_tools}/zipalign" -p -f 4 "${apk}" "${staging_dir}/app-release.aligned.apk"
-"${build_tools}/apksigner" sign \
-    --ks keystore/testkey.p12 --ks-type PKCS12 --ks-pass pass:android \
-    --ks-key-alias testkey --key-pass pass:android \
-    --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
-    --out "${apk}" "${staging_dir}/app-release.aligned.apk"
+for apk in "${home_apk}" "${non_launcher_apk}"; do
+    aligned="${staging_dir}/$(basename "${apk}").aligned"
+    "${build_tools}/zipalign" -p -f 4 "${apk}" "${aligned}"
+    "${build_tools}/apksigner" sign \
+        --ks keystore/testkey.p12 --ks-type PKCS12 --ks-pass pass:android \
+        --ks-key-alias testkey --key-pass pass:android \
+        --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+        --out "${apk}" "${aligned}"
 
-signature_output=$("${build_tools}/apksigner" verify --min-sdk-version 21 --verbose --print-certs "${apk}")
-printf '%s\n' "${signature_output}"
-for scheme in \
-    'Verified using v1 scheme (JAR signing): true' \
-    'Verified using v2 scheme (APK Signature Scheme v2): true' \
-    'Verified using v3 scheme (APK Signature Scheme v3): true'; do
-    grep -qF "${scheme}" <<<"${signature_output}" || {
-        echo "APK signature check failed: ${scheme}" >&2
-        exit 1
-    }
+    signature_output=$("${build_tools}/apksigner" verify --min-sdk-version 21 --verbose --print-certs "${apk}")
+    printf '%s\n' "${signature_output}"
+    for scheme in \
+        'Verified using v1 scheme (JAR signing): true' \
+        'Verified using v2 scheme (APK Signature Scheme v2): true' \
+        'Verified using v3 scheme (APK Signature Scheme v3): true'; do
+        grep -qF "${scheme}" <<<"${signature_output}" || {
+            echo "APK signature check failed for ${apk}: ${scheme}" >&2
+            exit 1
+        }
+    done
+    grep -qF 'Signer #1 certificate DN: EMAILADDRESS=android@android.com, CN=Android, OU=Android, O=Android' \
+        <<<"${signature_output}"
 done
-grep -qF 'Signer #1 certificate DN: EMAILADDRESS=android@android.com, CN=Android, OU=Android, O=Android' \
-    <<<"${signature_output}"
 
 docker run --rm --platform linux/amd64 -v "${repo_root}:/src:ro" -w /src "${image_name}" \
     bash -lc '
         set -euo pipefail
-        apk=app/build/outputs/apk/release/app-release.apk
-        work=$(mktemp -d)
-        unzip -q "$apk" "lib/arm64-v8a/*" -d "$work"
-        cd "$work/lib/arm64-v8a"
-        system="libc.so libm.so libdl.so liblog.so libandroid.so libz.so libvulkan.so
-            libGLESv2.so libEGL.so libnativewindow.so libjnigraphics.so libaaudio.so
-            libOpenSLES.so libmediandk.so libcamera2ndk.so libsync.so libneuralnetworks.so"
-        fail=0
-        for so in *.so; do
-            for need in $(readelf -d "$so" | sed -n "s/.*NEEDED.*\\[\\(.*\\)\\]/\\1/p"); do
-                [ -f "$need" ] && continue
-                case " $(echo $system) " in *" $need "*) continue ;; esac
-                echo "missing: $so -> $need"
-                fail=1
-            done
+        for apk in app/build/outputs/apk/home/release/app-home-release.apk app/build/outputs/apk/nonLauncher/release/app-nonLauncher-release.apk; do
+            work=$(mktemp -d)
+            unzip -q "$apk" "lib/arm64-v8a/*" -d "$work"
+            (
+                cd "$work/lib/arm64-v8a"
+                system="libc.so libm.so libdl.so liblog.so libandroid.so libz.so libvulkan.so
+                    libGLESv2.so libEGL.so libnativewindow.so libjnigraphics.so libaaudio.so
+                    libOpenSLES.so libmediandk.so libcamera2ndk.so libsync.so libneuralnetworks.so"
+                fail=0
+                for so in *.so; do
+                    for need in $(readelf -d "$so" | sed -n "s/.*NEEDED.*\\[\\(.*\\)\\]/\\1/p"); do
+                        [ -f "$need" ] && continue
+                        case " $(echo $system) " in *" $need "*) continue ;; esac
+                        echo "missing in $apk: $so -> $need"
+                        fail=1
+                    done
+                done
+                [ "$fail" -eq 0 ]
+            )
+            rm -rf -- "$work"
+            echo "every NEEDED resolves in $apk"
         done
-        [ "$fail" -eq 0 ]
-        echo "every NEEDED resolves"
     '
 
-printf 'APK: %s\n' "${apk}"
-printf 'SHA-256: '
-shasum -a 256 "${apk}" | awk '{print $1}'
+for apk in "${home_apk}" "${non_launcher_apk}"; do
+    printf 'APK: %s\n' "${apk}"
+    printf 'SHA-256: '
+    shasum -a 256 "${apk}" | awk '{print $1}'
+done
