@@ -189,6 +189,7 @@ class MainActivity : ComponentActivity() {
     private var logsEnabled by mutableStateOf(true)
     private var showRoms by mutableStateOf(false)
     private var homeAppSelected by mutableStateOf(false)
+    private var homeScreenEnabled by mutableStateOf(false)
     private var defaultHomeLabel by mutableStateOf<String?>(null)
     private var androidApps by mutableStateOf<List<HomeApp.LaunchableApp>>(emptyList())
     private var secondScreenDisplays by mutableStateOf<List<SecondScreenDisplay>>(emptyList())
@@ -248,6 +249,7 @@ class MainActivity : ComponentActivity() {
                         pageKey = sm?.let { "settings:$it" } ?: if (showPerformance) "performance" else if (showProtons) "protons" else null,
                         theme = theme,
                         isHomeApp = homeAppSelected,
+                        homeScreenEnabled = homeScreenEnabled,
                         defaultHomeLabel = defaultHomeLabel,
                         androidApps = androidApps,
                         secondScreenDisplays = secondScreenDisplays,
@@ -319,6 +321,10 @@ class MainActivity : ComponentActivity() {
                         onPageBack = { settingsMode = null; showPerformance = false; showProtons = false },
                         onTheme = { id -> SessionPrefs.setTheme(this, id); theme = id },
                         onHomeApp = { manageHomeApp() },
+                        onHomeScreen = { on ->
+                            HomeApp.setHomeScreenEnabled(this, on)
+                            refreshHomeAppState()
+                        },
                         onAndroidApp = { app, displayId -> launchAndroidApp(app, displayId) },
                         onBackActionsInverted = { inverted ->
                             SessionPrefs.setBackActionsInverted(this, inverted)
@@ -402,7 +408,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshHomeAppState() {
-        homeAppSelected = HomeApp.isDefault(this)
+        homeScreenEnabled = HomeApp.isHomeScreenEnabled(this)
+        homeAppSelected = homeScreenEnabled && HomeApp.isDefault(this)
         defaultHomeLabel = HomeApp.defaultLabel(this)
         androidApps = if (homeAppSelected) HomeApp.launchableApps(this) else emptyList()
     }

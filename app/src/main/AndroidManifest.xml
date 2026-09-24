@@ -55,9 +55,12 @@
         </activity>
 
         <!-- Android owns the Home key. This small translucent Home handler routes the resulting
-             Home launch either back into a running Steam session or to the regular front end. -->
+             Home launch either back into a running Steam session or to the regular front end.
+             Off until the user turns on "Use as a Home screen" (Setup): while it is disabled the
+             app is not a Home app at all - not offered, not in the "choose Home" list. -->
         <activity
             android:name=".HomeActivity"
+            android:enabled="false"
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true"

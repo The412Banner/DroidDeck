@@ -22,6 +22,25 @@ object HomeApp {
         val icon: Bitmap?,
     )
 
+    /**
+     * Whether the app offers itself as a Home app at all. HomeActivity is declared disabled and
+     * only enabled when the user turns on "Use as a Home screen": a player who does not want a
+     * launcher never gets Android's "which Home app?" question, and it is one apk either way.
+     * The setting is the component's own state, which Android keeps across updates.
+     */
+    fun isHomeScreenEnabled(context: Context): Boolean =
+        context.packageManager.getComponentEnabledSetting(ComponentName(context, HomeActivity::class.java)) ==
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+
+    /** Turned off while DroidDeck is the Home app, the phone goes back to its own launcher. */
+    fun setHomeScreenEnabled(context: Context, enabled: Boolean) {
+        context.packageManager.setComponentEnabledSetting(
+            ComponentName(context, HomeActivity::class.java),
+            if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+    }
+
     fun isDefault(context: Context): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val roles = context.getSystemService(RoleManager::class.java)

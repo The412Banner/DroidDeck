@@ -157,6 +157,7 @@ class FrontEndState(
     val pageKey: String? = null,
     val theme: String = Themes.PAPER,
     val isHomeApp: Boolean = false,
+    val homeScreenEnabled: Boolean = false,
     val defaultHomeLabel: String? = null,
     val androidApps: List<HomeApp.LaunchableApp> = emptyList(),
     val secondScreenDisplays: List<SecondScreenDisplay> = emptyList(),
@@ -195,6 +196,7 @@ class FrontEndActions(
     val onPageBack: () -> Unit = {},
     val onTheme: (String) -> Unit = {},
     val onHomeApp: () -> Unit = {},
+    val onHomeScreen: (Boolean) -> Unit = {},
     val onAndroidApp: (HomeApp.LaunchableApp, Int?) -> Unit = { _, _ -> },
     val onBackActionsInverted: (Boolean) -> Unit = {},
     val onCheckLatestBuild: () -> Unit = {},
@@ -972,7 +974,14 @@ private fun SetupPanel(s: FrontEndState, a: FrontEndActions) {
                             }
                         }
                     }
-                    ActionRow("Default Home app", s.defaultHomeLabel ?: "Choose a Home app", "Choose", a.onHomeApp)
+                    ToggleRow(
+                        host, "home-screen", "Use as a Home screen",
+                        if (s.homeScreenEnabled) "DroidDeck can be the phone's Home app" else "Off: DroidDeck is never offered as a Home app",
+                        s.homeScreenEnabled,
+                    ) { a.onHomeScreen(it) }
+                    if (s.homeScreenEnabled) {
+                        ActionRow("Default Home app", s.defaultHomeLabel ?: "Choose a Home app", "Choose", a.onHomeApp)
+                    }
                 }
         }
     }
