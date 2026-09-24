@@ -24,7 +24,7 @@ jobs:
       pull-requests: read
     env:
       SOURCE_REPO: ${{ github.repository }}
-      TARGET_REPO: maxjivi05/DroidDeck-CI
+      TARGET_REPO: Droid-Deck/DroidDeck-CI
       RUN_ID: ${{ github.event.workflow_run.id }}
       HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
       HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
