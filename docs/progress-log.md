@@ -28,7 +28,7 @@ visible, the process uses `-nobigpicture`, and no Gamescope process is present.
   in LXQt and Steam reached its Library update screen. The classic process command line had
   `-nobigpicture -clientbeta publicbeta -no-cef-sandbox -cef-disable-gpu -cef-ozone-platform=x11`
   and `steam://open/library`; the compositor was `labwc`, with no `gamescope` process. The local
-  release APK (`43e48c1e…`) was installed on Thor for the final run.
+  release APK (`ab62817c…`) was installed on Thor for the final run.
 - **Checks**: `tools/build_local.sh` completed and reported `every NEEDED resolves`; shell syntax,
   Python AST parsing for `bannerlator-steam-compat`, and `git diff --check` passed. The desktop
   Library was verified on-device; game launching from the Library was outside this check.
