@@ -144,6 +144,13 @@ class SessionService : Service() {
                 updateSuspendPolicy()
                 return START_NOT_STICKY
             }
+            ACTION_SUSPEND_POLICY_CHANGED -> {
+                if (!SessionState.running) return START_NOT_STICKY
+                suspendPolicy = SessionPrefs.suspendPolicy(this, SessionState.mode)
+                suspendAttemptFailed = false
+                updateSuspendPolicy()
+                return START_NOT_STICKY
+            }
             ACTION_RESUME -> {
                 activityVisible = true
                 screenOn = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: screenOn
@@ -974,6 +981,7 @@ class SessionService : Service() {
         const val ACTION_STOP = "com.droiddeck.launcher.STOP_SESSION"
         const val ACTION_RESUME = "com.droiddeck.launcher.RESUME_SESSION"
         const val ACTION_HOME_GUIDE = "com.droiddeck.launcher.HOME_GUIDE"
+        private const val ACTION_SUSPEND_POLICY_CHANGED = "com.droiddeck.launcher.SUSPEND_POLICY_CHANGED"
         private const val ACTION_ACTIVITY_VISIBLE = "com.droiddeck.launcher.ACTIVITY_VISIBLE"
         private const val ACTION_ACTIVITY_HIDDEN = "com.droiddeck.launcher.ACTIVITY_HIDDEN"
         private const val ACTION_TRACK_AUXILIARY = "com.droiddeck.launcher.TRACK_AUXILIARY"
@@ -1026,6 +1034,11 @@ class SessionService : Service() {
         fun resume(context: Context) {
             if (!SessionState.running) return
             context.startService(Intent(context, SessionService::class.java).setAction(ACTION_RESUME))
+        }
+
+        fun suspendPolicyChanged(context: Context) {
+            if (!SessionState.running) return
+            context.startService(Intent(context, SessionService::class.java).setAction(ACTION_SUSPEND_POLICY_CHANGED))
         }
 
         /** Let the session service clean up the PTY's proot tree if the control screen closes. */

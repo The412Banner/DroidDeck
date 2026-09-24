@@ -170,6 +170,7 @@ class DrawerActions(
     val frameGenMultiplier: Int,
     val lsfgReady: Boolean,
     val oscMode: String,
+    val suspendPolicy: String,
     val backActionsInverted: Boolean,
     val touchMode: String,
     val touchAuto: String,
@@ -189,6 +190,7 @@ class DrawerActions(
     val onSteamMenu: (() -> Unit)?,
     val onQam: (() -> Unit)?,
     val onOsc: (String) -> Unit,
+    val onSuspendPolicy: (String) -> Unit,
     val onBackActionsInverted: (Boolean) -> Unit,
     val onTouch: (String) -> Unit,
     val onShape: (String) -> Unit,
@@ -386,6 +388,18 @@ fun SessionDrawer(open: Boolean, a: DrawerActions) {
                         else listOf(SessionPrefs.OSC_AUTO to "Auto", SessionPrefs.OSC_ALWAYS to "Always", SessionPrefs.OSC_NEVER to "Never"),
                         a.oscMode,
                         onPick = a.onOsc,
+                    )
+                    ChoiceRow(
+                        host, "suspend", "Background behavior",
+                        "How this session behaves when the app leaves the screen or the display turns off.",
+                        listOf(
+                            SessionPrefs.SUSPEND_AUTO to "Auto",
+                            SessionPrefs.SUSPEND_MANUAL to "Manual",
+                            SessionPrefs.SUSPEND_NEVER to "Never",
+                        ),
+                        a.suspendPolicy,
+                        note = "Auto pauses in the background and resumes when visible. Manual pauses there and waits for Resume. Never keeps the session running.",
+                        onPick = a.onSuspendPolicy,
                     )
                     if (a.steam) ChoiceRow(
                         host, "back-actions", "Back", SessionPrefs.backActionsOrder(a.backActionsInverted),

@@ -129,6 +129,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     private var frameGenEngine by mutableStateOf(FrameGen.ENGINE_OFF)
     private var frameGenMultiplier by mutableStateOf(2)
     private var fexPreset by mutableStateOf("")
+    private var suspendPolicy by mutableStateOf(SessionPrefs.SUSPEND_MANUAL)
     private var oscMode by mutableStateOf(SessionPrefs.OSC_AUTO)
     private var shapeMode by mutableStateOf(SessionPrefs.SHAPE_AUTO)
     private var secondScreenMode by mutableStateOf(SecondScreenMode.NONE)
@@ -247,6 +248,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                         oscMode = oscMode, touchMode = touchMode,
                         touchAuto = if (usingTouchpad()) "touchpad" else "direct",
                         shapeMode = shapeMode, fexPreset = fexPreset,
+                        suspendPolicy = suspendPolicy,
                         secondScreenMode = secondScreenMode,
                         secondScreenDisplays = secondScreenDisplays,
                         selectedSecondScreenDisplay = selectedSecondScreenDisplay,
@@ -267,6 +269,11 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                             backActionsInverted = inverted
                         },
                         onOsc = { v -> SessionPrefs.setOscMode(this@SessionActivity, v); readPrefs(); updateOnScreenControls() },
+                        onSuspendPolicy = { policy ->
+                            SessionPrefs.setSuspendPolicy(this@SessionActivity, SessionState.mode, policy)
+                            suspendPolicy = policy
+                            SessionService.suspendPolicyChanged(this@SessionActivity)
+                        },
                         onTouch = { v -> SessionPrefs.setTouchMode(this@SessionActivity, v); readPrefs() },
                         onShape = { v -> SessionPrefs.setShapeMode(this@SessionActivity, v); readPrefs() },
                         onFexPreset = { v -> SessionPrefs.setFexPreset(this@SessionActivity, v); readPrefs() },
@@ -374,6 +381,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         frameGenEngine = FrameGen.engine(this)
         frameGenMultiplier = FrameGen.multiplier(this)
         fexPreset = SessionPrefs.fexPreset(this)
+        suspendPolicy = SessionPrefs.suspendPolicy(this, SessionState.mode)
         oscMode = SessionPrefs.oscMode(this)
         shapeMode = SessionPrefs.shapeMode(this)
         backActionsInverted = SessionPrefs.backActionsInverted(this)
