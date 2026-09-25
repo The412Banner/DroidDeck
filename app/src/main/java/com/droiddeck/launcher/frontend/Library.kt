@@ -26,7 +26,35 @@ object Library {
     }
 
     /** The client's own tools and runtimes live in steamapps beside the games; they are not titles. */
-    private val NOT_GAMES = setOf(228980, 1493710, 3127680, 4183110, 4427310, 4185400)
+    private val NOT_GAMES = setOf(
+        858280,  // Proton 3.7
+        961940,  // Proton 3.16
+        993090,  // Lossless Scaling
+        1054830, // Proton 4.2
+        1070560, // Steam Linux Runtime 1.0
+        1113280, // Proton 4.11
+        1245040, // Proton 5.0
+        1391110, // Steam Linux Runtime 2.0
+        1420170, // Proton 5.13
+        1493710, // Proton Experimental
+        1580130, // Proton 6.3
+        1628350, // Steam Linux Runtime 3.0
+        1887720, // Proton 7
+        2180100, // Proton Hotfix
+        228980,  // Steamworks Common Redistributables
+        2348590, // Proton 8
+        2805730, // Proton 9
+        3029110, // Lepton
+        3127680, // FEX
+        3658110, // Proton 10
+        4183110, // Steam Linux Runtime 4.0
+        4185400, // Steam Linux Runtime 4.0 for ARM64
+        4427310, // Proton Experimental for ARM64
+        4628710, // Proton 11 / Proton Next
+        4628740, // Proton 11 for ARM64
+        4690330, // Legacy Steam Runtime
+    )
+    private val STEAM_CAPSULES = listOf("library_capsule.jpg", "library_600x900.jpg")
     private val NAME = Regex("^\\s*\"name\"\\s*\"([^\"]*)\"", RegexOption.MULTILINE)
     private val STATE = Regex("^\\s*\"StateFlags\"\\s*\"(\\d+)\"", RegexOption.MULTILINE)
 
@@ -49,13 +77,21 @@ object Library {
                     val flags = STATE.find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                     // StateFlags 4 = fully installed; anything else is downloading, updating or broken.
                     if (name.isEmpty() || flags and 4 == 0) return@forEach
-                    val dir = File(cache, appId.toString())
-                    val art = listOf("library_600x900.jpg", "logo.png", "library_header.jpg", "header.jpg")
-                        .map { File(dir, it) }.firstOrNull { it.isFile }
+                    val art = steamCapsule(cache, appId)
                     out[appId] = SteamGame(appId, name, art, label)
                 }
         }
         return out.values.toList()
+    }
+
+    /** Steam stores current library capsules inside hash-named folders under the app's cache dir. */
+    private fun steamCapsule(cache: File, appId: Int): File? {
+        val appDir = File(cache, appId.toString())
+        val dirs = listOf(appDir) + appDir.listFiles()
+            .orEmpty().filter { it.isDirectory }.sortedBy { it.name }
+        return STEAM_CAPSULES.asSequence()
+            .flatMap { name -> dirs.asSequence().map { File(it, name) } }
+            .firstOrNull { it.isFile && it.length() > 0L }
     }
 
     private class Spec(val id: String, val name: String, val system: String, val program: String, val folders: List<String>, val exts: Set<String>)

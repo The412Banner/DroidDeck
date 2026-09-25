@@ -48,6 +48,9 @@ import com.droiddeck.launcher.session.PerfHints
 import com.droiddeck.launcher.session.PerfHud
 import com.droiddeck.launcher.session.PerfMode
 import com.droiddeck.launcher.session.SessionPrefs
+import com.droiddeck.launcher.session.SessionEvents
+import com.droiddeck.launcher.session.SessionArtifacts
+import com.droiddeck.launcher.session.SessionPhase
 import com.droiddeck.launcher.session.SessionPaths
 import com.droiddeck.launcher.wayland.HdrSupport
 import com.droiddeck.launcher.session.SessionService
@@ -132,6 +135,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     private var frameGenEngine by mutableStateOf(FrameGen.ENGINE_OFF)
     private var frameGenMultiplier by mutableStateOf(2)
     private var fexPreset by mutableStateOf("")
+    private var suspendPolicy by mutableStateOf(SessionPrefs.SUSPEND_MANUAL)
     private var oscMode by mutableStateOf(SessionPrefs.OSC_AUTO)
     private var shapeMode by mutableStateOf(SessionPrefs.SHAPE_AUTO)
     private var secondScreenMode by mutableStateOf(SecondScreenMode.NONE)
@@ -160,6 +164,16 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!SessionState.running && SessionState.phase in setOf(SessionPhase.IDLE, SessionPhase.FAILED)) {
+            SessionEvents.begin(this, intent.getStringExtra(SessionService.EXTRA_MODE) ?: SessionService.MODE_STEAM)
+        }
+        SessionState.program = intent.getStringExtra(SessionService.EXTRA_PROGRAM)
+        SessionState.programArgs = intent.getStringArrayExtra(SessionService.EXTRA_PROGRAM_ARGS)?.toList().orEmpty()
+        SessionState.steamUi = intent.getStringExtra(SessionService.EXTRA_STEAM_UI)
+        SessionState.steamUrl = intent.getStringExtra(SessionService.EXTRA_STEAM_URL)
+        if (intent.action == SessionService.ACTION_AGENT_START) {
+            SessionEvents.record("agent.start_requested", mapOf("mode" to SessionState.mode))
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Game-tier power policy for the whole session: a sustained clock floor, the panel's
         // fastest mode, and the OS told it is in gameplay. Logged so a slow device says why.
@@ -247,7 +261,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                         fillScreen = if (SessionState.mode == SessionService.MODE_STEAM) fillScreen else null,
                         frameGenEngine = frameGenEngine, frameGenMultiplier = frameGenMultiplier,
                         lsfgReady = LsfgNative.isInstalled(this@SessionActivity),
-                        oscMode = oscMode, touchMode = touchMode,
+                        oscMode = oscMode, suspendPolicy = suspendPolicy, touchMode = touchMode,
                         touchAuto = if (usingTouchpad()) "touchpad" else "direct",
                         shapeMode = shapeMode, fexPreset = fexPreset,
                         secondScreenMode = secondScreenMode,
@@ -270,6 +284,11 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                             backActionsInverted = inverted
                         },
                         onOsc = { v -> SessionPrefs.setOscMode(this@SessionActivity, v); readPrefs(); updateOnScreenControls() },
+                        onSuspendPolicy = { policy ->
+                            SessionPrefs.setSuspendPolicy(this@SessionActivity, SessionState.mode, policy)
+                            suspendPolicy = policy
+                            SessionService.suspendPolicyChanged(this@SessionActivity)
+                        },
                         onTouch = { v -> SessionPrefs.setTouchMode(this@SessionActivity, v); readPrefs() },
                         onShape = { v -> SessionPrefs.setShapeMode(this@SessionActivity, v); readPrefs() },
                         onFexPreset = { v -> SessionPrefs.setFexPreset(this@SessionActivity, v); readPrefs() },
@@ -301,12 +320,13 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
         updateOnScreenControls()
         WaylandCompositor.setFirstFrameListener {
-            SessionState.firstFrameSeen = true
+            SessionEvents.firstFrame()
             runOnUiThread {
                 loading.visible = false
                 hud.start()
             }
         }
+        SessionEvents.markReadyIfPossible()
         SessionState.endListener = endListener
         // A single Back opens the session menu; two quick presses/swipes send the Steam QAM chord.
         // The single action waits out the double-press window so the two actions stay distinct.
@@ -377,6 +397,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         frameGenEngine = FrameGen.engine(this)
         frameGenMultiplier = FrameGen.multiplier(this)
         fexPreset = SessionPrefs.fexPreset(this)
+        suspendPolicy = SessionPrefs.suspendPolicy(this, SessionState.mode)
         oscMode = SessionPrefs.oscMode(this)
         shapeMode = SessionPrefs.shapeMode(this)
         backActionsInverted = SessionPrefs.backActionsInverted(this)
@@ -393,20 +414,61 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
      * starts when they are in. Nothing else changes.
      */
     private fun installThenStart(runtime: Boolean, desktop: Boolean) {
+        if (SessionState.stopRequested) return
         installingRuntime = true
+        SessionState.installing = if (runtime) "runtime" else "desktop"
+        SessionEvents.transition(
+            SessionPhase.INSTALLING_RUNTIME,
+            if (runtime) "runtime.installing" else "desktop.installing",
+            mapOf("component" to SessionState.installing),
+        )
         loading.step = if (runtime) "downloading the Linux runtime" else "downloading the desktop"
         loading.percent = -1
         Thread({
-            val problem = (if (runtime) installRuntime() else null) ?: (if (desktop) installDesktop() else null)
+            var failedComponent: String? = null
+            var problem: String? = null
+            if (runtime) {
+                problem = installRuntime()
+                if (problem == null) SessionEvents.record("runtime.ready") else failedComponent = "runtime"
+            }
+            if (problem == null && desktop && !SessionState.stopRequested) {
+                SessionState.installing = "desktop"
+                SessionEvents.transition(SessionPhase.INSTALLING_RUNTIME, "desktop.installing", mapOf("component" to "desktop"))
+                problem = installDesktop()
+                if (problem == null) SessionEvents.record("desktop.ready") else failedComponent = "desktop"
+            }
             uiHandler.post {
                 installingRuntime = false
-                if (problem != null) { loading.showEnded(problem); return@post }
+                SessionState.installing = null
+                if (SessionState.stopRequested) {
+                    SessionState.stopRequested = false
+                    SessionEvents.transition(SessionPhase.IDLE, "session.cancelled")
+                    collectStartArtifacts("session start cancelled")
+                    finish()
+                    return@post
+                }
+                if (problem != null) {
+                    val code = if (failedComponent == "runtime") "RUNTIME_INSTALL_FAILED" else "DESKTOP_INSTALL_FAILED"
+                    SessionEvents.fail(code, problem)
+                    collectStartArtifacts("session start failed")
+                    loading.showEnded(problem)
+                    return@post
+                }
                 loading.percent = -1
                 loading.step = "Starting the session…"
                 // The surface may have come and gone while the download ran; start on the live one.
                 if (surfaceView.holder.surface?.isValid == true) surfaceCreated(surfaceView.holder)
             }
         }, "runtime-install").start()
+    }
+
+    private fun collectStartArtifacts(reason: String) {
+        val dir = SessionPaths.take() ?: return
+        val appContext = applicationContext
+        Thread({
+            SessionArtifacts.collect(appContext, dir, reason)
+            SessionPaths.release(appContext, dir)
+        }, "session-failure-artifacts").start()
     }
 
     /** Reports one package's download on the loading screen: "<what> · 332 of 791 MB", checking, unpacking. */
@@ -441,7 +503,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        if (installingRuntime) return
+        if (installingRuntime || SessionState.stopRequested) return
+        if (!SessionState.running) {
+            SessionEvents.transition(SessionPhase.STARTING_COMPOSITOR, "compositor.starting")
+        }
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
         // The compositor hands this keymap to wl_keyboard clients, which is how the guest reads
         // the evdev codes we inject.
@@ -458,7 +523,6 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         // was 16:9 - the picture came back squashed sideways. While a session runs, keep its size.
         val size = if (SessionState.running) SessionState.outputSize else outputSize()
         SessionState.outputSize = size
-        onScreenControls?.setPicture(drawnRect())
         if (!SessionState.running) SessionState.refreshHz = refreshHz()
         // Letterbox, never stretch or crop: the output can be a different shape from the panel,
         // and a game's picture must keep its proportions with bars, not lose its edges.
@@ -505,6 +569,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             driverId?.let { turnip.driverPath(it) }, driverId?.let { turnip.libraryName(it) },
             applicationInfo.nativeLibraryDir, size.first, size.second, refreshHz(),
         )
+        if (!SessionState.running) SessionEvents.record("compositor.started")
         // ADPF: the compositor thread's frame intervals go to the power HAL against the panel's
         // period, so a long frame raises CPU clocks now rather than after the load averages up.
         PerfHints.arm(this, refreshHz())
@@ -514,6 +579,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         // start nothing, and leave the loading panel counting up over a dead session.
         if (!SessionState.running) {
             CompositorHost.newSession()
+            SessionEvents.transition(SessionPhase.STARTING_GUEST, "guest.starting")
             SessionService.start(
                 this, intent.getStringExtra(SessionService.EXTRA_MODE) ?: SessionService.MODE_STEAM,
                 intent.getStringExtra(SessionService.EXTRA_PROGRAM),
@@ -532,8 +598,6 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         val resized = surfaceW != 0 && (width != surfaceW || height != surfaceH)
         surfaceW = width
         surfaceH = height
-        // The on-screen controls follow the picture: into the bars beside or under it when there are any.
-        onScreenControls?.setPicture(drawnRect())
         if (resized) {
             Log.i(TAG, "surface resized to ${width}x$height - rebinding the compositor")
             CompositorHost.resize(holder.surface) { applyFrameGen() }
@@ -616,6 +680,13 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         val poll = object : Runnable {
             override fun run() {
                 if (!watching) return
+                if (SessionState.stopRequested && !SessionState.running && !installingRuntime) {
+                    SessionState.stopRequested = false
+                    SessionEvents.transition(SessionPhase.IDLE, "session.cancelled")
+                    collectStartArtifacts("session start cancelled")
+                    finish()
+                    return
+                }
                 if (loading.visible && !loading.ended) {
                     if (!installingRuntime) loading.update(this@SessionActivity, SessionState.logFile)
                     if (ticks++ % 2 == 0) loading.tick()
@@ -1128,6 +1199,15 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
+        if (intent.action == SessionService.ACTION_AGENT_START) {
+            if (SessionState.running || SessionState.phase !in setOf(SessionPhase.IDLE, SessionPhase.FAILED)) {
+                Log.w(TAG, "ignoring agent start while session phase is ${SessionState.phase}")
+                return
+            }
+            setIntent(intent)
+            recreate()
+            return
+        }
         setIntent(intent)
         if (intent.action == SessionService.ACTION_HOME_GUIDE) {
             handleHomeGuideIntent(intent)
@@ -1146,6 +1226,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         }
         (getSystemService(INPUT_SERVICE) as? InputManager)
             ?.registerInputDeviceListener(deviceListener, Handler(Looper.getMainLooper()))
+        onScreenControls?.reload()
         updateOnScreenControls()
         readPrefs()
         if (CompositorHost.isStarted) applyFrameGen()
@@ -1158,6 +1239,14 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         onScreenControls?.releaseAll()
         keyboard?.takeIf { it.shown }?.hide()
         super.onPause()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val decor = window.decorView
+        decor.requestUnbufferedDispatch(UNBUFFERED_SOURCES)
+        decor.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ -> decor.post { decor.requestUnbufferedDispatch(UNBUFFERED_SOURCES) } }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -1207,6 +1296,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     companion object {
         private const val TAG = "SessionActivity"
+        private const val UNBUFFERED_SOURCES = InputDevice.SOURCE_CLASS_JOYSTICK or InputDevice.SOURCE_CLASS_TRACKBALL or InputDevice.SOURCE_CLASS_POSITION
         private const val BACK_DOUBLE_PRESS_TIMEOUT_MS = 500L
         private const val DRAWER_HAT_THRESHOLD = 0.5f
         private const val DRAWER_STICK_ENTER_THRESHOLD = 0.55f

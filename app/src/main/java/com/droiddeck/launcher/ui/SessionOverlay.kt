@@ -87,7 +87,7 @@ import com.droiddeck.launcher.input.SecondScreenMode
 import kotlinx.coroutines.flow.collect
 
 private val drawerPageTitles = listOf("Now", "Controls", "Session")
-private val drawerPageEntries = listOf("hud", "touch", "shape")
+private val drawerPageEntries = listOf("hud", "touch", "suspend")
 
 private class DrawerFocus {
     private val requesters = HashMap<String, FocusRequester>()
@@ -194,6 +194,7 @@ class DrawerActions(
     val frameGenMultiplier: Int,
     val lsfgReady: Boolean,
     val oscMode: String,
+    val suspendPolicy: String,
     val backActionsInverted: Boolean,
     val touchMode: String,
     val touchAuto: String,
@@ -213,6 +214,7 @@ class DrawerActions(
     val onSteamMenu: (() -> Unit)?,
     val onQam: (() -> Unit)?,
     val onOsc: (String) -> Unit,
+    val onSuspendPolicy: (String) -> Unit,
     val onBackActionsInverted: (Boolean) -> Unit,
     val onTouch: (String) -> Unit,
     val onShape: (String) -> Unit,
@@ -474,6 +476,21 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
                                         }
                                     }
                                 }
+                            }
+                            SettingsGroup("Session behavior") {
+                                ChoiceRow(
+                                    host, "suspend", "Background behavior",
+                                    "Applies now and to future sessions in this mode.",
+                                    listOf(
+                                        SessionPrefs.SUSPEND_AUTO to "Auto",
+                                        SessionPrefs.SUSPEND_MANUAL to "Manual",
+                                        SessionPrefs.SUSPEND_NEVER to "Never",
+                                    ),
+                                    a.suspendPolicy,
+                                    note = "Auto pauses in the background and resumes when visible. Manual pauses there and waits for Resume. Never keeps the session running.",
+                                    chipModifier = focus.track(page, "suspend"),
+                                    onPick = a.onSuspendPolicy,
+                                )
                             }
                             SettingsGroup("Next session") {
                                 ChoiceRow(host, "shape", "Screen ratio", null,

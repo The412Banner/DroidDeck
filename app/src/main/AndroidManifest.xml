@@ -85,6 +85,14 @@
             size change, so nothing it does can help.
         -->
         <activity
+            android:name=".input.ControllerEditorActivity"
+            android:exported="false"
+            android:theme="@style/SessionTheme"
+            android:screenOrientation="sensorLandscape"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density" />
+
+        <activity
             android:name=".files.FileManagerActivity"
             android:exported="false"
             android:screenOrientation="sensorLandscape"

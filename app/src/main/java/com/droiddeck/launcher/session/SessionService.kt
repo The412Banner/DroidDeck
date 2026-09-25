@@ -144,6 +144,13 @@ class SessionService : Service() {
                 updateSuspendPolicy()
                 return START_NOT_STICKY
             }
+            ACTION_SUSPEND_POLICY_CHANGED -> {
+                if (!SessionState.running) return START_NOT_STICKY
+                suspendPolicy = SessionPrefs.suspendPolicy(this, SessionState.mode)
+                suspendAttemptFailed = false
+                updateSuspendPolicy()
+                return START_NOT_STICKY
+            }
             ACTION_RESUME -> {
                 activityVisible = true
                 screenOn = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: screenOn
@@ -155,6 +162,11 @@ class SessionService : Service() {
         }
         startForeground(NOTIFICATION_ID, buildNotification())
         if (SessionState.running) return START_NOT_STICKY
+        if (SessionState.stopRequested) {
+            SessionState.running = true
+            stopSession(0)
+            return START_NOT_STICKY
+        }
         SessionState.mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_STEAM
         suspendPolicy = SessionPrefs.suspendPolicy(this, SessionState.mode)
         activityVisible = true
@@ -168,12 +180,18 @@ class SessionService : Service() {
         SessionState.programArgs = intent?.getStringArrayExtra(EXTRA_PROGRAM_ARGS)?.toList().orEmpty()
         SessionState.steamUi = intent?.getStringExtra(EXTRA_STEAM_UI)
         SessionState.steamUrl = intent?.getStringExtra(EXTRA_STEAM_URL)
+        SessionState.running = true
+        if (SessionState.stopRequested) {
+            stopSession(0)
+            return START_NOT_STICKY
+        }
         // Another Steam client on the device signs ours out seconds after every login; the one that
         // does it here runs from boot without being opened. Only the Steam session signs in.
         // The desktop too: its Steam launchers run the client right there (bannerlator-steam-launch).
         if (SessionState.mode == MODE_STEAM || SessionState.mode == MODE_DESKTOP) RivalClients.stopBeforeSession(this)
-        SessionState.running = true
         SessionState.firstFrameSeen = false
+        SessionState.guestPid = -1
+        SessionEvents.transition(SessionPhase.STARTING_GUEST, "service.started", mapOf("mode" to SessionState.mode))
         // This session's number, claimed here and not when its process starts: the session it
         // replaces can report its own exit in the gap between the two, and that exit must not
         // be taken as this one's.
@@ -250,6 +268,10 @@ class SessionService : Service() {
         val sessionDir = SessionPaths.beginOrCurrent(this)
         val sessionLog = File(sessionDir, "session.log")
         SessionState.logFile = sessionLog
+        SessionState.logDirectory = sessionDir
+        SessionState.sessionId = sessionDir.name
+        SessionState.eventsFile = File(sessionDir, "events.jsonl")
+        SessionEvents.record("session.logs_ready", mapOf("logDir" to sessionDir.path))
         // Written first, so a session that dies in its first second still says what it ran on.
         DeviceReport.write(this, File(sessionDir, "device.txt"), SessionState.mode)
         NetworkReport.write(this, File(sessionDir, "network.txt"))
@@ -579,7 +601,9 @@ class SessionService : Service() {
         components.add(networkLink)
         components.forEach { it.start() }
 
-        val line = command.joinToString(" ") { it.replace(" ", "\\ ") }
+        val line = command.joinToString(" ") {
+            it.replace("\\", "\\\\").replace(" ", "\\ ")
+        }
         watchLaunchRequests(sessionRoot)
         // One session replacing another (the desktop's Steam launchers): the old proot is killed
         // by the teardown a second after the new one has started, and its exit used to arrive
@@ -594,6 +618,14 @@ class SessionService : Service() {
             stopSession(status ?: -1)
         }, null)
         Log.i(TAG, "session pid $sessionPid, log ${sessionLog.path}")
+        if (gen == sessionGen && SessionState.running && sessionPid > 1) {
+            SessionEvents.guestStarted(sessionPid)
+        } else if (gen == sessionGen && SessionState.running) {
+            SessionEvents.record("guest.start_failed", mapOf("pid" to sessionPid))
+            SessionEvents.fail("GUEST_START_FAILED", "The guest process could not be started", sessionPid)
+            stopSession(-1)
+            return
+        }
         if (gen == sessionGen && SessionState.running) {
             suspendController = SessionSuspendController(
                 sessionRoot = { sessionPid },
@@ -756,6 +788,7 @@ class SessionService : Service() {
                     suspendOperationPending = false
                     if (success) {
                         SessionState.suspended = true
+                        SessionEvents.transition(SessionPhase.SUSPENDED, "session.suspended")
                         releaseLocks()
                         refreshNotification()
                     } else {
@@ -773,6 +806,7 @@ class SessionService : Service() {
                     suspendOperationPending = false
                     if (success) {
                         SessionState.suspended = false
+                        SessionEvents.transition(SessionEvents.resumePhase(), "session.resumed")
                         refreshNotification()
                     } else {
                         suspendAttemptFailed = true
@@ -787,7 +821,16 @@ class SessionService : Service() {
     private fun finishSessionStop(status: Int) {
         mainHandler.post {
             SessionState.suspended = false
+            SessionState.guestPid = -1
             releaseLocks()
+            if (status == 0) {
+                SessionEvents.transition(SessionPhase.IDLE, "session.stopped", mapOf("status" to status))
+            } else {
+                val code = SessionState.failureCode ?: "GUEST_EXIT"
+                val message = SessionState.failureMessage ?: "Session guest exited with status $status"
+                val failureStatus = SessionState.failureStatus ?: status
+                SessionEvents.fail(code, message, failureStatus)
+            }
             SessionState.notifyEnded(status)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -797,6 +840,9 @@ class SessionService : Service() {
     private fun stopSession(status: Int) {
         if (!SessionState.running) return
         SessionState.running = false
+        SessionState.stopRequested = false
+        SessionEvents.record("guest.exited", mapOf("status" to status))
+        SessionEvents.transition(SessionPhase.STOPPING, "session.stopping", mapOf("status" to status))
         suspendOperationPending = false
         launchWatcher?.stopWatching()
         launchWatcher = null
@@ -978,6 +1024,8 @@ class SessionService : Service() {
         const val ACTION_STOP = "com.droiddeck.launcher.STOP_SESSION"
         const val ACTION_RESUME = "com.droiddeck.launcher.RESUME_SESSION"
         const val ACTION_HOME_GUIDE = "com.droiddeck.launcher.HOME_GUIDE"
+        const val ACTION_AGENT_START = "com.droiddeck.launcher.AGENT_START"
+        private const val ACTION_SUSPEND_POLICY_CHANGED = "com.droiddeck.launcher.SUSPEND_POLICY_CHANGED"
         private const val ACTION_ACTIVITY_VISIBLE = "com.droiddeck.launcher.ACTIVITY_VISIBLE"
         private const val ACTION_ACTIVITY_HIDDEN = "com.droiddeck.launcher.ACTIVITY_HIDDEN"
         private const val ACTION_TRACK_AUXILIARY = "com.droiddeck.launcher.TRACK_AUXILIARY"
@@ -1030,6 +1078,11 @@ class SessionService : Service() {
         fun resume(context: Context) {
             if (!SessionState.running) return
             context.startService(Intent(context, SessionService::class.java).setAction(ACTION_RESUME))
+        }
+
+        fun suspendPolicyChanged(context: Context) {
+            if (!SessionState.running) return
+            context.startService(Intent(context, SessionService::class.java).setAction(ACTION_SUSPEND_POLICY_CHANGED))
         }
 
         /** Let the session service clean up the PTY's proot tree if the control screen closes. */
