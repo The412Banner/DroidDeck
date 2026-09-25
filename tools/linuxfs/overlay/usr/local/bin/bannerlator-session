@@ -350,7 +350,8 @@ case $mode in
     # The drawer's "Stretch games to fill the screen" works live: the app writes its choice to
     # ~/.droiddeck-fill, and each change goes to gamescope as GAMESCOPE_FORCE_WINDOWS_FULLSCREEN on
     # the root window, which it watches. What gamescope was started with is where this begins.
-    (
+    # Not on the desktop (BL_DESKTOP): no gamescope there, and the loop would outlive the client.
+    [ -z "${BL_DESKTOP:-}" ] && (
       last=${BL_GAMESCOPE_FORCE_FULLSCREEN:-1}
       while :; do
         sleep 1
@@ -515,7 +516,17 @@ BUSCONF
       # The URL arguments were acted on the first time; a restart must not repeat them.
       set --
     done
-    reap_orphans
+    if [ -n "${BL_DESKTOP:-}" ]; then
+      # Started from the desktop (bannerlator-steam-launch): the desktop's own programs share this
+      # script's parent, so reap_orphans - right under gamescope, where everything is the client's -
+      # is not for here. The helpers this run started (the cores and redistributables beats, the
+      # system bus and the NetworkManager stand-in) go with the client instead.
+      _bl_jobs=$(jobs -p)
+      [ -n "$_bl_jobs" ] && kill $_bl_jobs 2>/dev/null
+      echo "== steam: the client on the desktop has exited"
+    else
+      reap_orphans
+    fi
     exit "$rc"
     ;;
   *)

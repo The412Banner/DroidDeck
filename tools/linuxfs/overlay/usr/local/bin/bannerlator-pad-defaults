@@ -383,7 +383,7 @@ Buttons/1 = `Button W`
 Buttons/2 = `Button N`
 Buttons/- = `Back`
 Buttons/+ = `Start`
-Buttons/Home = `Guide`
+Buttons/Home = `Shoulder R`
 D-Pad/Up = `Pad N`
 D-Pad/Down = `Pad S`
 D-Pad/Left = `Pad W`
@@ -510,10 +510,188 @@ def armsx2_bios(ini):
     print(f"bannerlator-pad-defaults: ARMSX2: BIOS {pick}")
 
 
+# Dolphin (PC) has no controller menu, so the guide button is its Toggle Fullscreen hotkey: out of full
+# screen is Dolphin's own window with its Config / Graphics / Stop buttons. Hotkeys.ini is all-or-
+# nothing - a file with one line drops every other default - so a new one carries Dolphin's defaults,
+# generated from HotkeyManager.cpp's LoadDefaults (Linux branch, RetroAchievements on) plus the guide;
+# an existing one only gets the guide added to its Toggle Fullscreen. The Wii remote's Home, which
+# was on the guide button, is on the right shoulder button instead.
+DOLPHIN_GUIDE = "`SDL/0/Xbox 360 Controller:Guide`"
+DOLPHIN_HOTKEYS = """[Hotkeys]
+Device = XInput2/0/Virtual core pointer
+General/Open = @(Ctrl+O)
+General/Toggle Pause = F10
+General/Stop = Escape
+General/Toggle Fullscreen = @(Alt+Return) | `SDL/0/Xbox 360 Controller:Guide`
+General/Take Screenshot = F9
+General/Open Achievements = @(Alt+A)
+Emulation Speed/Disable Emulation Speed Limit = Tab
+Stepping/Step Into = F11
+Stepping/Step Over = @(Shift+F10)
+Stepping/Step Out = @(Shift+F11)
+Breakpoint/Toggle Breakpoint = @(Shift+F9)
+Wii/Connect Wii Remote 1 = @(Alt+F5)
+Wii/Connect Wii Remote 2 = @(Alt+F6)
+Wii/Connect Wii Remote 3 = @(Alt+F7)
+Wii/Connect Wii Remote 4 = @(Alt+F8)
+Wii/Connect Balance Board = @(Alt+F9)
+Load State/Load State Slot 1 = F1
+Load State/Load State Slot 2 = F2
+Load State/Load State Slot 3 = F3
+Load State/Load State Slot 4 = F4
+Load State/Load State Slot 5 = F5
+Load State/Load State Slot 6 = F6
+Load State/Load State Slot 7 = F7
+Load State/Load State Slot 8 = F8
+Save State/Save State Slot 1 = @(Shift+F1)
+Save State/Save State Slot 2 = @(Shift+F2)
+Save State/Save State Slot 3 = @(Shift+F3)
+Save State/Save State Slot 4 = @(Shift+F4)
+Save State/Save State Slot 5 = @(Shift+F5)
+Save State/Save State Slot 6 = @(Shift+F6)
+Save State/Save State Slot 7 = @(Shift+F7)
+Save State/Save State Slot 8 = @(Shift+F8)
+Other State Hotkeys/Undo Load State = F12
+Other State Hotkeys/Undo Save State = @(Shift+F12)
+GBA Core/Load ROM = @(`Ctrl`+`Shift`+`O`)
+GBA Core/Unload ROM = @(`Ctrl`+`Shift`+`W`)
+GBA Core/Reset = @(`Ctrl`+`Shift`+`R`)
+GBA Volume/Volume Down = `KP_Subtract`
+GBA Volume/Volume Up = `KP_Add`
+GBA Volume/Volume Toggle Mute = `M`
+GBA Window Size/1x = `KP_1`
+GBA Window Size/2x = `KP_2`
+GBA Window Size/3x = `KP_3`
+GBA Window Size/4x = `KP_4`
+USB Emulation Devices/Show Skylanders Portal = @(Ctrl+P)
+USB Emulation Devices/Show Infinity Base = @(Ctrl+I)
+"""
+
+DOLPHIN_APPIMAGE = "/opt/appimages/dolphin.AppImage"
+DOLPHIN_DATA = "/usr/share/dolphin-emu"
+
+
+def dolphin_data():
+    """The Dolphin build in the catalog finds its own data - the GameCube fonts, the per-game fixes
+    (GameSettings: GUT.ini puts Ultimate Spider-Man on the MMU), its icons and shaders - only at the
+    fixed /usr/share/dolphin-emu it was built for; there is no setting or variable to move it. Here it
+    runs from a copy unpacked under /tmp (no FUSE), so it found none of it: a GameCube game stopped
+    on "Windows-1252 fonts are not loaded", another on an invalid write the missing game fix would
+    have prevented. So the folder is unpacked from the AppImage to that path, once per AppImage."""
+    import shutil, subprocess, tempfile
+    try:
+        st = os.stat(DOLPHIN_APPIMAGE)
+    except OSError:
+        return
+    stamp = "%d:%d" % (st.st_size, int(st.st_mtime))
+    marker = os.path.join(DOLPHIN_DATA, ".droiddeck-from")
+    try:
+        if open(marker).read() == stamp and os.path.isfile(os.path.join(DOLPHIN_DATA, "Sys/GC/font_western.bin")):
+            return
+    except OSError:
+        pass
+    work = tempfile.mkdtemp(prefix="dolphin-data-", dir="/tmp")
+    try:
+        subprocess.run([DOLPHIN_APPIMAGE, "--appimage-extract", "usr/share/dolphin-emu/*"], cwd=work,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        src = os.path.join(work, "squashfs-root/usr/share/dolphin-emu")
+        if not os.path.isfile(os.path.join(src, "Sys/GC/font_western.bin")):
+            print("bannerlator-pad-defaults: Dolphin: could not unpack its data from the AppImage")
+            return
+        new = DOLPHIN_DATA + ".new"
+        shutil.rmtree(new, ignore_errors=True)
+        shutil.move(src, new)
+        with open(os.path.join(new, ".droiddeck-from"), "w") as f:
+            f.write(stamp)
+        shutil.rmtree(DOLPHIN_DATA, ignore_errors=True)
+        os.rename(new, DOLPHIN_DATA)
+        print("bannerlator-pad-defaults: Dolphin: its data (fonts, per-game fixes) in " + DOLPHIN_DATA)
+    except (OSError, subprocess.SubprocessError) as e:
+        print("bannerlator-pad-defaults: Dolphin: unpacking its data failed: %s" % e)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def dolphin():
+    if not os.path.isfile(DOLPHIN_APPIMAGE):
+        return
+    dolphin_data()
     d = os.path.join(CONFIG, "dolphin-emu")
     seed(os.path.join(d, "GCPadNew.ini"), DOLPHIN_GC, "Dolphin (GameCube)")
     seed(os.path.join(d, "WiimoteNew.ini"), DOLPHIN_WII, "Dolphin (Wii)")
+    wii_pad = os.path.join(d, "WiimoteNew.ini")
+    if ini_get(wii_pad, "Wiimote1", "Buttons/Home") == "`Guide`":
+        ini_set(wii_pad, "Wiimote1", "Buttons/Home", "`Shoulder R`")
+        print("bannerlator-pad-defaults: Dolphin (Wii): Home on the right shoulder button (guide = Dolphin's window)")
+    hotkeys = os.path.join(d, "Hotkeys.ini")
+    if not os.path.isfile(hotkeys):
+        seed(hotkeys, DOLPHIN_HOTKEYS, "Dolphin", "the guide button shows Dolphin's window (Toggle Fullscreen)")
+    else:
+        current = ini_get(hotkeys, "Hotkeys", "General/Toggle Fullscreen")
+        if current is not None and DOLPHIN_GUIDE not in current:
+            ini_set(hotkeys, "Hotkeys", "General/Toggle Fullscreen",
+                    (current + " | " if current else "") + DOLPHIN_GUIDE)
+            print("bannerlator-pad-defaults: Dolphin: the guide button shows Dolphin's window (Toggle Fullscreen)")
+    # Games from the ROMs folder's gamecube and wii folders, subfolders included; Vulkan; no
+    # NKit warning (it will not let a game start until a box is ticked - games run either way,
+    # the warning is about loading times, netplay and save states); no statistics question.
+    # Names from Dolphin's MainSettings.cpp / UISettings.cpp. Only what is not set yet is added,
+    # except the game folders, which are added to whatever the user has.
+    ini = os.path.join(d, "Dolphin.ini")
+    gc = system_folder(("gamecube", "gc", "ngc"), "gamecube")
+    wii = system_folder(("wii",), "wii")
+    if not os.path.isfile(ini):
+        os.makedirs(d, exist_ok=True)
+        with open(ini, "w", encoding="utf-8") as f:
+            f.write("[Analytics]\nEnabled = False\nPermissionAsked = True\n"
+                    "[Core]\nGFXBackend = Vulkan\n"
+                    "[General]\nISOPaths = 2\nISOPath0 = %s\nISOPath1 = %s\nRecursiveISOPaths = True\n"
+                    "[Interface]\nSkipNKitWarning = True\n" % (gc, wii))
+        print("bannerlator-pad-defaults: Dolphin: first-time setup (Vulkan, games from %s and %s)" % (gc, wii))
+        return
+    try:
+        count = int(ini_get(ini, "General", "ISOPaths") or "0")
+    except ValueError:
+        count = 0
+    paths = [ini_get(ini, "General", "ISOPath%d" % i) for i in range(count)]
+    changed = []
+    # The whole ROMs folder as a game folder (what Dolphin's "set a games directory" was pointed at
+    # before) would, searched with its subfolders, have Dolphin open every PS2 and PS3 image too;
+    # the system folders below cover it.
+    if any((p or "").rstrip("/") == ROMS for p in paths):
+        paths = [p for p in paths if p and p.rstrip("/") != ROMS]
+        for i, p in enumerate(paths):
+            ini_set(ini, "General", "ISOPath%d" % i, p)
+        for i in range(len(paths), count):
+            ini_set(ini, "General", "ISOPath%d" % i, "")
+        count = len(paths)
+        ini_set(ini, "General", "ISOPaths", str(count))
+        changed.append("not the whole ROMs folder")
+    for folder in (gc, wii):
+        if folder not in paths:
+            ini_set(ini, "General", "ISOPath%d" % count, folder)
+            count += 1
+            paths.append(folder)
+            changed.append(folder)
+    if changed:
+        ini_set(ini, "General", "ISOPaths", str(count))
+    if ini_get(ini, "General", "RecursiveISOPaths") != "True":
+        ini_set(ini, "General", "RecursiveISOPaths", "True")
+        changed.append("subfolders")
+    if changed:
+        print("bannerlator-pad-defaults: Dolphin: games from " + ", ".join(changed))
+    # Once, for a Dolphin set up before this: Vulkan unless it was chosen already, and the NKit box.
+    marker = os.path.join(d, ".droiddeck-setup")
+    if os.path.exists(marker):
+        return
+    if not ini_get(ini, "Core", "GFXBackend"):
+        ini_set(ini, "Core", "GFXBackend", "Vulkan")
+    ini_set(ini, "Interface", "SkipNKitWarning", "True")
+    if ini_get(ini, "Analytics", "PermissionAsked") != "True":
+        ini_set(ini, "Analytics", "Enabled", "False")
+        ini_set(ini, "Analytics", "PermissionAsked", "True")
+    open(marker, "w").close()
+    print("bannerlator-pad-defaults: Dolphin: Vulkan, no NKit warning")
 
 
 # Cemu: an SDLController profile for the GamePad. The uuid is "<index>_<SDL GUID>" and SDL's GUID
