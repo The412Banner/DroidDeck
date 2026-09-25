@@ -24,6 +24,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -120,6 +121,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     // Compose reads these; the activity writes them.
     private var drawerOpen by mutableStateOf(false)
+    private var drawerPage by mutableIntStateOf(0)
+    private var drawerControllerActive by mutableStateOf(false)
     private var backActionsInverted by mutableStateOf(false)
     /** The on-screen PC keyboard (ui/PcKeyboard): real key presses, Esc and F1 included. */
     private var pcKeyboardOpen by mutableStateOf(false)
@@ -234,7 +237,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                         onAndroidKeyboard = { pcKeyboardOpen = false; keyboard?.toggle() },
                         onClose = { pcKeyboardOpen = false },
                     )
-                    SessionDrawer(drawerOpen, DrawerActions(
+                    SessionDrawer(drawerOpen, drawerPage, drawerControllerActive, onPageChange = { drawerPage = it }, a = DrawerActions(
                         steam = SessionState.mode == SessionService.MODE_STEAM,
                         title = if (SessionState.mode == SessionService.MODE_RUN)
                             com.droiddeck.launcher.frontend.Library.nameForProgram(SessionState.program) ?: "Game" else null,
@@ -565,7 +568,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         // Wider than 16:9 is fine - games and the client cope with a phone's 20:9 - so the
         // panel's aspect is kept above that, unless the user pinned 16:9 for a foldable, and the
         // compositor letterboxes onto a squarer panel.
-        // "Exactly this panel" drops that floor, for a 4:3 or 3:2 handheld whose games should
+        // "Match screen" drops that floor, for a 4:3 or 3:2 handheld whose games should
         // fill it.
         val aspect = when (SessionPrefs.shapeMode(this)) {
             SessionPrefs.SHAPE_WIDE -> 16f / 9f
@@ -704,7 +707,19 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE ->
                 return super.dispatchKeyEvent(event)
         }
+        val fromController = event.device != null && PadBridge.isFromController(event.device)
+        if (fromController && event.action == KeyEvent.ACTION_DOWN) {
+            if (drawerOpen && !drawerControllerActive) sessionOverlay.requestFocus()
+            drawerControllerActive = true
+        }
         if (drawerOpen) {
+            if (fromController && (event.keyCode == KeyEvent.KEYCODE_BUTTON_L1 || event.keyCode == KeyEvent.KEYCODE_BUTTON_R1)) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    drawerPage = (drawerPage + if (event.keyCode == KeyEvent.KEYCODE_BUTTON_R1) 1 else 2) % 3
+                    releaseDrawerDirection()
+                }
+                return true
+            }
             val handled = super.dispatchKeyEvent(event)
             if (event.action == KeyEvent.ACTION_DOWN) {
                 Log.i(TAG, "drawer key=${KeyEvent.keyCodeToString(event.keyCode)} handled=$handled viewFocused=${sessionOverlay.hasFocus()}")
@@ -715,7 +730,6 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             }
             return true
         }
-        val fromController = PadBridge.isFromController(event.device)
         val resumeKey = event.keyCode == KeyEvent.KEYCODE_BUTTON_A || event.keyCode == KeyEvent.KEYCODE_BUTTON_START
         val resumeKeyId = event.deviceId to event.keyCode
         if (fromController && resumeKey && (SessionState.suspended || resumeKeyId in resumeKeysDown)) {
@@ -726,14 +740,6 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                 resumeKeysDown.remove(resumeKeyId)
             }
             return true
-        }
-        if (drawerOpen) {
-            if (event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_BUTTON_B) {
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) drawerOpen = false
-                releaseDrawerDirection()
-                return true
-            }
-            return super.dispatchKeyEvent(event)
         }
         if (pcKeyboardOpen && event.device != null && PadBridge.isFromController(event.device)) return super.dispatchKeyEvent(event)
         if (event.keyCode != KeyEvent.KEYCODE_BACK && padBridge?.onKeyEvent(event) == true) return true
@@ -778,6 +784,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         if (drawerOpen && event.device != null && PadBridge.isFromController(event.device)) {
+            if (!drawerControllerActive) sessionOverlay.requestFocus()
+            drawerControllerActive = true
             if (event.actionMasked == MotionEvent.ACTION_MOVE &&
                 event.isFromSource(InputDevice.SOURCE_JOYSTICK)
             ) {
@@ -790,6 +798,13 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         if (padBridge?.onMotionEvent(event) == true) return true
         if (event.isFromSource(android.view.InputDevice.SOURCE_MOUSE) && !drawerOpen && onMouse(event)) return true
         return super.dispatchGenericMotionEvent(event)
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)) {
+            drawerControllerActive = false
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     private fun dispatchDrawerDirection(event: MotionEvent) {

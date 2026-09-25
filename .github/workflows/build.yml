@@ -1,35 +1,13 @@
 name: Build APK
 run-name: ${{ github.event_name == 'pull_request' && format('building pr {0} on {1}', github.event.pull_request.number, github.event.pull_request.head.sha) || format('building {0} on {1}', github.ref_name, github.sha) }}
 
-# One job: the two glibc preload libraries the session needs, then the app around them.
-# Nothing is built on a developer machine - this workflow is the only thing that produces an apk.
-#
-# This repo is private, so every minute here is billed. Three caches carry the cost of a rebuild
-# down to what actually changed:
-#   • Gradle's own (dependencies, wrapper, build cache, configuration cache) via setup-gradle
-#   • the CMake/ninja tree, so a Kotlin-only change does not recompile the compositor
-#   • the two cross-compiled preloads, which also skips installing the cross toolchain
-# A run that changes only Kotlin should not touch the C compiler at all.
-
 on:
   push:
     branches: [ main ]
-    # Documentation changes cannot alter the apk, so they do not buy a build.
     paths-ignore:
       - '**/*.md'
       - 'LICENSE'
       - '.gitignore'
-  # A pull request against main builds by itself: the contributor's branch, as it would be once
-  # merged onto main, comes back as an apk on the run without anyone here pressing a button.
-  # Every push to the pull request rebuilds it and cancels the build it replaces; a draft waits
-  # until it is marked ready.
-  #
-  # pull_request, NOT pull_request_target. The _target form runs a pull request's code with main's
-  # context: its caches are main's caches, so a hostile pull request could leave a poisoned
-  # Gradle/CMake cache that main's next build - which is signed with DroidDeck's key - picks up.
-  # Under pull_request a fork's run has a read-only token, no secrets, and caches of its own that
-  # main never reads. The price: GitHub does not run pull_request while a pull request conflicts
-  # with main, so a conflicting one gets no build (the pull request page still shows the conflict).
   pull_request:
     branches: [ main ]
     types: [ opened, synchronize, reopened, ready_for_review ]
@@ -41,39 +19,27 @@ on:
 
 permissions:
   contents: read
-  # The pull-request report below is one comment on the pull request, kept up to date.
   pull-requests: write
 
-# A newer push makes the running build pointless; stop paying for it.
 concurrency:
   group: build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
-  # Bump to force the preload cache to miss (e.g. after changing a compiler flag below).
   PRELOAD_CACHE_VERSION: v1
 
 jobs:
   build:
+    name: Build APK
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      # A pull request is checked out at its own head with full history, not at GitHub's merge
-      # ref: that ref does not exist while the pull request conflicts with main, and the point of
-      # the next step is to say so and show where.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          # Full history: the merge below needs it (a shallow clone refuses to merge at all).
           fetch-depth: 0
 
-      # The pull request as it would be once merged onto main is what gets built. When it cannot
-      # be merged, the conflicting files and the conflicting hunks go into the run summary and the
-      # pull-request comment, and the job stops here: there is nothing coherent to build.
-      # DroidDeck's signing key lives only in GitHub environment secrets (see sign.yml). A key file
-      # committed by mistake would be in the history for good: stop at the first one. The AOSP
-      # testkey is public and meant to be here.
       - name: No private key in the tree
         run: |
           set -euo pipefail
@@ -103,7 +69,6 @@ jobs:
           fi
           FILES=$(git diff --name-only --diff-filter=U)
           if [ -z "$FILES" ]; then
-            # The merge did not even start (git said why): quote it rather than list nothing.
             {
               echo "### ERROR: Could not merge onto main (\`$BASE\`)"
               echo
@@ -145,8 +110,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Caches ~/.gradle (dependencies, wrapper distribution, build cache, configuration cache)
-      # and prunes what the run did not use, so the entry cannot grow without bound.
       - uses: gradle/actions/setup-gradle@v4
         with:
           cache-cleanup: on-success
@@ -155,7 +118,6 @@ jobs:
         run: |
           NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$ANDROID_NDK_ROOT}}"
           VERSION=$(sed -n 's/^Pkg.Revision *= *//p' "$NDK/source.properties")
-          echo "NDK $VERSION at $NDK"
           echo "NDK_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Set the APK build label
@@ -180,11 +142,6 @@ jobs:
           echo "label=$label" >> "$GITHUB_OUTPUT"
           echo "Build: \`$label\`" >> "$GITHUB_STEP_SUMMARY"
 
-      # ── The session's preloads ───────────────────────────────────────────────────────────
-      # Both are glibc aarch64 libraries that live inside the rootfs, so they are cross-compiled
-      # here rather than by the NDK. They ship in assets (not in the runtime tarball) so a fix in
-      # either reaches an already-installed runtime on the next launch instead of waiting on a
-      # ~790 MB runtime re-host. Their inputs change rarely, so most runs restore them.
       - name: Cache the preloads
         id: preloads
         uses: actions/cache@v4
@@ -202,9 +159,6 @@ jobs:
           sudo apt-get install -y -qq gcc-aarch64-linux-gnu g++-aarch64-linux-gnu >/dev/null
           D=app/src/main/assets/linuxfs
           mkdir -p "$D"
-          # Statically linked C++ runtime: this is preloaded into every Steam process, and Steam
-          # ships its own libstdc++ while rewriting LD_LIBRARY_PATH. Pulling the system one in
-          # ahead of it is a version conflict waiting to happen. Only libc is left as a dependency.
           aarch64-linux-gnu-g++ -shared -fPIC -O2 -Wall -Wno-attributes -Wno-nonnull-compare \
             -pthread -std=c++17 -static-libstdc++ -static-libgcc \
             -o "$D/libfakeinput.so" app/src/main/cpp/fakeinput_steam.cpp -ldl
@@ -212,26 +166,20 @@ jobs:
           aarch64-linux-gnu-gcc -shared -fPIC -O2 -Wall -pthread \
             -o "$D/libblsession.so" tools/linuxfs/preload/*.c -ldl
           aarch64-linux-gnu-strip --strip-unneeded "$D/libblsession.so"
-          # The session's scripts travel the same way, for the same reason.
           for script in tools/linuxfs/overlay/usr/local/bin/bannerlator-*; do
             install -Dm644 "$script" "$D/usr/local/bin/$(basename "$script")"
           done
-          # The SteamOS helpers the client calls in Deck mode, as no-op stubs (see each file).
           for f in tools/linuxfs/overlay/usr/bin/* tools/linuxfs/overlay/usr/bin/steamos-polkit-helpers/*; do
             [ -f "$f" ] && install -Dm644 "$f" "$D/${f#tools/linuxfs/overlay/}"
           done
-          # The patched gamescope, when a build of it has been published (tools/gamescope/release.env
-          # names the release and the archive's sha256); see tools/gamescope/PATCHES.md.
           if [ -f tools/gamescope/release.env ]; then
             . tools/gamescope/release.env
-            # Through the API: the repository is private, so the plain download URL answers 404.
             gh release download "${GAMESCOPE_TAG}" -R "${GITHUB_REPOSITORY}" -p gamescope.tzst -O gamescope.tzst
             echo "${GAMESCOPE_SHA256}  gamescope.tzst" | sha256sum -c -
             tar --use-compress-program=unzstd -xf gamescope.tzst -C "$D"
             test -f "$D/usr/local/bin/gamescope"
             rm gamescope.tzst
           fi
-          # The patched wlroots for the desktop's GPU renderers (tools/wlroots), the same way.
           if [ -f tools/wlroots/release.env ]; then
             . tools/wlroots/release.env
             gh release download "${WLROOTS_TAG}" -R "${GITHUB_REPOSITORY}" -p wlroots.tzst -O wlroots.tzst
@@ -240,9 +188,6 @@ jobs:
             test -f "$D/usr/local/lib/droiddeck-wlroots/libwlroots-0.20.so"
             rm wlroots.tzst
           fi
-          # Valve's aarch64 mangoapp for Deck mode's performance overlay, plus the five libraries the
-          # runtime lacks, pinned by sha256 in tools/mangoapp/packages.txt. Stored under the SONAME
-          # each is loaded by, as real files: assets cannot carry symlinks.
           M="$D/usr/local/lib/mangoapp"
           mkdir -p "$M" mango-pkgs
           grep -v '^#' tools/mangoapp/packages.txt | while read -r sum url; do
@@ -259,7 +204,6 @@ jobs:
           install -Dm644 tools/mangoapp/mangoapp "$D/usr/local/bin/mangoapp"
           rm -rf mango-pkgs
           ls -l "$M"
-          # And the desktop's launcher and labwc defaults, staged over the desktop package's copies.
           install -Dm644 tools/linuxfs/desktop/droiddeck-desktop "$D/usr/local/bin/droiddeck-desktop"
           install -Dm644 tools/linuxfs/desktop/droiddeck-gpu "$D/usr/local/bin/droiddeck-gpu"
           install -Dm644 tools/linuxfs/desktop/droiddeck-desktop-gpu "$D/usr/local/bin/droiddeck-desktop-gpu"
@@ -269,10 +213,6 @@ jobs:
           install -Dm644 tools/linuxfs/desktop/firefox-droiddeck.js "$D/usr/lib/firefox/defaults/pref/droiddeck.js"
           ls -lR "$D"
 
-      # The daemon's AAudio sink (tools/aaudio-sink), compiled here against upstream PulseAudio 13
-      # headers and the app's own libpulse*, then put into the audio bundle the apk carries. The
-      # committed bundle holds every other module and no sink, so a build without this step would
-      # have no audio - the unpack check in PulseAudioComponent would then fail loudly, not quietly.
       - name: Cache PulseAudio 13.0 source
         id: pa-src
         uses: actions/cache@v4
@@ -300,21 +240,32 @@ jobs:
           tar --use-compress-program=unzstd -tf app/src/main/assets/pulseaudio.tzst | grep -c '\.so$'
           rm -rf pa-bundle sink-out
 
-      # Runs whether the preloads were built or restored: readelf reads any ELF whatever the host,
-      # so these assertions cost nothing and need no cross toolchain.
+      - name: Cache proot
+        id: proot
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/src/main/jniLibs/arm64-v8a/libproot.so
+            app/src/main/jniLibs/arm64-v8a/libproot-loader.so
+          key: proot-${{ env.NDK_VERSION }}-${{ hashFiles('tools/proot/**') }}
+      - name: Build proot
+        if: steps.proot.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          export NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$ANDROID_NDK_ROOT}}"
+          tools/proot/build.sh app/src/main/jniLibs/arm64-v8a
+
       - name: Check the preloads
         run: |
           set -euo pipefail
           D=app/src/main/assets/linuxfs
           NEED=$(readelf -d "$D/libfakeinput.so" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p')
-          echo "libfakeinput NEEDED: $NEED"
           for bad in libstdc++.so.6 libgcc_s.so.1; do
             if printf '%s\n' "$NEED" | grep -qx "$bad"; then
               echo "::error::libfakeinput.so links $bad - the C++ runtime must stay static"; exit 1
             fi
           done
           syms() { readelf -Ws "$1" | awk '$4 == "FUNC" && $5 == "GLOBAL" {sub(/@.*/, "", $8); print $8}'; }
-          # The interposers are the whole point: if one is missing the client sees no controller.
           FAKE=$(syms "$D/libfakeinput.so")
           for sym in open openat ioctl read close poll ppoll select stat fstat access scandir; do
             grep -qx "$sym" <<<"$FAKE" || { echo "::error::libfakeinput.so does not export $sym"; exit 1; }
@@ -325,12 +276,7 @@ jobs:
           done
           test -f "$D/usr/local/bin/bannerlator-session"
           test -f "$D/usr/local/bin/bannerlator-proton-extra"
-          echo "preloads check out"
 
-      # ── The native build ─────────────────────────────────────────────────────────────────
-      # The compositor and adrenotools are the slowest part of a build and change least often.
-      # The key pins the C sources and the NDK; the restore-key still hands an older tree to
-      # ninja, which then rebuilds only the files that differ.
       - name: Cache the CMake build tree
         uses: actions/cache@v4
         with:
@@ -341,9 +287,6 @@ jobs:
           restore-keys: |
             cxx-${{ env.NDK_VERSION }}-
 
-      # Release, not debug: AGP quietly drops v1 (JAR) signing from a debug build once minSdk is
-      # 24 or higher, and the apk has to carry all three schemes. Nothing is minified either way.
-      # The whole log is kept so a failed build's errors can be quoted back on a pull request.
       - name: Build
         id: build
         env:
@@ -352,18 +295,6 @@ jobs:
           set -o pipefail
           ./gradlew assembleRelease --console=plain -PndkVersion="$NDK_VERSION" 2>&1 | tee /tmp/build.log
 
-      - name: Describe the apk
-        run: |
-          set -euo pipefail
-          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
-          echo "apk: $APK"
-          ls -l "$APK"
-          sha256sum "$APK"
-          unzip -l "$APK" | grep -E 'lib/arm64-v8a|assets/linuxfs' | awk 'NR <= 30'  # awk reads to the end: head would break the pipe under pipefail
-
-      # Every NEEDED of every library we ship must resolve inside the apk or on the device. The
-      # first build shipped libwayland-server.so without libffi.so, and the app died on
-      # System.loadLibrary the moment a session started - a check this step would have caught.
       - name: Check the native dependency closure
         run: |
           set -euo pipefail
@@ -371,8 +302,6 @@ jobs:
           WORK=$(mktemp -d)
           unzip -q "$APK" 'lib/arm64-v8a/*' -d "$WORK"
           cd "$WORK/lib/arm64-v8a"
-          # Provided by the platform, so never packaged. libstdc++.so is Android's minimal system
-          # C++ runtime; the Termux PTY JNI library has this in its NEEDED list.
           SYSTEM="libc.so libm.so libdl.so liblog.so libandroid.so libz.so libvulkan.so libstdc++.so
                   libGLESv2.so libEGL.so libnativewindow.so libjnigraphics.so libaaudio.so
                   libOpenSLES.so libmediandk.so libcamera2ndk.so libsync.so libneuralnetworks.so"
@@ -380,19 +309,13 @@ jobs:
           for so in *.so; do
             for need in $(readelf -d "$so" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p'); do
               [ -f "$need" ] && continue
-              # $SYSTEM spans lines; unquoted echo folds its newlines to spaces, or the last
-              # name on each line could never match (libaaudio.so did not, for the relay helper).
               case " $(echo $SYSTEM) " in *" $need "*) continue ;; esac
               echo "::error::$so needs $need, which is neither in the apk nor a platform library"
               fail=1
             done
           done
-          [ "$fail" = 0 ] && echo "every NEEDED resolves"
           exit $fail
 
-      # AGP signs with v2+v3 and drops v1 whenever minSdk is 24 or higher, and setting
-      # enableV1Signing in the DSL does not move it. Re-signing here with apksigner is the one way
-      # to be sure of what the apk carries: zipalign first, then all three schemes explicitly.
       - name: Sign with the testkey (v1 + v2 + v3)
         run: |
           set -euo pipefail
@@ -406,18 +329,12 @@ jobs:
             --out "$APK" "$APK.aligned"
           rm -f "$APK.aligned" "$APK.idsig"
 
-      # The apk must stay installable over the last one, and on every Android version: that means
-      # one stable key and all three signature schemes. Cheap to assert, easy to lose silently.
       - name: Check the signature
         run: |
           set -euo pipefail
           APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-          # --min-sdk-version 21: apksigner only verifies the schemes an apk's own minSdk requires,
-          # so at minSdk 26 it reports v1 as false whether or not the JAR signature is there.
-          # Asking it to verify from 21 makes it actually look.
           "$APKSIGNER" verify --min-sdk-version 21 --verbose --print-certs "$APK" | tee /tmp/sig.txt
-          # And the files themselves, which is what an old installer reads.
           unzip -l "$APK" | grep -qE 'META-INF/.*\.(SF|RSA|DSA)$' \
             || { echo "::error::apk carries no JAR signature files"; exit 1; }
           for scheme in "v1 scheme (JAR signing): true" "v2 scheme (APK Signature Scheme v2): true" \
@@ -427,10 +344,6 @@ jobs:
           grep -qi "CN=Android, OU=Android, O=Android" /tmp/sig.txt \
             || { echo "::error::apk is not signed with the AOSP testkey"; exit 1; }
 
-      # ── The pull-request report ──────────────────────────────────────────────────────────
-      # One comment per pull request, rewritten on every push: whether it merges, and when the
-      # build failed, the compiler's own errors with paths made short. Fork pull requests carry a
-      # read-only token and cannot comment; the same text is in the run summary either way.
       - name: Report on the pull request
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
@@ -452,7 +365,7 @@ jobs:
               success)
                 echo "###  Build passed"
                 echo
-                echo "The apk is the \`droiddeck-apk\` artifact on [this run]($RUN_URL) A pull request's build is signed only with the public test key: it installs on a phone without an official DroidDeck. To install it over one, sign it with DroidDeck's key or ask for a test build of the branch."
+                echo "The \`droiddeck-apk\` artifact is [on this run]($RUN_URL), signed with the public test key. After approval, a maintainer can run **PR Release Publish** from \`main\` to create an APK that installs over the release."
                 ;;
               failure)
                 echo "### ERROR: Build failed"
@@ -479,7 +392,6 @@ jobs:
                 ;;
             esac
             echo
-            echo "_Updated on every push to this pull request._"
           } > /tmp/pr-report.md
           cat /tmp/pr-report.md >> "$GITHUB_STEP_SUMMARY"
           ID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate --jq ".[] | select(.body | startswith(\"$MARK\")) | .id" | head -1 || true)
@@ -495,23 +407,16 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
-          # An apk is a zip already; compressing it again buys nothing and costs seconds.
           compression-level: 0
 
-  # The apk signed with DroidDeck's own key (tools/release), so a test build installs over a release
-  # and keeps its data. Main's builds sign straight away (signing-main); any other branch's wait for
-  # the owner's approval (signing-branch). A pull request's never: its code is not ours to sign, and
-  # the job that would hold the key never runs for it. The testkey apk above is unaffected.
   sign:
     needs: build
-    if: github.event_name != 'pull_request'
-    # What sign.yml asks for; a called workflow never gets more than its caller gives it.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/sign.yml
     with:
-      environment: ${{ github.ref == 'refs/heads/main' && 'signing-main' || 'signing-branch' }}
+      environment: signing-main
       variants: '["standard"]'
-    # The key is an environment secret; a called workflow sees secrets only when they are passed on.
     secrets: inherit

@@ -98,7 +98,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -144,10 +143,6 @@ import java.util.Locale
 enum class ConflictChoice { OVERWRITE, MERGE, KEEP_BOTH, SKIP }
 
 /**
- * Ordering for the file list. Folders always lead regardless of direction - a descending sort that
- * buries every folder under the files is never what someone means by "Z to A".
- */
-/**
  * Shortens a path from the LEFT, keeping whole segments.
  *
  * Compose's TextOverflow can only ellipsise the tail, which for a path throws away the part that
@@ -164,6 +159,7 @@ private fun elidePathStart(path: String, max: Int): String {
     return if (out.isEmpty()) "…" + path.takeLast(max - 1) else "…$out"
 }
 
+/** Folder-first ordering stays fixed across both sort directions. */
 private fun comparatorFor(sortBy: String, desc: Boolean): Comparator<File> {
     val inner: Comparator<File> = when (sortBy) {
         "date" -> compareBy { it.lastModified() }
@@ -176,16 +172,8 @@ private fun comparatorFor(sortBy: String, desc: Boolean): Comparator<File> {
     return compareBy<File> { if (it.isDirectory) 0 else 1 }.then(directed)
 }
 
-private val FileTypeIcon: Map<String, ImageVector> = mapOf(
-    "folder" to Icons.Filled.Folder,
-)
-
 // Image extensions that get a real thumbnail (via Coil) instead of the generic file icon.
 private val IMAGE_THUMB_EXTS = setOf("jpg", "jpeg", "png", "webp", "bmp", "gif")
-
-// Color-only sweep: the former card-fill / card-stroke / divider / icon-blue / icon-white
-// constants were rerouted onto MaterialTheme.colorScheme tokens (surface / outline / primary /
-// onSurface) at their use sites so a theme preset/accent recolors them.
 
 // True when [child] is [ancestor] itself or lives anywhere inside it.
 private fun isWithin(child: File, ancestor: File): Boolean {
@@ -937,8 +925,7 @@ fun FileManagerScreen(
             }
 
             if (!showFavorites) {
-                // New Folder moved off a bottom bar into the toolbar (next to the grid/list toggle),
-                // as a compact outlined button, so the file list reclaims that bottom strip.
+                // Keep New Folder in the toolbar so the file list uses the full height.
                 if (!pickMode) {
                     OutlinedButton(
                         onClick = { showNewFolderDialog = true },
@@ -1425,7 +1412,6 @@ fun FileManagerScreen(
         }
             } // end content Box (beside the rail)
         } // end rail + content Row
-        // (New Folder moved into the top toolbar; the bottom bar was removed to reclaim its strip.)
     }
 }
 
@@ -1447,7 +1433,6 @@ private fun FileContextMenuItems(
     onDismissMenu: () -> Unit,
 ) {
     val isDir = file.isDirectory
-    // Enter multi-select on this item (replaces the old long-press-only entry point).
     DropdownMenuItem(
         text = { Text("Select") },
         leadingIcon = { Icon(Icons.Filled.Checklist, null, tint = MaterialTheme.colorScheme.primary) },

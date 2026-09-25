@@ -58,30 +58,22 @@ public final class LinuxRuntime {
     /** Where the runtime carries the host-side proot; see tools/linuxfs/prebuilt/proot/README.md. */
     private static final String HOST_DIR = "opt/android-host";
 
-    /**
-     * proot, preferred from the installed runtime and falling back to the copy in the apk.
-     *
-     * <p>It is an Android binary rather than part of the rootfs - it is what creates the rootfs -
-     * but it travels in the runtime tarball so that reinstalling the app cannot replace the one
-     * binary everything else depends on, and so a device with no working packaged proot can still
-     * run the runtime.
-     */
     public static File prootBinary(Context context) {
-        File shipped = new File(rootDir(context), HOST_DIR + "/proot");
-        if (shipped.isFile()) return shipped;
-        return new File(context.getApplicationInfo().nativeLibraryDir, "libproot.so");
+        File packaged = new File(context.getApplicationInfo().nativeLibraryDir, "libproot.so");
+        if (packaged.isFile()) return packaged;
+        return new File(rootDir(context), HOST_DIR + "/proot");
     }
 
     public static File prootLoader(Context context) {
-        File shipped = new File(rootDir(context), HOST_DIR + "/loader");
-        if (shipped.isFile()) return shipped;
-        return new File(context.getApplicationInfo().nativeLibraryDir, "libproot-loader.so");
+        File packaged = new File(context.getApplicationInfo().nativeLibraryDir, "libproot-loader.so");
+        if (packaged.isFile()) return packaged;
+        return new File(rootDir(context), HOST_DIR + "/loader");
     }
 
     /** proot links against libtalloc, which sits beside it; empty when the apk copy is in use. */
     public static String prootLibraryPath(Context context) {
         File dir = new File(rootDir(context), HOST_DIR);
-        return new File(dir, "proot").isFile() ? dir.getPath() : "";
+        return dir.equals(prootBinary(context).getParentFile()) ? dir.getPath() : "";
     }
 
     /** The rootfs is present with gamescope and the session script the launcher hands control to. */

@@ -135,6 +135,7 @@ fi
 export NDK="${sdk_dir}/ndk/${ndk_version}"
 sink_output="${staging_dir}/sink-out"
 "${repo_root}/tools/aaudio-sink/build.sh" "${pa_source}" "${sink_output}"
+"${repo_root}/tools/proot/build.sh" "${repo_root}/app/src/main/jniLibs/arm64-v8a"
 
 cp -p "${bundle_asset}" "${bundle_backup}"
 bundle_dir="${staging_dir}/pulseaudio-bundle"

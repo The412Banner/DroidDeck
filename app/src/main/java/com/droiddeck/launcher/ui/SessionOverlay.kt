@@ -7,11 +7,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,19 +23,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
@@ -56,7 +56,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.border
 import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -75,15 +74,40 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import com.droiddeck.launcher.core.FexPreset
 import com.droiddeck.launcher.gpu.FrameGen
 import com.droiddeck.launcher.session.SessionPrefs
 import com.droiddeck.launcher.input.SecondScreenDisplay
 import com.droiddeck.launcher.input.SecondScreenMode
 import kotlinx.coroutines.flow.collect
+
+private val drawerPageTitles = listOf("Now", "Controls", "Session")
+private val drawerPageEntries = listOf("hud", "touch", "shape")
+
+private class DrawerFocus {
+    private val requesters = HashMap<String, FocusRequester>()
+    private val last = arrayOfNulls<String>(3)
+    var focused by mutableStateOf<String?>(null)
+        private set
+
+    private fun requester(key: String) = requesters.getOrPut(key) { FocusRequester() }
+
+    fun track(page: Int, key: String): Modifier = Modifier.focusRequester(requester(key)).onFocusChanged {
+        if (it.isFocused) {
+            last[page] = key
+            focused = key
+        } else if (focused == key) focused = null
+    }
+
+    fun target(page: Int) = last[page] ?: drawerPageEntries[page]
+    fun request(key: String) = runCatching { requester(key).requestFocus() }
+    fun forget(page: Int) { last[page] = null }
+}
 
 @Composable
 fun HudText(text: String) {
@@ -204,32 +228,41 @@ class DrawerActions(
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun SessionDrawer(open: Boolean, a: DrawerActions) {
+fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageChange: (Int) -> Unit, a: DrawerActions) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     val host = rememberMenuHost()
     var androidAppsExpanded by rememberSaveable { mutableStateOf(false) }
     var appToChooseDisplay by remember { mutableStateOf<HomeApp.LaunchableApp?>(null) }
+    var confirmStop by remember { mutableStateOf(false) }
+    val pageScroll = remember { List(3) { ScrollState(0) } }
     val veil by animateFloatAsState(if (open) 1f else 0f, Motion.tw(260), label = "veil")
-    // A controller starts on the drawer's first control, highlighted, as on the app's main screen:
-    // the STEAM button, or in a desktop session the first setting.
-    val firstFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-    var firstControlFocused by remember { mutableStateOf(false) }
+    val focus = remember { DrawerFocus() }
     val inputModeManager = LocalInputModeManager.current
-    val steamButtons = a.onSteamMenu != null && a.onQam != null
+    val focusManager = LocalFocusManager.current
     BackHandler(enabled = open) {
         if (host.open != null) host.open = null else a.onClose()
     }
-    LaunchedEffect(open) {
-        if (open) {
+    BackHandler(enabled = open && confirmStop) { confirmStop = false }
+    LaunchedEffect(page) { host.open = null; appToChooseDisplay = null }
+    LaunchedEffect(open, controllerActive) {
+        if (open && !controllerActive) focusManager.clearFocus(force = true)
+    }
+    LaunchedEffect(open, page, controllerActive, host.open, appToChooseDisplay, confirmStop) {
+        if (!open) {
+            host.open = null
+            confirmStop = false
+        } else if (controllerActive) {
             inputModeManager.requestInputMode(InputMode.Keyboard)
-            var attempts = 0
-            while (attempts < 24 && !firstControlFocused) {
-                firstFocus.requestFocus()
+            if (host.open != null || appToChooseDisplay != null || confirmStop) return@LaunchedEffect
+            val target = focus.target(page)
+            repeat(24) {
                 androidx.compose.runtime.withFrameNanos { }
-                attempts++
+                focus.request(target)
+                if (focus.focused == target) return@LaunchedEffect
             }
-            if (!firstControlFocused) android.util.Log.w("SessionDrawer", "first controller focus request did not focus a control")
+            focus.forget(page)
+            focus.request(drawerPageEntries[page])
         }
     }
     if (open || veil > 0.01f) Box(
@@ -252,13 +285,14 @@ fun SessionDrawer(open: Boolean, a: DrawerActions) {
                     .controllerBack {
                         if (host.open != null) host.open = null else a.onClose()
                     }
-                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 14.dp, vertical = 16.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 6.dp)) {
                     Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Brush.linearGradient(listOf(colors.primary, pal.primary2))))
                     Spacer(Modifier.width(10.dp))
-                    Text(a.title ?: if (a.steam) "Steam" else "Desktop", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = colors.onBackground)
+                    Text(a.title ?: if (a.steam) "Steam" else "Desktop", fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                        color = colors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    StopSessionButton(modifier = focus.track(page, "stop")) { host.open = null; confirmStop = true }
                 }
                 if (a.onSteamMenu != null && a.onQam != null) {
                     val qamInteraction = remember { MutableInteractionSource() }
@@ -282,11 +316,7 @@ fun SessionDrawer(open: Boolean, a: DrawerActions) {
                         OutlinedButton(
                             onClick = { host.open = null; a.onSteamMenu.invoke() },
                             interactionSource = steamSrc,
-                            modifier = Modifier.weight(1f).height(48.dp).focusRequester(firstFocus)
-                                .onFocusChanged {
-                                    firstControlFocused = it.isFocused
-                                    android.util.Log.i("SessionDrawer", "first control focused=${it.isFocused}")
-                                }.controllerConfirm {
+                            modifier = Modifier.weight(1f).height(48.dp).then(focus.track(page, "steam")).controllerConfirm {
                                 host.open = null
                                 a.onSteamMenu.invoke()
                             },
@@ -303,7 +333,8 @@ fun SessionDrawer(open: Boolean, a: DrawerActions) {
                                 qamStartedOnPress = false
                             },
                             interactionSource = qamInteraction,
-                            modifier = Modifier.weight(1f).height(48.dp).semantics { contentDescription = "Open Quick Access Menu" }.controllerConfirm {
+                            modifier = Modifier.weight(1f).height(48.dp).then(focus.track(page, "qam"))
+                                .semantics { contentDescription = "Open Quick Access Menu" }.controllerConfirm {
                                 host.open = null
                                 a.onQam.invoke()
                             },
@@ -311,132 +342,154 @@ fun SessionDrawer(open: Boolean, a: DrawerActions) {
                             border = BorderStroke(if (qamHot) 2.dp else 1.dp, if (qamHot) pal.signal else colors.outline),
                             colors = ButtonDefaults.outlinedButtonColors(containerColor = if (qamHot) pal.signal.copy(alpha = 0.16f) else Color.Transparent),
                         ) {
-                            Text("…", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                            Text("QAM", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
                         }
                     }
                 }
 
-                if (a.isHomeApp) SettingsGroup("Android apps") {
-                    ActionRow("Launch an app", null, if (androidAppsExpanded) "Hide" else "Show") {
-                        androidAppsExpanded = !androidAppsExpanded
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                ) {
+                    DrawerOutlineButton("LB  ‹", modifier = Modifier.height(48.dp).then(focus.track(page, "prev"))) {
+                        host.open = null; onPageChange((page + 2) % 3)
                     }
-                    if (androidAppsExpanded) {
-                        if (a.androidApps.isEmpty()) {
-                            Text("No launchable apps found", fontSize = 12.sp, color = colors.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
-                        } else {
-                            for (app in a.androidApps) {
-                                MenuItem(
-                                    app.label,
-                                    checked = false,
-                                    leading = {
-                                        app.icon?.let { icon ->
-                                            Image(
-                                                bitmap = icon.asImageBitmap(),
-                                                contentDescription = null,
-                                                modifier = Modifier.size(26.dp).clip(RoundedCornerShape(6.dp)),
-                                            )
-                                        }
-                                    },
-                                ) {
-                                    host.open = null
-                                    if (a.secondScreenDisplays.isEmpty()) a.onLaunchAndroidApp(app, null)
-                                    else appToChooseDisplay = app
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        drawerPageTitles.forEachIndexed { index, title ->
+                            val dotSource = remember { MutableInteractionSource() }
+                            val dotFocused = dotSource.collectIsFocusedAsState().value
+                            val select = { host.open = null; onPageChange(index) }
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.size(38.dp)
+                                    .semantics { contentDescription = "$title page" }
+                                    .hoverable(dotSource)
+                                    .clickable(interactionSource = dotSource, indication = LocalIndication.current, onClick = select)
+                                    .controllerConfirm(onClick = select),
+                            ) {
+                                Box(
+                                    Modifier.size(if (index == page) 16.dp else 10.dp)
+                                        .clip(CircleShape)
+                                        .background(if (index == page) pal.signal else colors.onSurfaceVariant)
+                                        .border(if (dotFocused) 2.dp else 0.dp, colors.onBackground, CircleShape),
+                                )
+                            }
+                        }
+                    }
+                    DrawerOutlineButton("›  RB", modifier = Modifier.height(48.dp).then(focus.track(page, "next"))) {
+                        host.open = null; onPageChange((page + 1) % 3)
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(pageScroll[page]),
+                ) {
+                    when (page) {
+                        0 -> SettingsGroup("Now") {
+                            ToggleRow(host, "hud", "Performance HUD", null, a.hudOn,
+                                chipModifier = focus.track(page, "hud"), onChange = a.onHud)
+                            if (a.fillScreen != null) ToggleRow(
+                                host, "fill", "Stretch games to fill", null, a.fillScreen,
+                                chipModifier = focus.track(page, "fill"), onChange = a.onFillScreen,
+                            )
+                            val fgOpen = host.open == "fg"
+                            val fgLabel = when (a.frameGenEngine) {
+                                FrameGen.ENGINE_WINFG -> "Win-FG ${a.frameGenMultiplier}×"
+                                FrameGen.ENGINE_LSFG -> "LSFG ${a.frameGenMultiplier}×"
+                                else -> "Off"
+                            }
+                            SettingsRow("Frame generation", null, highlighted = fgOpen) {
+                                Box {
+                                    ValueChip(fgLabel, fgOpen, modifier = focus.track(page, "fg")) { host.open = if (fgOpen) null else "fg" }
+                                    AnchoredMenu(fgOpen, onDismiss = { if (host.open == "fg") host.open = null }, title = "Frame generation") { firstItemFocus ->
+                                        val need = if (a.lsfgReady) null else "Requires Lossless Scaling"
+                                        MenuItem("Off", checked = a.frameGenEngine == FrameGen.ENGINE_OFF, focusRequester = firstItemFocus) { a.onFrameGenPick(FrameGen.ENGINE_OFF, 2); host.open = null }
+                                        for (m in 2..4) MenuItem("Win-FG ${m}×", checked = a.frameGenEngine == FrameGen.ENGINE_WINFG && a.frameGenMultiplier == m) { a.onFrameGenPick(FrameGen.ENGINE_WINFG, m); host.open = null }
+                                        for (m in 2..4) MenuItem("LSFG ${m}×", checked = a.frameGenEngine == FrameGen.ENGINE_LSFG && a.frameGenMultiplier == m, enabled = a.lsfgReady, detail = need) { a.onFrameGenPick(FrameGen.ENGINE_LSFG, m); host.open = null }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
-
-                SettingsGroup("Now") {
-                    ToggleRow(
-                        host, "hud", "Performance HUD", null, a.hudOn,
-                        chipModifier = if (steamButtons) Modifier else Modifier.focusRequester(firstFocus)
-                            .onFocusChanged { firstControlFocused = it.isFocused }, onChange = a.onHud,
-                    )
-                    if (a.fillScreen != null) ToggleRow(
-                        host, "fill", "Stretch games to fill the screen",
-                        "Off for a game that shows up small in a corner (Quake 3).", a.fillScreen, onChange = a.onFillScreen,
-                    )
-                    val fgOpen = host.open == "fg"
-                    val fgLabel = when (a.frameGenEngine) {
-                        FrameGen.ENGINE_WINFG -> "Win-FG ${a.frameGenMultiplier}×"
-                        FrameGen.ENGINE_LSFG -> "LSFG ${a.frameGenMultiplier}×"
-                        else -> "Off"
-                    }
-                    SettingsRow("Frame generation", null, highlighted = fgOpen) {
-                        Box {
-                            ValueChip(fgLabel, fgOpen) { host.open = if (fgOpen) null else "fg" }
-                            AnchoredMenu(fgOpen, onDismiss = { if (host.open == "fg") host.open = null }, title = "Frame generation") { firstItemFocus ->
-                                val need = if (a.lsfgReady) null else "install Lossless Scaling in Steam"
-                                MenuItem("Off", checked = a.frameGenEngine == FrameGen.ENGINE_OFF, focusRequester = firstItemFocus) { a.onFrameGenPick(FrameGen.ENGINE_OFF, 2); host.open = null }
-                                for (m in 2..4) MenuItem("Win-FG ${m}×", checked = a.frameGenEngine == FrameGen.ENGINE_WINFG && a.frameGenMultiplier == m) { a.onFrameGenPick(FrameGen.ENGINE_WINFG, m); host.open = null }
-                                for (m in 2..4) MenuItem("LSFG ${m}×", checked = a.frameGenEngine == FrameGen.ENGINE_LSFG && a.frameGenMultiplier == m, enabled = a.lsfgReady, detail = need) { a.onFrameGenPick(FrameGen.ENGINE_LSFG, m); host.open = null }
+                        1 -> {
+                            SettingsGroup("Controls") {
+                                ChoiceRow(host, "touch", "Touch", null,
+                                    listOf(SessionPrefs.TOUCH_AUTO to "Auto (${a.touchAuto})", SessionPrefs.TOUCH_PAD to "Touchpad", SessionPrefs.TOUCH_DIRECT to "Direct"),
+                                    a.touchMode, chipModifier = focus.track(page, "touch"), onPick = a.onTouch)
+                                ChoiceRow(host, "osc", "On-screen controls", null,
+                                    if (a.steam) listOf(SessionPrefs.OSC_AUTO to "Auto", SessionPrefs.OSC_ALWAYS to "Always", SessionPrefs.OSC_STEAM_QAM to "Steam + QAM", SessionPrefs.OSC_NEVER to "Never")
+                                    else listOf(SessionPrefs.OSC_AUTO to "Auto", SessionPrefs.OSC_ALWAYS to "Always", SessionPrefs.OSC_NEVER to "Never"),
+                                    a.oscMode, chipModifier = focus.track(page, "osc"), onPick = a.onOsc)
+                                if (a.steam) ChoiceRow(host, "back-actions", "Back", null,
+                                    listOf(false to SessionPrefs.BACK_MENU_THEN_QAM, true to SessionPrefs.BACK_QAM_THEN_MENU),
+                                    a.backActionsInverted, chipModifier = focus.track(page, "back-actions"), onPick = a.onBackActionsInverted)
+                            }
+                            SettingsGroup("Keyboard") {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                                    DrawerOutlineButton("Hardware", modifier = Modifier.weight(1f).height(42.dp).then(focus.track(page, "hardware"))) {
+                                        host.open = null; a.onHardwareKeyboard()
+                                    }
+                                    DrawerOutlineButton("Android", modifier = Modifier.weight(1f).height(42.dp).then(focus.track(page, "android"))) {
+                                        host.open = null; a.onKeyboard()
+                                    }
+                                }
+                            }
+                            if (a.steam && a.secondScreenDisplays.isNotEmpty()) SettingsGroup("Second screen") {
+                                ChoiceRow(host, "second-screen-mode", "Controls", null,
+                                    listOf(SecondScreenMode.NONE, SecondScreenMode.KEYBOARD_TRACKPAD, SecondScreenMode.TERMINAL).map { it to it.label },
+                                    a.secondScreenMode, chipModifier = focus.track(page, "second-screen-mode"), onPick = a.onSecondScreenMode)
+                                if (a.secondScreenDisplays.size > 1) ChoiceRow(host, "second-screen-display", "Display", null,
+                                    a.secondScreenDisplays.map { it.id to it.label }, a.selectedSecondScreenDisplay,
+                                    chipModifier = focus.track(page, "second-screen-display"), onPick = a.onSecondScreenDisplay)
+                            }
+                        }
+                        else -> {
+                            if (a.isHomeApp) SettingsGroup("Android apps") {
+                                SettingsRow("Launch an app", null) {
+                                    DrawerOutlineButton(if (androidAppsExpanded) "Hide" else "Show", modifier = focus.track(page, "apps")) {
+                                        androidAppsExpanded = !androidAppsExpanded
+                                    }
+                                }
+                                if (androidAppsExpanded) {
+                                    if (a.androidApps.isEmpty()) {
+                                        Text("No launchable apps", fontSize = 12.sp, color = colors.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+                                    } else for (app in a.androidApps) {
+                                        MenuItem(
+                                            app.label, checked = false,
+                                            modifier = focus.track(page, "app:${app.packageName}/${app.className}"),
+                                            leading = {
+                                                app.icon?.let { icon ->
+                                                    Image(bitmap = icon.asImageBitmap(), contentDescription = null,
+                                                        modifier = Modifier.size(26.dp).clip(RoundedCornerShape(6.dp)))
+                                                }
+                                            },
+                                        ) {
+                                            host.open = null
+                                            if (a.secondScreenDisplays.isEmpty()) a.onLaunchAndroidApp(app, null)
+                                            else appToChooseDisplay = app
+                                        }
+                                    }
+                                }
+                            }
+                            SettingsGroup("Next session") {
+                                ChoiceRow(host, "shape", "Screen ratio", null,
+                                    SessionPrefs.shapeChoices, a.shapeMode,
+                                    chipModifier = focus.track(page, "shape"), onPick = a.onShape)
+                                if (a.steam) ChoiceRow(host, "fex", "FEX preset", null,
+                                    FexPreset.all.map { it.id to it.label }, a.fexPreset,
+                                    chipModifier = focus.track(page, "fex"), onPick = a.onFexPreset)
+                            }
+                            Spacer(Modifier.height(18.dp))
+                            if (!a.isHomeApp) DrawerOutlineButton("Background", modifier = focus.track(page, "background")) {
+                                host.open = null; a.onBackground()
                             }
                         }
                     }
-                    ChoiceRow(
-                        host, "touch", "Touch", null,
-                        listOf(SessionPrefs.TOUCH_AUTO to "Auto (${a.touchAuto})", SessionPrefs.TOUCH_PAD to "Touchpad", SessionPrefs.TOUCH_DIRECT to "Direct"), a.touchMode,
-                        onPick = a.onTouch,
-                    )
-                    ChoiceRow(
-                        host, "osc", "On-screen controls", null,
-                        if (a.steam) listOf(SessionPrefs.OSC_AUTO to "Auto", SessionPrefs.OSC_ALWAYS to "Always", SessionPrefs.OSC_STEAM_QAM to "Steam + QAM", SessionPrefs.OSC_NEVER to "Never")
-                        else listOf(SessionPrefs.OSC_AUTO to "Auto", SessionPrefs.OSC_ALWAYS to "Always", SessionPrefs.OSC_NEVER to "Never"),
-                        a.oscMode,
-                        onPick = a.onOsc,
-                    )
-                    if (a.steam) ChoiceRow(
-                        host, "back-actions", "Back", SessionPrefs.backActionsOrder(a.backActionsInverted),
-                        listOf(
-                            false to SessionPrefs.BACK_MENU_THEN_QAM,
-                            true to SessionPrefs.BACK_QAM_THEN_MENU,
-                        ), a.backActionsInverted, onPick = a.onBackActionsInverted,
-                    )
-                    SettingsRow("Keyboard", null) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            SecondaryButton("Hardware") { host.open = null; a.onHardwareKeyboard() }
-                            Spacer(Modifier.width(8.dp))
-                            SecondaryButton("Android") { host.open = null; a.onKeyboard() }
-                        }
-                    }
                 }
-
-                if (a.steam && a.secondScreenDisplays.isNotEmpty()) SettingsGroup("Second screen") {
-                    ChoiceRow(
-                        host, "second-screen-mode", "Controls", null,
-                        listOf(SecondScreenMode.NONE, SecondScreenMode.KEYBOARD_TRACKPAD, SecondScreenMode.TERMINAL)
-                            .map { it to it.label }, a.secondScreenMode,
-                        onPick = a.onSecondScreenMode,
-                    )
-                    if (a.secondScreenDisplays.size > 1) ChoiceRow(
-                        host, "second-screen-display", "Display", null,
-                        a.secondScreenDisplays.map { it.id to it.label }, a.selectedSecondScreenDisplay,
-                        onPick = a.onSecondScreenDisplay,
-                    )
-                }
-
-                SettingsGroup("Next session") {
-                    ChoiceRow(
-                        host, "shape", "Display shape", null,
-                        SessionPrefs.shapeChoices, a.shapeMode, onPick = a.onShape,
-                    )
-                    if (a.steam) ChoiceRow(
-                        host, "fex", "FEX preset", null,
-                        FexPreset.all.map { it.id to it.label }, a.fexPreset, note = FexPreset.byId(a.fexPreset).detail, onPick = a.onFexPreset,
-                    )
-                }
-
-                Spacer(Modifier.height(18.dp))
-                Row(
-                    horizontalArrangement = if (a.isHomeApp) Arrangement.End else Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (!a.isHomeApp) SecondaryButton("Send to background") { host.open = null; a.onBackground() }
-                    DangerButton("Stop session") { host.open = null; a.onStop() }
-                }
-                Spacer(Modifier.height(12.dp))
             }
         }
     }
@@ -458,18 +511,63 @@ fun SessionDrawer(open: Boolean, a: DrawerActions) {
             onDismiss = { appToChooseDisplay = null },
         )
     }
+    if (confirmStop) {
+        val cancelFocus = remember { FocusRequester() }
+        val cancel = { confirmStop = false }
+        val stop = { confirmStop = false; a.onStop() }
+        LaunchedEffect(controllerActive) {
+            if (controllerActive) {
+                androidx.compose.runtime.withFrameNanos { }
+                runCatching { cancelFocus.requestFocus() }
+            }
+        }
+        AlertDialog(
+            onDismissRequest = cancel,
+            modifier = Modifier.controllerBack(onBack = cancel),
+            title = { Text("Stop session?") },
+            confirmButton = {
+                TextButton(
+                    onClick = stop,
+                    modifier = Modifier.controllerConfirm(onClick = stop),
+                    colors = ButtonDefaults.textButtonColors(contentColor = colors.error),
+                ) { Text("Stop") }
+            },
+            dismissButton = {
+                TextButton(onClick = cancel, modifier = Modifier.focusRequester(cancelFocus)
+                    .controllerConfirm(onClick = cancel)) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 @Composable
-private fun DangerButton(text: String, onClick: () -> Unit) {
+private fun DrawerOutlineButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val source = remember { MutableInteractionSource() }
+    val hot = source.collectIsFocusedAsState().value || source.collectIsHoveredAsState().value
+    OutlinedButton(
+        onClick = onClick,
+        interactionSource = source,
+        modifier = modifier.controllerConfirm(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp),
+        border = BorderStroke(if (hot) 2.dp else 1.dp, if (hot) pal.signal else colors.outline),
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = if (hot) pal.signal.copy(alpha = 0.16f) else Color.Transparent),
+    ) { Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
+}
+
+@Composable
+private fun StopSessionButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val src = remember { MutableInteractionSource() }
     val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
     val fill by animateColorAsState(if (hot) colors.error.copy(alpha = 0.18f) else Color.Transparent, Motion.tw(220), label = "dangerFill")
     Box(
-        modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(fill).border(1.dp, colors.error.copy(alpha = if (hot) 0.9f else 0.5f), RoundedCornerShape(12.dp))
+        contentAlignment = Alignment.Center,
+        modifier = modifier.size(42.dp).semantics { contentDescription = "Stop session" }
+            .clip(RoundedCornerShape(12.dp)).background(fill).border(1.dp, colors.error.copy(alpha = if (hot) 0.9f else 0.5f), RoundedCornerShape(12.dp))
             .hoverable(src).clickable(interactionSource = src, indication = LocalIndication.current, onClick = onClick)
-            .controllerConfirm(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-    ) { Text(text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, color = colors.error, maxLines = 1) }
+            .controllerConfirm(onClick = onClick),
+    ) { Text("×", fontSize = 25.sp, fontWeight = FontWeight.Medium, color = colors.error) }
 }

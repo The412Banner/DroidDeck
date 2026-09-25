@@ -1,19 +1,8 @@
 #!/usr/bin/env bash
-# make-release-key.sh - run ONCE, by the owner. Makes DroidDeck's signing key and gives it to GitHub.
-#
-#   - The key is made on this device, in ~/droiddeck-release-key (outside the repo), with a long
-#     random password written beside it. Nothing secret is printed.
-#   - The key and password go to GitHub as secrets of the three signing environments
-#     (signing-main, signing-branch, release). GitHub never shows a secret again.
-#   - The key's certificate digest - public, not a secret - goes to keystore/release-signer.sha256,
-#     which CI checks every signed apk against. That file is the only thing to commit.
-#
-# BACK UP ~/droiddeck-release-key (both files) somewhere safe - a password manager, a USB stick.
-# Without it no update can ever be signed for the people who installed a signed build.
 set -euo pipefail
 
-REPO=The412Banner/DroidDeck
-ENVIRONMENTS=(signing-main signing-branch release)
+REPO=Droid-Deck/DroidDeck
+ENVIRONMENTS=(signing-main release)
 ALIAS=droiddeck
 OUT=${DROIDDECK_KEY_DIR:-$HOME/droiddeck-release-key}
 here=$(cd "$(dirname "$0")" && pwd)
@@ -32,7 +21,6 @@ done
 umask 077
 mkdir -p "$OUT"
 KS="$OUT/droiddeck-release.p12"
-# 48 random characters; PKCS12 uses one password for the store and the key.
 KS_PW=$(head -c 60 /dev/urandom | base64 -w0 | tr -d '/+=')
 KS_PW=${KS_PW:0:48}
 [ ${#KS_PW} -ge 40 ] || die "could not make a password"

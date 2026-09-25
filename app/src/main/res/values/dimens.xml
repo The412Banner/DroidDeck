@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Side gutter of the main screen. Grows with the window so the buttons stay a readable
-         width on a landscape phone or a tablet instead of spanning the whole panel. -->
-    <dimen name="page_side">24dp</dimen>
-    <dimen name="logo_size">72dp</dimen>
-</resources>

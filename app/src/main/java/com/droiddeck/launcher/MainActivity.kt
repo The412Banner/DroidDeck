@@ -82,7 +82,6 @@ class MainActivity : ComponentActivity() {
     private var glThread by mutableStateOf(true)
     private var noGlError by mutableStateOf(true)
     private var steamDeckMode by mutableStateOf(false)
-    private var showFrameGen by mutableStateOf(false)
     private var showCredits by mutableStateOf(false)
     private var showProtons by mutableStateOf(false)
     private var catalog by mutableStateOf<List<DesktopCatalog.Entry>?>(null)
@@ -552,9 +551,6 @@ class MainActivity : ComponentActivity() {
         }, "remove-pkg").start()
     }
 
-    /** Both driver lists as the dialog shows them, re-read from disk so an import or removal shows at once. */
-    /** Everything the mode's cog shows, read fresh, then the dialog. */
-    /** The Steam or Desktop settings page, in the front end's pane. */
     @Composable
     private fun ModeSettingsHost(mode: String) {
         ModeSettingsPage(
@@ -636,7 +632,6 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    /** The Performance page, in the front end's pane. */
     @Composable
     private fun PerformanceHost() {
         PerformancePage(

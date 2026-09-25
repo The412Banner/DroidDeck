@@ -986,7 +986,7 @@ class SessionService : Service() {
         private const val EXTRA_AUXILIARY_PID = "auxiliaryPid"
         /** Command lines that can only belong to a session of ours. */
         private val STRAGGLERS = listOf("bannerlator-session", "gamescope", "Xwayland", "steamrtarm64",
-            "steamwebhelper", "linuxfs/opt/android-host/proot", "pulseaudio/libpulseaudio.so")
+            "steamwebhelper", "linuxfs/opt/android-host/proot", "/libproot.so", "pulseaudio/libpulseaudio.so")
         /** How long proot gets to run its own cleanup before it is killed outright. */
         private const val GRACE_MS = 1200L
         private const val NO_PAD_SWITCH = "Download/droiddeck-no-pad"

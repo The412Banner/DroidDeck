@@ -139,8 +139,6 @@ namespace winfg { class Engine; }
 
 static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
-struct WindowPushConstants { float ndcX0, ndcY0, ndcX1, ndcY1; int useTexAlpha; };
-
 // Push-constant layouts for the spatial-upscaler post passes. The leading vec4
 // `ndc` matches upscale.vert; the remaining members are read only by the
 // fragment stage. std430 offsets line up with these C structs.
@@ -163,11 +161,6 @@ struct RcasPushConstants {                 // 40 bytes
     float    ndc[4];
     uint32_t con[4];                       // con.x = bit-packed sharpness
     float    outW, outH;
-};
-struct DownscalePushConstants {            // 32 bytes
-    float ndc[4];
-    float srcW, srcH;                      // render (source) resolution
-    float dstW, dstH;                      // display (output) resolution
 };
 // Composable post effects (AMD CAS sharpen + fake-HDR). Both lead with vec4 ndc
 // (offset 0) like the upscaler PCs and stay well under the 88-byte PC range.
@@ -741,7 +734,6 @@ private:
         NisPushConstants       nisPC{};
         EasuPushConstants      easuPC{};
         RcasPushConstants      rcasPC{};
-        DownscalePushConstants dsPC{};
         CasPushConstants       casPC{};
         HdrPushConstants       hdrPC{};
         FxaaPushConstants      fxaaPC{};
