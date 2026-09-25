@@ -1,14 +1,5 @@
 name: Sign APKs
 
-# Called, never run by itself: turns a "Build APK" apk into packages signed with DroidDeck's own key,
-# one matrix job per package in tools/release/variants.txt (tools/release/sign-apk.sh does the work
-# and checks it). The key lives only in the GitHub environment named by the caller:
-#   signing-main    builds of main
-#   signing-branch  builds of any other branch - waits for the owner's approval
-#   release         release.yml - main only, waits for the owner's approval
-# Pull requests never get here (build.yml skips this for pull_request), so code from a pull
-# request can never be signed with the key or come near it.
-
 on:
   workflow_call:
     inputs:
@@ -68,7 +59,6 @@ jobs:
         env:
           RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-          # The alias is not a secret (and as one, GitHub would mask 'droiddeck' all over the logs).
           RELEASE_KEY_ALIAS: droiddeck
           ENVIRONMENT: ${{ inputs.environment }}
           VARIANT: ${{ matrix.variant }}

@@ -59,8 +59,7 @@ class ModeSettings(
     val forceFullscreen: Boolean? = null,
     /** Steam only: the client branch forced on the command line. */
     val steamChannel: String? = null,
-    /** Steam only: the user's own games folder and what was found in it. */
-    /** The chosen Games folders (null = not a Steam page). */
+    /** Steam only: the user's chosen Games folders; null outside Steam. */
     val addedGamesDirs: List<String>? = null,
     val addedGames: List<AddedGameRow> = emptyList(),
     val addedGamesArt: Boolean = true,
@@ -183,8 +182,8 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 onPick = { v -> if (v == CUSTOM) editCustom = true else { a.onCustomResolution(null); a.onResolution(v) } },
             )
             ChoiceRow(
-                host, "shape", "Shape",
-                if (custom != null) "Set by the custom resolution." else "The panel's shape stays at 16:9 or wider; pick Exactly this panel for a 4:3 or 3:2 screen.",
+                host, "shape", "Screen ratio",
+                if (custom != null) "Set by the custom resolution." else "Auto uses at least 16:9.",
                 com.droiddeck.launcher.session.SessionPrefs.shapeChoices, s.shapeMode, enabled = custom == null, onPick = a.onShape,
             )
             if (editCustom) CustomResolutionDialog(

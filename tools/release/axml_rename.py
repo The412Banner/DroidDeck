@@ -20,7 +20,7 @@ def enc_len16(n):
     return struct.pack('<H', n) if n < 0x8000 else struct.pack('<HH', 0x8000 | (n >> 16), n & 0xffff)
 
 def rewrite(axml, repl):
-    ftype, fhs, fsize = struct.unpack_from('<HHI', axml, 0)
+    ftype, fhs = struct.unpack_from('<HH', axml, 0)
     assert ftype == 0x0003, 'not binary XML'
     sp = fhs
     ctype, chs, csize, count, scount, flags, sstart, stystart = struct.unpack_from('<HHIIIIII', axml, sp)

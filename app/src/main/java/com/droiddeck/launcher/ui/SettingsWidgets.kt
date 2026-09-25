@@ -57,7 +57,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -118,8 +120,9 @@ fun AnchoredMenu(open: Boolean, onDismiss: () -> Unit, title: String? = null, no
     state.targetState = open
     if (!state.currentState && !state.targetState && state.isIdle) return
     val firstItemFocus = remember { FocusRequester() }
-    LaunchedEffect(open) {
-        if (open) {
+    val inputMode = LocalInputModeManager.current.inputMode
+    LaunchedEffect(open, inputMode) {
+        if (open && inputMode == InputMode.Keyboard) {
             repeat(2) { androidx.compose.runtime.withFrameNanos { } }
             runCatching { firstItemFocus.requestFocus() }
             android.util.Log.i("AnchoredMenu", "requested first option focus")
@@ -169,7 +172,7 @@ fun AnchoredMenu(open: Boolean, onDismiss: () -> Unit, title: String? = null, no
 fun MenuItem(
     label: String, checked: Boolean, enabled: Boolean = true, detail: String? = null,
     trailing: (@Composable () -> Unit)? = null, leading: (@Composable () -> Unit)? = null,
-    focusRequester: FocusRequester? = null, onClick: () -> Unit,
+    focusRequester: FocusRequester? = null, modifier: Modifier = Modifier, onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
@@ -178,7 +181,7 @@ fun MenuItem(
     val shift by animateFloatAsState(if (hot) 2f else 0f, Motion.sp(0.5f), label = "miShift")
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
             .graphicsLayer { translationX = shift.dp.toPx() }
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .clip(RoundedCornerShape(8.dp))

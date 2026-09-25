@@ -1,12 +1,6 @@
 name: Release APKs
 run-name: release ${{ inputs.version }} from main ${{ github.sha }}
 
-# Every package of a release, signed with DroidDeck's own key: the standard app and the named ones
-# in tools/release/variants.txt, one matrix job each. Nothing is rebuilt - the apk is the one the
-# Build APK run of this exact main commit made (with its caches) and that was tested, so the
-# release is those bytes. Waits for the owner's approval (the release environment); publishing the
-# GitHub release stays a separate, manual step.
-
 on:
   workflow_dispatch:
     inputs:
@@ -41,7 +35,6 @@ jobs:
         run: |
           set -euo pipefail
           [[ $VERSION =~ ^[0-9A-Za-z._-]+$ ]] || { echo "::error::version '$VERSION': letters, digits, . _ - only"; exit 1; }
-          # This commit's Build APK run - a push or a dispatch on main, never a pull request's.
           runs=$(gh run list -R "$GITHUB_REPOSITORY" --workflow build.yml --branch main --commit "$GITHUB_SHA" \
                    --status success --json databaseId,event,headSha -L 20)
           id=$(jq -r --arg sha "$GITHUB_SHA" \
@@ -64,5 +57,4 @@ jobs:
       run_id: ${{ needs.find.outputs.run_id }}
       label: ${{ inputs.version }}
       artifact: droiddeck-release
-    # The key is an environment secret; a called workflow sees secrets only when they are passed on.
     secrets: inherit

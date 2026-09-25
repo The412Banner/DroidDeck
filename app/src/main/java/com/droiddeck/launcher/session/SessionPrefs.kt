@@ -52,9 +52,9 @@ object SessionPrefs {
 
     /** The choices the settings offer, in order. */
     val shapeChoices = listOf(
-        SHAPE_AUTO to "The panel's shape (16:9 or wider)",
-        SHAPE_EXACT to "Exactly this panel (4:3, 3:2…)",
-        SHAPE_WIDE to "16:9 with bars",
+        SHAPE_AUTO to "Auto (16:9+)",
+        SHAPE_EXACT to "Match screen",
+        SHAPE_WIDE to "Always 16:9",
     )
 
     /**

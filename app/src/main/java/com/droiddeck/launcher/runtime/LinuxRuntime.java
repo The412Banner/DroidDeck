@@ -5,6 +5,7 @@ import android.os.Process;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.StructStat;
+import android.system.StructUtsname;
 
 
 import java.io.File;
@@ -32,6 +33,7 @@ public final class LinuxRuntime {
     /** Shortcut extra naming which of the modes above a Linux entry launches. */
     public static final String EXTRA_LINUX_MODE = "linux_mode";
     private static final String KGSL_DEVICE = "/dev/kgsl-3d0";
+    private static final String GUEST_HOSTNAME = "DroidDeck";
     /** Where every Linux session's debug log lands: public, so a user can just hand the folder over. */
     public static final String DEBUG_LOG_DIR = "DroidDeck";
 
@@ -58,30 +60,22 @@ public final class LinuxRuntime {
     /** Where the runtime carries the host-side proot; see tools/linuxfs/prebuilt/proot/README.md. */
     private static final String HOST_DIR = "opt/android-host";
 
-    /**
-     * proot, preferred from the installed runtime and falling back to the copy in the apk.
-     *
-     * <p>It is an Android binary rather than part of the rootfs - it is what creates the rootfs -
-     * but it travels in the runtime tarball so that reinstalling the app cannot replace the one
-     * binary everything else depends on, and so a device with no working packaged proot can still
-     * run the runtime.
-     */
     public static File prootBinary(Context context) {
-        File shipped = new File(rootDir(context), HOST_DIR + "/proot");
-        if (shipped.isFile()) return shipped;
-        return new File(context.getApplicationInfo().nativeLibraryDir, "libproot.so");
+        File packaged = new File(context.getApplicationInfo().nativeLibraryDir, "libproot.so");
+        if (packaged.isFile()) return packaged;
+        return new File(rootDir(context), HOST_DIR + "/proot");
     }
 
     public static File prootLoader(Context context) {
-        File shipped = new File(rootDir(context), HOST_DIR + "/loader");
-        if (shipped.isFile()) return shipped;
-        return new File(context.getApplicationInfo().nativeLibraryDir, "libproot-loader.so");
+        File packaged = new File(context.getApplicationInfo().nativeLibraryDir, "libproot-loader.so");
+        if (packaged.isFile()) return packaged;
+        return new File(rootDir(context), HOST_DIR + "/loader");
     }
 
     /** proot links against libtalloc, which sits beside it; empty when the apk copy is in use. */
     public static String prootLibraryPath(Context context) {
         File dir = new File(rootDir(context), HOST_DIR);
-        return new File(dir, "proot").isFile() ? dir.getPath() : "";
+        return dir.equals(prootBinary(context).getParentFile()) ? dir.getPath() : "";
     }
 
     /** The rootfs is present with gamescope and the session script the launcher hands control to. */
@@ -124,6 +118,8 @@ public final class LinuxRuntime {
         List<String> cmd = new ArrayList<>();
         cmd.add(prootBinary(context).getPath());
         cmd.add("--kill-on-exit");
+        // Preserve the host kernel identity while giving the guest the app's branded host name.
+        cmd.add("--kernel-release=" + guestUtsname());
         // Android's app seccomp policy traps the whole set*id family. Xwayland's Popen() calls
         // setgid()/setuid() before it execs xkbcomp and _exit(127)s when they fail, so without
         // this the keymap never compiles and Xwayland dies. -i makes proot answer those calls
@@ -251,6 +247,13 @@ public final class LinuxRuntime {
     private static void bind(List<String> cmd, String spec) {
         cmd.add("-b");
         cmd.add(spec);
+    }
+
+    /** PRoot's complex -k format: sysname, nodename, release, version, machine, domain, HWCAP. */
+    private static String guestUtsname() {
+        StructUtsname host = Os.uname();
+        return "\\" + host.sysname + "\\" + GUEST_HOSTNAME + "\\" + host.release
+                + "\\" + host.version + "\\" + host.machine + "\\localdomain\\-1\\";
     }
 
     /** X access control and Steam look the session user up by uid: the app uid is root inside. */

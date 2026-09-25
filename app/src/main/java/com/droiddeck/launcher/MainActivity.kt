@@ -45,6 +45,10 @@ import com.droiddeck.launcher.ui.ModeSettings
 import com.droiddeck.launcher.ui.ModeSettingsActions
 import com.droiddeck.launcher.ui.DriverRow
 import com.droiddeck.launcher.ui.ConfirmDialog
+import com.droiddeck.launcher.ui.ControllerActions
+import com.droiddeck.launcher.ui.ControllerMappingPage
+import com.droiddeck.launcher.input.ControllerPrefs
+import com.droiddeck.launcher.input.ControllerEditorActivity
 import com.droiddeck.launcher.ui.CreditsDialog
 import com.droiddeck.launcher.ui.FrontEndScreen
 import com.droiddeck.launcher.ui.FrontEndState
@@ -82,9 +86,10 @@ class MainActivity : ComponentActivity() {
     private var glThread by mutableStateOf(true)
     private var noGlError by mutableStateOf(true)
     private var steamDeckMode by mutableStateOf(false)
-    private var showFrameGen by mutableStateOf(false)
     private var showCredits by mutableStateOf(false)
     private var showProtons by mutableStateOf(false)
+    private var showMapping by mutableStateOf(false)
+    private var controllerSettings by mutableStateOf<ControllerPrefs.Settings?>(null)
     private var catalog by mutableStateOf<List<DesktopCatalog.Entry>?>(null)
     private var catalogLoading by mutableStateOf(false)
     private var packageRows by mutableStateOf<List<PackageRow>?>(null)
@@ -234,6 +239,7 @@ class MainActivity : ComponentActivity() {
                     sm != null -> { { ModeSettingsHost(sm) } }
                     showPerformance -> { { PerformanceHost() } }
                     showProtons -> { { ProtonHost() } }
+                    showMapping -> { { MappingHost() } }
                     else -> null
                 }
                 FrontEndScreen(
@@ -246,7 +252,7 @@ class MainActivity : ComponentActivity() {
                         steamGames = steamGames, emulators = emulatorList, running = runningLabel,
                         frameGenEngine = FrameGen.engine(this), frameGenMultiplier = FrameGen.multiplier(this),
                         lsfgReady = LsfgNative.isInstalled(this),
-                        pageKey = sm?.let { "settings:$it" } ?: if (showPerformance) "performance" else if (showProtons) "protons" else null,
+                        pageKey = sm?.let { "settings:$it" } ?: if (showPerformance) "performance" else if (showProtons) "protons" else if (showMapping) "controller-mapping" else null,
                         theme = theme,
                         isHomeApp = homeAppSelected,
                         homeScreenEnabled = homeScreenEnabled,
@@ -261,6 +267,8 @@ class MainActivity : ComponentActivity() {
                         sessionRunning = SessionState.running,
                         backActionsInverted = backActionsInverted,
                         buildLabel = BuildConfig.BUILD_LABEL,
+                        oscMode = oscMode,
+                        controller = controllerSettings,
                     ),
                     FrontEndActions(
                         onPlay = { startSession(Intent(this, SessionActivity::class.java)) },
@@ -296,7 +304,7 @@ class MainActivity : ComponentActivity() {
                             frameGenLabel = FrameGen.label(this)
                         },
                         onProtons = { openProtons() },
-                        onPerformance = { refreshCores(); showProtons = false; showPerformance = true },
+                        onPerformance = { refreshCores(); showProtons = false; showMapping = false; showPerformance = true },
                         onRoms = { showRoms = true },
                         onFiles = { startActivity(Intent(this, com.droiddeck.launcher.files.FileManagerActivity::class.java)) },
                         onLogs = {
@@ -317,7 +325,7 @@ class MainActivity : ComponentActivity() {
                             offline = OfflineMode.enabled(this)
                         },
                         onCredits = { showCredits = true },
-                        onPageBack = { settingsMode = null; showPerformance = false; showProtons = false },
+                        onPageBack = { settingsMode = null; showPerformance = false; showProtons = false; showMapping = false },
                         onTheme = { id -> SessionPrefs.setTheme(this, id); theme = id },
                         onHomeApp = { manageHomeApp() },
                         onHomeScreen = { on ->
@@ -332,6 +340,18 @@ class MainActivity : ComponentActivity() {
                         onCheckLatestBuild = {
                             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/The412Banner/DroidDeck/actions/workflows/build.yml")))
                         },
+                        controller = ControllerActions(
+                            onOsc = { o -> SessionPrefs.setOscMode(this, o); oscMode = o },
+                            onTint = { t -> ControllerPrefs.setTint(this, t); refreshController() },
+                            onOpacity = { o -> ControllerPrefs.setOpacity(this, o); refreshController() },
+                            onSize = { v -> ControllerPrefs.setSize(this, v); refreshController() },
+                            onStickClick = { on -> ControllerPrefs.setStickClick(this, on); refreshController() },
+                            onAdaptiveSticks = { on -> ControllerPrefs.setAdaptiveSticks(this, on); refreshController() },
+                            onEditLayout = { startActivity(Intent(this, ControllerEditorActivity::class.java)) },
+                            onResetLayout = { ControllerPrefs.resetAllLayouts(this); refreshController() },
+                            onMapping = { settingsMode = null; showPerformance = false; showProtons = false; showMapping = true },
+                            onResetAll = { ControllerPrefs.resetAll(this); refreshController() },
+                        ),
                     ),
                     page = page,
                 )
@@ -385,6 +405,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        oscMode = SessionPrefs.oscMode(this)
+        refreshController()
         refreshHomeAppState()
         refreshSecondScreenDisplays()
         refresh()
@@ -453,8 +475,24 @@ class MainActivity : ComponentActivity() {
     private fun openProtons() {
         settingsMode = null
         showPerformance = false
+        showMapping = false
         showProtons = true
         refreshProtons()
+    }
+
+    private fun refreshController() {
+        controllerSettings = ControllerPrefs.read(this)
+    }
+
+    @Composable
+    private fun MappingHost() {
+        val settings = controllerSettings ?: return
+        ControllerMappingPage(
+            mapping = settings.mapping,
+            onPick = { id, target -> ControllerPrefs.setTarget(this, id, target); refreshController() },
+            onReset = { ControllerPrefs.resetMapping(this); refreshController() },
+            onBack = { showMapping = false },
+        )
     }
 
     @Composable
@@ -552,9 +590,6 @@ class MainActivity : ComponentActivity() {
         }, "remove-pkg").start()
     }
 
-    /** Both driver lists as the dialog shows them, re-read from disk so an import or removal shows at once. */
-    /** Everything the mode's cog shows, read fresh, then the dialog. */
-    /** The Steam or Desktop settings page, in the front end's pane. */
     @Composable
     private fun ModeSettingsHost(mode: String) {
         ModeSettingsPage(
@@ -636,7 +671,6 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    /** The Performance page, in the front end's pane. */
     @Composable
     private fun PerformanceHost() {
         PerformancePage(
@@ -687,6 +721,7 @@ class MainActivity : ComponentActivity() {
     private fun openModeSettings(mode: String) {
         showPerformance = false
         showProtons = false
+        showMapping = false
         refreshDrivers()
         resolutionCap = SessionPrefs.resolutionCap(this, mode)
         customResolution = SessionPrefs.customResolution(this, mode)

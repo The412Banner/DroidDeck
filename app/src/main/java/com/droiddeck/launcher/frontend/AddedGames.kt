@@ -56,10 +56,10 @@ object AddedGames {
             "|.*installer.*|.*uninstall.*|.*updater?.*|.*config(ur.*)?|.*settings.*|.*editor.*|.*server.*|.*benchmark.*|.*helper.*|.*eac.*|.*easyanticheat.*|.*battleye.*)\\.exe$",
     )
 
-    /** Where a host path appears inside the session, or null when the session cannot see it. */
     /** Under here the chosen Games folders are bound inside the session, one each. */
     const val GUEST_DIR = "/root/Games"
 
+    /** Where a host path appears inside the session, or null when the session cannot see it. */
     fun guestPath(context: Context, host: File): String? {
         val path = host.absolutePath
         // The Games folders are bound on their own, so a folder anywhere - an SD card, a USB
