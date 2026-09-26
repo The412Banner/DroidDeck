@@ -1,5 +1,14 @@
 package com.droiddeck.launcher.ui
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DesktopWindows
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SportsEsports
+import androidx.compose.material3.Icon
+import androidx.compose.ui.draw.clipToBounds
 import android.view.Display
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -86,7 +95,9 @@ import com.droiddeck.launcher.input.SecondScreenDisplay
 import com.droiddeck.launcher.input.SecondScreenMode
 import kotlinx.coroutines.flow.collect
 
-private val drawerPageTitles = listOf("Now", "Controls", "Session")
+private val drawerPageTitles = listOf("Display", "Controls", "Settings")
+/** One icon per drawer page, in page order (QAM-style tabs). */
+private val drawerPageIcons = listOf(Icons.Outlined.DesktopWindows, Icons.Outlined.SportsEsports, Icons.Outlined.Settings)
 private val drawerPageEntries = listOf("hud", "touch", "suspend")
 
 private class DrawerFocus {
@@ -384,32 +395,7 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
                     DrawerOutlineButton("LB  ‹", modifier = Modifier.height(48.dp).then(focus.track(page, "prev"))) {
                         host.open = null; onPageChange((page + 2) % 3)
                     }
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        drawerPageTitles.forEachIndexed { index, title ->
-                            val dotSource = remember { MutableInteractionSource() }
-                            val dotFocused = dotSource.collectIsFocusedAsState().value
-                            val select = { host.open = null; onPageChange(index) }
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.size(38.dp)
-                                    .semantics { contentDescription = "$title page" }
-                                    .hoverable(dotSource)
-                                    .clickable(interactionSource = dotSource, indication = LocalIndication.current, onClick = select)
-                                    .controllerConfirm(onClick = select),
-                            ) {
-                                Box(
-                                    Modifier.size(if (index == page) 16.dp else 10.dp)
-                                        .clip(CircleShape)
-                                        .background(if (index == page) pal.signal else colors.onSurfaceVariant)
-                                        .border(if (dotFocused) 2.dp else 0.dp, colors.onBackground, CircleShape),
-                                )
-                            }
-                        }
-                    }
+                    DrawerPageTabs(page = page, modifier = Modifier.weight(1f)) { index -> host.open = null; onPageChange(index) }
                     DrawerOutlineButton("›  RB", modifier = Modifier.height(48.dp).then(focus.track(page, "next"))) {
                         host.open = null; onPageChange((page + 1) % 3)
                     }
@@ -419,7 +405,7 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
                     modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(pageScroll[page]),
                 ) {
                     when (page) {
-                        0 -> SettingsGroup("Now") {
+                        0 -> SettingsGroup("Display") {
                             ToggleRow(host, "hud", "Performance HUD", null, a.hudOn,
                                 chipModifier = focus.track(page, "hud"), onChange = a.onHud)
                             if (a.fillScreen != null) ToggleRow(
@@ -637,3 +623,62 @@ private fun ShareSessionLogsButton(modifier: Modifier = Modifier, onClick: () ->
             color = if (hot) pal.signal else colors.onSurfaceVariant, maxLines = 1)
     }
 }
+
+/**
+ * The drawer's page tabs, QAM-style: one icon per page standing in a line in page order. The
+ * selected one steps forward - full size, bright, a soft glow - while the others step back to
+ * half size and fade, and the whole line leans a little toward the selection. LB / RB still turn
+ * the page (the buttons beside it and the pad's bumpers); a tab can be tapped or picked with the
+ * pad like the dots it replaces.
+ */
+@Composable
+private fun DrawerPageTabs(page: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val count = drawerPageIcons.size
+    val middle = (count - 1) / 2f
+    val motion = tween<Float>(durationMillis = 340, easing = FastOutSlowInEasing)
+    val lean by animateFloatAsState(-(page - middle) * DRAWER_TAB_LEAN_DP, motion, label = "tabLean")
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier.height(64.dp).clipToBounds(),
+    ) {
+        drawerPageIcons.forEachIndexed { index, icon ->
+            val selected = index == page
+            val source = remember { MutableInteractionSource() }
+            val focused = source.collectIsFocusedAsState().value
+            val scale by animateFloatAsState(if (selected) 1f else DRAWER_TAB_SIDE_SCALE, motion, label = "tabScale")
+            val alpha by animateFloatAsState(if (selected) 1f else DRAWER_TAB_SIDE_ALPHA, motion, label = "tabAlpha")
+            val glow by animateFloatAsState(if (selected) 1f else 0f, motion, label = "tabGlow")
+            val tint by animateColorAsState(if (selected) colors.onBackground else colors.onSurfaceVariant, tween(340), label = "tabTint")
+            val select = { onSelect(index) }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .offset(x = ((index - middle) * DRAWER_TAB_SPACING_DP + lean).dp)
+                    .size(56.dp)
+                    .graphicsLayer { scaleX = scale; scaleY = scale; this.alpha = alpha }
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(
+                        Brush.radialGradient(
+                            listOf(pal.signal.copy(alpha = 0.34f * glow), pal.signal.copy(alpha = 0.10f * glow), Color.Transparent),
+                        ),
+                    )
+                    .border(if (focused) 2.dp else 0.dp, if (focused) colors.onBackground else Color.Transparent, RoundedCornerShape(16.dp))
+                    .semantics { contentDescription = "${drawerPageTitles[index]} page" }
+                    .hoverable(source)
+                    .clickable(interactionSource = source, indication = LocalIndication.current, onClick = select)
+                    .controllerConfirm(onClick = select),
+            ) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(30.dp))
+            }
+        }
+    }
+}
+
+/** The tab row's measure, from the approved mock: side tabs at half size, a little faded. */
+private const val DRAWER_TAB_SPACING_DP = 64f
+private const val DRAWER_TAB_LEAN_DP = 12f
+private const val DRAWER_TAB_SIDE_SCALE = 0.5f
+private const val DRAWER_TAB_SIDE_ALPHA = 0.7f
+
