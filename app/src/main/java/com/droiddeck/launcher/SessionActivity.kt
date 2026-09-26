@@ -1231,7 +1231,13 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             WaylandCompositor.nativeSendTouch(action, event.getPointerId(index), (x * 1919f).toInt(), (y * 1079f).toInt())
         }
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> sendTouch(0, event.actionIndex)
+            // A first finger starts a new gesture, and Android has ended every earlier one: whatever
+            // the compositor still holds (an up lost to the drawer opening mid-touch) goes first.
+            MotionEvent.ACTION_DOWN -> {
+                WaylandCompositor.nativeSendTouch(3, -1, 0, 0)
+                sendTouch(0, event.actionIndex)
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> sendTouch(0, event.actionIndex)
             MotionEvent.ACTION_MOVE -> for (index in 0 until event.pointerCount) sendTouch(1, index)
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> sendTouch(2, event.actionIndex)
             MotionEvent.ACTION_CANCEL -> WaylandCompositor.nativeSendTouch(3, -1, 0, 0)
