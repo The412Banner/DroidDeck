@@ -29,6 +29,7 @@ import com.droiddeck.launcher.gpu.LsfgNative
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import com.droiddeck.launcher.runtime.DesktopCatalog
 import com.droiddeck.launcher.runtime.LinuxRuntimeInstaller
+import com.droiddeck.launcher.runtime.DeckyManager
 import com.droiddeck.launcher.session.SessionService
 import com.droiddeck.launcher.ui.PackageRow
 import com.droiddeck.launcher.session.OfflineMode
@@ -88,6 +89,13 @@ class MainActivity : ComponentActivity() {
     private var steamDeckMode by mutableStateOf(false)
     private var showCredits by mutableStateOf(false)
     private var showProtons by mutableStateOf(false)
+    private var deckyInstalled by mutableStateOf<String?>(null)
+    private var deckyReleases by mutableStateOf<List<DeckyManager.Release>>(emptyList())
+    private var deckyChecking by mutableStateOf(false)
+    private var deckyStage by mutableStateOf<String?>(null)
+    private var deckyPercent by mutableIntStateOf(-1)
+    private var deckySupervisor by mutableStateOf(false)
+    private var deckyReleaseRequest = 0
     private var showMapping by mutableStateOf(false)
     private var controllerSettings by mutableStateOf<ControllerPrefs.Settings?>(null)
     private var catalog by mutableStateOf<List<DesktopCatalog.Entry>?>(null)
@@ -416,6 +424,9 @@ class MainActivity : ComponentActivity() {
         refreshHomeAppState()
         refreshSecondScreenDisplays()
         refresh()
+        deckyInstalled = DeckyManager.installed(this)
+        DeckyManager.syncCefMarker(this)
+        deckySupervisor = DeckyManager.supervisorEnabled(this)
         // Added games' art (a store lookup for what the folders lack) starts here, not only when
         // the cog opens.
         refreshAddedGames()
@@ -484,6 +495,37 @@ class MainActivity : ComponentActivity() {
         showMapping = false
         showProtons = true
         refreshProtons()
+    }
+
+    private fun refreshDecky() {
+        val request = ++deckyReleaseRequest
+        deckyChecking = true
+        Thread({
+            val channels = runCatching { DeckyManager.releaseChannels(this) }
+                .getOrElse { DeckyManager.ReleaseChannels(emptyList(), emptyList()) }
+            ui.post {
+                if (request == deckyReleaseRequest) {
+                    // Use the newest compatible stable build, or the newest compatible
+                    // prerelease when the fork has not published a stable ARM64 asset.
+                    deckyReleases = channels.stable.ifEmpty { channels.prerelease }
+                    deckyChecking = false
+                }
+            }
+        }, "decky-releases").start()
+    }
+
+    private fun installDecky(release: DeckyManager.Release) {
+        if (deckyStage != null || SessionState.running) return
+        deckyStage = "Starting…"; deckyPercent = -1
+        Thread({
+            val problem = runCatching {
+                DeckyManager.install(this, release) { label, value -> ui.post { deckyStage = label; deckyPercent = value } }
+            }.getOrElse { error -> "Decky install failed: ${error.message ?: error.javaClass.simpleName}" }
+            ui.post {
+                deckyStage = null; deckyPercent = -1; deckyInstalled = DeckyManager.installed(this)
+                if (problem != null) android.widget.Toast.makeText(this, problem, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }, "install-decky").start()
     }
 
     private fun refreshController() {
@@ -623,6 +665,10 @@ class MainActivity : ComponentActivity() {
                 addedGamesArt = addedGamesArt,
                 linuxDownloads = linuxDownloads, androidDownloads = androidDownloads, releaseStatus = releaseStatus,
                 releaseChecking = releaseChecking, canRestoreBundled = canRestoreBundled,
+                deckyInstalled = if (mode == SessionService.MODE_STEAM) deckyInstalled else null,
+                deckyLatestRelease = if (mode == SessionService.MODE_STEAM) deckyReleases.firstOrNull() else null,
+                deckyChecking = deckyChecking, deckyStage = deckyStage, deckyPercent = deckyPercent,
+                deckyEnabled = deckySupervisor, deckySessionRunning = SessionState.running,
             ),
             ModeSettingsActions(
                 onResolution = { cap -> SessionPrefs.setResolutionCap(this, mode, cap); resolutionCap = cap },
@@ -671,6 +717,14 @@ class MainActivity : ComponentActivity() {
                 onPickAddedGameExe = { folder ->
                     pendingAddedGame = folder
                     pickAddedGameExe.launch(InAppFilePicker.buildIntent(this, listOf("exe"), "Choose the game's .exe", folder))
+                },
+                onDeckyInstall = { release -> installDecky(release) },
+                onDeckyCheck = { refreshDecky() },
+                onDeckyEnabled = { enabled -> DeckyManager.setSupervisorEnabled(this, enabled); deckySupervisor = enabled },
+                onDeckyUninstall = {
+                    DeckyManager.uninstall(this, wipeData = false)
+                    deckyInstalled = null
+                    deckySupervisor = false
                 },
                 onDismiss = { settingsMode = null },
             ),
@@ -749,6 +803,11 @@ class MainActivity : ComponentActivity() {
         renderer = SessionPrefs.desktopRenderer(this)
         gameStorage = SessionPrefs.gameStorage(this)
         storageOptions = GameStorage.options(this).map { it.label to it.path }
+        if (mode == SessionService.MODE_STEAM) {
+            deckyInstalled = DeckyManager.installed(this)
+            deckySupervisor = DeckyManager.supervisorEnabled(this)
+            refreshDecky()
+        }
         settingsMode = mode
     }
 

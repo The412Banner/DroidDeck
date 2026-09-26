@@ -3210,23 +3210,32 @@ static void touch_down(int id, double x, double y) {
     struct surface *target = touch_target_at(x, y);
     if (!target) return;
     struct wl_client *client = wl_resource_get_client(target->resource);
+    /* A down on an id that is still held means that sequence's up was lost: end it first. The
+     * fingers still down are counted only after that - counted before, a lost up left any_active
+     * set, and on the pointer path every later touch was dropped (a tap or swipe did nothing). */
+    if (g_touch_points[id].surface) touch_cancel_client(client);
     int any_active = 0;
     for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
         struct surface *active = g_touch_points[i].surface;
         if (!active) continue;
-        any_active = 1;
         if (active != target) {
             touch_cancel_all();
             any_active = 0;
             break;
         }
+        any_active = 1;
     }
-    if (g_touch_points[id].surface) touch_cancel_client(client);
     struct seat_touch *st;
     int has_touch = 0;
     for_each_touch_of(client, st) has_touch = 1;
+    /* One line per gesture (first finger), so a test can see where a touch went. */
+    if (!any_active) {
+        char name[160];
+        describe(target, name, sizeof(name));
+        banner_log("touch", "%s gets %s", name, has_touch ? "touch" : "the pointer (it takes no touch)");
+    }
     if (!has_touch) {
-        if (any_active) return;
+        if (any_active) return;  /* one finger drives the pointer; a second one is ignored */
         g_touch_points[id].surface = target;
         g_touch_points[id].pointer_fallback = 1;
         pointer_event(x, y, BTN_LEFT, 1);
