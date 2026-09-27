@@ -1,12 +1,11 @@
 package com.droiddeck.launcher.runtime
 
+import com.droiddeck.launcher.core.Hashes
 import android.content.Context
 import android.util.Log
 import com.droiddeck.launcher.core.Downloader
 import com.droiddeck.launcher.session.SessionState
 import java.io.File
-import java.io.FileInputStream
-import java.security.MessageDigest
 import org.json.JSONArray
 
 /** Optional Decky Loader installation for the ARM64 Linux guest. */
@@ -84,7 +83,7 @@ object DeckyManager {
                     val n = it.optString("name")
                     (n == "$name.sha256" || n == "$name.sha256sum" || n == "$name.sha256.txt") && it.optString("browser_download_url").startsWith("https://")
                 }?.optString("browser_download_url")?.takeIf { it.startsWith("https://") }
-                val digest = binary.optString("digest").takeIf { it.matches(Regex("(?i)sha256:[0-9a-f]{64}")) }
+                val digest = binary.optString("digest").takeIf { Hashes.isGithubSha256(it) }
                 if (digest == null && checksum == null) continue
                 val size = binary.optLong("size", 0)
                 if (size <= 0) continue
@@ -109,7 +108,7 @@ object DeckyManager {
             Regex("(?i)\\b[0-9a-f]{64}\\b").find(checksumBody)?.value
         } ?: run { temp.delete(); return "Release checksum is missing" }
         if (!expected.matches(Regex("(?i)[0-9a-f]{64}"))) { temp.delete(); return "Release checksum is invalid" }
-        if (!expected.equals(sha256(temp), true)) { temp.delete(); return "Decky Loader checksum mismatch" }
+        if (!expected.equals(Hashes.sha256(temp), true)) { temp.delete(); return "Decky Loader checksum mismatch" }
         if (!validElf(temp, release.machine)) { temp.delete(); return "Release asset is not a compatible 64-bit Linux executable" }
         if (SessionState.running) { temp.delete(); return "A session started during the download; stop it before installing Decky Loader" }
         if (!temp.setExecutable(true, false)) { temp.delete(); return "Could not mark PluginLoader executable" }
@@ -146,15 +145,6 @@ object DeckyManager {
         File(root, "root/homebrew/services/.droiddeck-decky-arch").delete()
         File(root, CEF_REMOTE_DEBUG_MARKER).delete()
         if (wipeData) File(root, "root/homebrew").deleteRecursively()
-    }
-
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        FileInputStream(file).buffered().use { input ->
-            val buffer = ByteArray(1024 * 1024)
-            while (true) { val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
     }
 
     private fun validElf(file: File, machine: Int): Boolean = runCatching {

@@ -70,6 +70,60 @@ TOOL_MANIFEST_VDF = """"manifest"
 }
 """ % LAUNCHER
 
+
+# Steam runs its own graphics probe through EVERY registered tool at once, ~40 s after logging in,
+# all with STEAM_COMPAT_DATA_PATH=.../compatdata/0, and those concurrent Protons can write their
+# builtin DLLs through each other's prefix links into each other's trees (seen: GE's FEX DLLs became
+# Proton Experimental's). Moving those runs to a prefix per tool was tried and crashed the Steam
+# client right after the probe started (segfault, rc 139, first ever in 25 sessions), so the client
+# relies on compatdata/0 itself. The launch-time check below is the protection instead.
+
+# The Components page's choices, enforced in the one place every game launch passes: the app keeps
+# desired.tsv (tool dir, Proton build, component, file, sha256, source copy) and an unpacked copy of
+# each package in use. A file that no longer matches - whatever changed it - is put back before
+# Proton starts. Only for the Proton build the choice was made for: after a Steam update the build
+# differs and the Proton's own new files are left alone until the user chooses again.
+BL_COMPONENTS_SETUP = """
+bl_components() {
+  base=$1
+  cm_dir="${HOME:-/root}/.local/share/bannerlator-components"
+  cm_list="$cm_dir/desired.tsv"
+  # A real game launch only: the verb the client starts a game with and the game's own prefix. Every
+  # other run - above all the client's own probes right after login, which all share compatdata/0 -
+  # is left exactly as it was: with this check running through them, the client segfaulted (rc 139)
+  # within seconds of starting its probes, four sessions out of four. The prefix decides rather than
+  # the app id because a non-Steam shortcut launches with app id 0 but still gets a prefix of its own.
+  [ "${verb:-}" = waitforexitandrun ] || return 0
+  case "${STEAM_COMPAT_DATA_PATH:-}" in ''|*/compatdata/0|*/compatdata/0/|*/compatdata/0-*) return 0 ;; esac
+  [ -f "$cm_list" ] || return 0
+  cm_app=${STEAM_COMPAT_DATA_PATH%/}
+  cm_app=${cm_app##*/}
+  cm_tool=${base##*/}
+  cm_build=$(awk 'NR == 1 { print $2 }' "$base/version" 2>/dev/null)
+  cm_fixed=0
+  cm_checked=0
+  while IFS=$'\\t' read -r t want comp rel sum src; do
+    [ "$t" = "$cm_tool" ] && [ "$want" = "$cm_build" ] || continue
+    cm_checked=$((cm_checked + 1))
+    f="$base/$rel"
+    if [ -f "$f" ] && [ "$(sha256sum "$f" | cut -d' ' -f1)" = "$sum" ]; then continue; fi
+    if [ ! -f "$src" ]; then
+      echo "bannerlator-proton: components: $comp source missing ($src), left as it is" >&2
+      continue
+    fi
+    mkdir -p "$(dirname "$f")"
+    cp -f "$src" "$f.bl-new" && mv -f "$f.bl-new" "$f" || continue
+    case "$rel" in *.so) chmod 755 "$f" ;; *) chmod 644 "$f" ;; esac
+    cm_fixed=$((cm_fixed + 1))
+  done < "$cm_list"
+  [ "$cm_checked" -gt 0 ] && echo "bannerlator-proton: components: checked $cm_checked file(s) in $cm_tool for app $cm_app" >&2
+  if [ "$cm_fixed" -gt 0 ]; then
+    echo "bannerlator-proton: components: re-applied $cm_fixed of $cm_checked file(s) in $cm_tool before this launch" >&2
+    printf '%s\\t%s\\t%s\\n' "$(date +%s)" "$cm_tool" "$cm_fixed" >> "$cm_dir/reapplied.log"
+  fi
+}
+"""
+
 # Resolves the depot at launch time, so the tool can be registered before the depot exists and
 # survives the client updating or replacing it. Proton takes its base directory from
 # dirname(sys.argv[0]) without resolving it, so it is run from the depot itself.
@@ -175,6 +229,7 @@ fi
 for name in %s; do
   depot="$steam_root/steamapps/common/$name"
   if [ -d "$depot/files/bin-arm64" ] && [ -x "$depot/proton" ]; then
+    bl_components "$depot"
     bl_directaudio "$depot"
     bl_game_cpus
     bl_idtech3 "$@"
@@ -188,7 +243,8 @@ exit 1
 # and a % format would eat that into a single %, leaving a shell expansion that silently does
 # something else.
 LAUNCHER_SH = LAUNCHER_SH.replace(
-    "verb=$1; shift", "verb=$1; shift\n" + BL_DIRECTAUDIO_SETUP + BL_GAME_CPUS_SETUP + BL_IDTECH3_SETUP, 1)
+    "verb=$1; shift", "verb=$1; shift\n" + BL_DIRECTAUDIO_SETUP + BL_GAME_CPUS_SETUP + BL_IDTECH3_SETUP
+    + BL_COMPONENTS_SETUP, 1)
 
 # A third-party Proton dropped into compatibilitytools.d - GE-Proton, proton-cachyos, anything of
 # that shape - is adopted rather than used as shipped, for the same two reasons Valve's ARM64 depot
@@ -220,6 +276,7 @@ if [ -f "$fake" ]; then
     *) LD_PRELOAD="$fake${LD_PRELOAD:+:$LD_PRELOAD}"; export LD_PRELOAD ;;
   esac
 fi
+bl_components "$here"
 bl_directaudio "$here"
 bl_game_cpus
 bl_idtech3 "$@"
@@ -384,7 +441,8 @@ def adopt_extras(tools):
             # ${major%%.*} of its own, and putting it through the format would eat both.
             body = (EXTRA_WRAPPER_SH % entry_point).replace(
                     'here=$(dirname "$0")',
-                    'here=$(dirname "$0")\n' + BL_DIRECTAUDIO_SETUP + BL_GAME_CPUS_SETUP + BL_IDTECH3_SETUP, 1)
+                    'here=$(dirname "$0")\n' + BL_DIRECTAUDIO_SETUP + BL_GAME_CPUS_SETUP + BL_IDTECH3_SETUP
+                    + BL_COMPONENTS_SETUP, 1)
             with open(wrapper, "w", encoding="utf-8") as f:
                 f.write(body)
             os.chmod(wrapper, 0o755)

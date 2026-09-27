@@ -66,6 +66,8 @@ class ModeSettings(
     val forceFullscreen: Boolean? = null,
     /** Steam only: the client branch forced on the command line. */
     val steamChannel: String? = null,
+    /** Steam only: start a Steam session when DroidDeck opens. */
+    val runSteamAtStartup: Boolean = false,
     /** Steam only: the user's chosen Games folders; null outside Steam. */
     val addedGamesDirs: List<String>? = null,
     val addedGames: List<AddedGameRow> = emptyList(),
@@ -119,6 +121,7 @@ class ModeSettingsActions(
     val onFexPreset: (String) -> Unit = {},
     val onForceFullscreen: (Boolean) -> Unit = {},
     val onSteamChannel: (String) -> Unit = {},
+    val onRunSteamAtStartup: (Boolean) -> Unit = {},
     val onPickAddedGamesDir: () -> Unit = {},
     val onForgetAddedGamesDir: (path: String) -> Unit = {},
     val onAddedGamesArt: (Boolean) -> Unit = {},
@@ -271,6 +274,13 @@ fun ModeSettingsPage(s: ModeSettings, a: ModeSettingsActions) {
                 s.suspendPolicy,
                 note = "Auto pauses in the background and resumes when visible. Manual pauses there and waits for Resume. Never keeps the session running.",
                 onPick = a.onSuspendPolicy,
+            )
+        }
+        if (steam) SettingsGroup("Startup") {
+            ToggleRow(
+                host, "steam-startup", "Run Steam when DroidDeck starts",
+                "Open the Steam session when you launch DroidDeck.",
+                s.runSteamAtStartup, onChange = a.onRunSteamAtStartup,
             )
         }
         if (steam) SettingsGroup("Decky") {

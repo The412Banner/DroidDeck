@@ -13,6 +13,7 @@ add_library(bannerwayland SHARED
         src/ahb_swapchain.c
         src/waylandcomp_jni.c
         src/banner_ext.c
+        src/wl_dmabuf.c
         src/wl_clipboard.c
         src/wl_text_input.c
         src/wl_toplevel_icon.c
@@ -33,6 +34,9 @@ add_library(bannerwayland SHARED
         src/framegen_bridge.c
         src/framegen_jni.c
 )
+# Warnings on for the compositor's own C. They do not fail the build; they are there to be read.
+target_compile_options(bannerwayland PRIVATE
+        $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers>)
 target_include_directories(bannerwayland PRIVATE
         generated
         prebuilt/include

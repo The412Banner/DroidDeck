@@ -24,6 +24,8 @@ class LoadingState(context: Context) {
     var elapsed by mutableStateOf("")
     var hint by mutableStateOf("")
     var ended by mutableStateOf(false)
+    /** The technical side of an ended session (exit status, log path), under the advice in [step]. */
+    var endedDetail by mutableStateOf<String?>(null)
 
     private val hints = context.resources.getStringArray(com.droiddeck.launcher.R.array.loading_hints)
     private val startedAt = SystemClock.elapsedRealtime()
@@ -35,10 +37,11 @@ class LoadingState(context: Context) {
         hint = hints[((seconds / 8) % hints.size).toInt()]
     }
 
-    fun showEnded(message: String) {
+    fun showEnded(message: String, detail: String? = null) {
         visible = true
         ended = true
         step = message
+        endedDetail = detail
     }
 
     /** Re-reads the end of the log and updates the line and the bar. */

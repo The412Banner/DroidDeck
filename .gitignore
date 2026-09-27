@@ -28,3 +28,4 @@ app/src/main/jniLibs/arm64-v8a/libproot-loader.so
 !keystore/testkey.p12
 droiddeck-release-key/
 password.txt
+__pycache__/

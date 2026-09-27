@@ -1,10 +1,17 @@
 package com.droiddeck.launcher.ui
 
+import androidx.compose.ui.draw.alpha
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.PowerSettingsNew
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material.icons.outlined.DesktopWindows
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material3.Icon
@@ -31,10 +38,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.AlertDialog
@@ -47,12 +52,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.droiddeck.launcher.R
 import com.droiddeck.launcher.HomeApp
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -64,11 +65,11 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -91,18 +92,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.droiddeck.launcher.core.FexPreset
 import com.droiddeck.launcher.gpu.FrameGen
 import com.droiddeck.launcher.session.SessionPrefs
+import com.droiddeck.launcher.session.ComponentsManager
 import com.droiddeck.launcher.input.SecondScreenDisplay
 import com.droiddeck.launcher.input.SecondScreenMode
 import kotlinx.coroutines.flow.collect
 
-private val drawerPageTitles = listOf("Display", "Controls", "Settings")
+private val drawerPageTitles = listOf("Display", "Controls", "Components", "Settings")
+
 /** One icon per drawer page, in page order (QAM-style tabs). */
-private val drawerPageIcons = listOf(Icons.Outlined.DesktopWindows, Icons.Outlined.SportsEsports, Icons.Outlined.Settings)
-private val drawerPageEntries = listOf("hud", "touch", "suspend")
+private val drawerPageIcons = listOf(Icons.Outlined.DesktopWindows, Icons.Outlined.SportsEsports, Icons.Outlined.Layers, Icons.Outlined.Settings)
+
+private val drawerPageEntries = listOf("hud", "touch", "cmp-proton", "suspend")
 
 private class DrawerFocus {
     private val requesters = HashMap<String, FocusRequester>()
-    private val last = arrayOfNulls<String>(3)
+    private val last = arrayOfNulls<String>(DRAWER_PAGES)
     var focused by mutableStateOf<String?>(null)
         private set
 
@@ -118,79 +122,6 @@ private class DrawerFocus {
     fun target(page: Int) = last[page] ?: drawerPageEntries[page]
     fun request(key: String) = runCatching { requester(key).requestFocus() }
     fun forget(page: Int) { last[page] = null }
-}
-
-@Composable
-fun HudText(text: String) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
-        Text(
-            text,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = Color.White,
-            modifier = Modifier
-                .padding(12.dp)
-                .background(Color(0x8C000000))
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-        )
-    }
-}
-
-@Composable
-fun LoadingOverlay(step: String, percent: Int, elapsed: String, hint: String, ended: Boolean) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .clickable(interactionSource = MutableInteractionSource(), indication = null) {}
-            .padding(32.dp),
-    ) {
-        Image(painterResource(R.drawable.logo), contentDescription = null, modifier = Modifier.size(64.dp))
-        Spacer(Modifier.height(14.dp))
-        Text(if (ended) "The session ended" else "Steam is loading", color = Color.White, fontSize = 17.sp)
-        Text(step, color = Color(0xFFB8C4D0), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
-        if (!ended) {
-            Spacer(Modifier.height(14.dp))
-            if (percent >= 0) LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.width(220.dp))
-            else LinearProgressIndicator(modifier = Modifier.width(220.dp))
-            Text(elapsed, color = Color(0xFF667788), fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
-            Text(
-                hint, color = Color(0xFF667788), fontSize = 11.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 18.dp).widthIn(max = 360.dp),
-            )
-        }
-    }
-}
-
-@Composable
-fun SessionPausedOverlay(onResume: () -> Unit) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val resumeFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        androidx.compose.runtime.withFrameNanos { }
-        runCatching { resumeFocus.requestFocus() }
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xF20B0D10))
-            .clickable(interactionSource = interactionSource, indication = null) {},
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(32.dp),
-        ) {
-            OutlinedButton(
-                onClick = onResume,
-                modifier = Modifier.focusRequester(resumeFocus).controllerConfirm(onClick = onResume),
-            ) {
-                Text("Resume session")
-            }
-        }
-    }
 }
 
 /** Everything the drawer shows and does. */
@@ -240,6 +171,12 @@ class DrawerActions(
     val onShareLogs: () -> Unit,
     val onStop: () -> Unit,
     val onClose: () -> Unit,
+    /** Components tab: every Proton with what it uses; null until first read. */
+    val components: ComponentsManager.Snapshot? = null,
+    /** Re-reads the Protons (and runs swaps that waited for a game to close). */
+    val onComponentsRefresh: () -> Unit = {},
+    /** Swaps [value] ("orig:<build>" or a stored package file) into a Proton's component. */
+    val onComponentSwap: (protonId: String, comp: String, value: String) -> Unit = { _, _, _ -> },
 )
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -251,7 +188,7 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
     var androidAppsExpanded by rememberSaveable { mutableStateOf(false) }
     var appToChooseDisplay by remember { mutableStateOf<HomeApp.LaunchableApp?>(null) }
     var confirmStop by remember { mutableStateOf(false) }
-    val pageScroll = remember { List(3) { ScrollState(0) } }
+    val pageScroll = remember { List(DRAWER_PAGES) { ScrollState(0) } }
     val veil by animateFloatAsState(if (open) 1f else 0f, Motion.tw(260), label = "veil")
     val focus = remember { DrawerFocus() }
     val inputModeManager = LocalInputModeManager.current
@@ -261,6 +198,7 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
     }
     BackHandler(enabled = open && confirmStop) { confirmStop = false }
     LaunchedEffect(page) { host.open = null; appToChooseDisplay = null }
+    LaunchedEffect(open, page) { if (open && page == DRAWER_PAGE_COMPONENTS) a.onComponentsRefresh() }
     LaunchedEffect(open, controllerActive) {
         if (open && !controllerActive) focusManager.clearFocus(force = true)
     }
@@ -285,7 +223,11 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
         modifier = Modifier.fillMaxSize().graphicsLayer { alpha = veil }.background(Color(0x8A000000))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { host.open = null; a.onClose() },
     )
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+        // A 4:3 or near-square screen (under 440dp tall) gets one-line shortcuts and a shorter tab row,
+        // so the settings keep most of the height; a narrow one keeps some of the game in view.
+        val short = maxHeight < 440.dp
+        val sheetWidth = minOf(360.dp, maxWidth * 0.92f)
         AnimatedVisibility(
             open,
             enter = slideInHorizontally(Motion.sp(0.8f, Spring.StiffnessLow)) { it } + fadeIn(Motion.tw(220)),
@@ -294,30 +236,22 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(340.dp)
+                    .width(sheetWidth)
                     .background(pal.background.copy(alpha = 0.97f))
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                     .focusGroup()
                     .controllerBack {
                         if (host.open != null) host.open = null else a.onClose()
                     }
-                    .padding(horizontal = 14.dp, vertical = 16.dp),
+                    .padding(if (short) 12.dp else 16.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 6.dp)) {
-                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Brush.linearGradient(listOf(colors.primary, pal.primary2))))
-                    Spacer(Modifier.width(10.dp))
-                    Text(a.title ?: if (a.steam) "Steam" else "Desktop", fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = if (short) 40.dp else 44.dp)) {
+                    Text(a.title ?: if (a.steam) "Steam" else "Desktop", fontSize = if (short) 18.sp else 20.sp, fontWeight = FontWeight.Bold,
                         color = colors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    ShareSessionLogsButton(modifier = focus.track(page, "share-logs")) {
-                        host.open = null
-                        a.onShareLogs()
-                    }
-                    Spacer(Modifier.width(8.dp))
                     StopSessionButton(modifier = focus.track(page, "stop")) { host.open = null; confirmStop = true }
                 }
                 if (a.onSteamMenu != null && a.onQam != null) {
                     val qamInteraction = remember { MutableInteractionSource() }
-                    val qamHot = qamInteraction.collectIsFocusedAsState().value || qamInteraction.collectIsHoveredAsState().value
                     var qamStartedOnPress by remember { mutableStateOf(false) }
                     LaunchedEffect(qamInteraction) {
                         qamInteraction.interactions.collect { interaction ->
@@ -330,59 +264,29 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
                     }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = if (short) 8.dp else 12.dp),
                     ) {
-                        val steamSrc = remember { MutableInteractionSource() }
-                        val steamHot = steamSrc.collectIsFocusedAsState().value || steamSrc.collectIsHoveredAsState().value
-                        OutlinedButton(
-                            onClick = { host.open = null; a.onSteamMenu.invoke() },
-                            interactionSource = steamSrc,
-                            modifier = Modifier.weight(1f).height(48.dp).then(focus.track(page, "steam")).controllerConfirm {
-                                host.open = null
-                                a.onSteamMenu.invoke()
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(if (steamHot) 2.dp else 1.dp, if (steamHot) pal.signal else colors.outline),
-                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (steamHot) pal.signal.copy(alpha = 0.16f) else Color.Transparent),
-                        ) {
-                            Text("STEAM", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+                        QuickAction("Steam menu", Icons.Outlined.Menu, Modifier.weight(1f).then(focus.track(page, "steam")), compact = short) {
+                            host.open = null
+                            a.onSteamMenu.invoke()
                         }
-                        OutlinedButton(
-                            onClick = {
-                                host.open = null
-                                if (!qamStartedOnPress) a.onQam.invoke()
-                                qamStartedOnPress = false
-                            },
+                        QuickAction(
+                            "Quick access", Icons.Outlined.MoreHoriz,
+                            Modifier.weight(1f).then(focus.track(page, "qam")).semantics { contentDescription = "Open Quick Access Menu" },
+                            compact = short,
                             interactionSource = qamInteraction,
-                            modifier = Modifier.weight(1f).height(48.dp).then(focus.track(page, "qam"))
-                                .semantics { contentDescription = "Open Quick Access Menu" }.controllerConfirm {
-                                host.open = null
-                                a.onQam.invoke()
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(if (qamHot) 2.dp else 1.dp, if (qamHot) pal.signal else colors.outline),
-                            colors = ButtonDefaults.outlinedButtonColors(containerColor = if (qamHot) pal.signal.copy(alpha = 0.16f) else Color.Transparent),
+                            onConfirm = { host.open = null; a.onQam.invoke() },
                         ) {
-                            Text("QAM", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+                            host.open = null
+                            if (!qamStartedOnPress) a.onQam.invoke()
+                            qamStartedOnPress = false
                         }
                         // Big Picture's own "Switch to Desktop" waits on SteamOS Manager for ever
                         // here; this does the switch without the client.
                         if (a.onSwitchToDesktop != null) {
-                            val deskSrc = remember { MutableInteractionSource() }
-                            val deskHot = deskSrc.collectIsFocusedAsState().value || deskSrc.collectIsHoveredAsState().value
-                            OutlinedButton(
-                                onClick = { host.open = null; a.onSwitchToDesktop.invoke() },
-                                interactionSource = deskSrc,
-                                modifier = Modifier.weight(1f).height(48.dp).then(focus.track(page, "desktop"))
-                                    .semantics { contentDescription = "Switch to Desktop" }.controllerConfirm {
-                                        host.open = null
-                                        a.onSwitchToDesktop.invoke()
-                                    },
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(if (deskHot) 2.dp else 1.dp, if (deskHot) pal.signal else colors.outline),
-                                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (deskHot) pal.signal.copy(alpha = 0.16f) else Color.Transparent),
-                            ) {
-                                Text("DESKTOP", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+                            QuickAction("Desktop", Icons.Outlined.DesktopWindows, Modifier.weight(1f).then(focus.track(page, "desktop")), compact = short) {
+                                host.open = null
+                                a.onSwitchToDesktop.invoke()
                             }
                         }
                     }
@@ -390,20 +294,19 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = if (short) 6.dp else 12.dp),
                 ) {
-                    DrawerOutlineButton("LB  ‹", modifier = Modifier.height(48.dp).then(focus.track(page, "prev"))) {
-                        host.open = null; onPageChange((page + 2) % 3)
+                    DrawerBumper("LB", "Previous page", modifier = focus.track(page, "prev")) {
+                        host.open = null; onPageChange((page + DRAWER_PAGES - 1) % DRAWER_PAGES)
                     }
-                    DrawerPageTabs(page = page, modifier = Modifier.weight(1f)) { index -> host.open = null; onPageChange(index) }
-                    DrawerOutlineButton("›  RB", modifier = Modifier.height(48.dp).then(focus.track(page, "next"))) {
-                        host.open = null; onPageChange((page + 1) % 3)
+                    DrawerPageTabs(page = page, compact = short, modifier = Modifier.weight(1f)) { index -> host.open = null; onPageChange(index) }
+                    DrawerBumper("RB", "Next page", modifier = focus.track(page, "next")) {
+                        host.open = null; onPageChange((page + 1) % DRAWER_PAGES)
                     }
                 }
-
                 Column(
                     modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(pageScroll[page]),
-                ) {
+                ) { CompositionLocalProvider(LocalChipMinWidth provides 120.dp) {
                     when (page) {
                         0 -> SettingsGroup("Display") {
                             ToggleRow(host, "hud", "Performance HUD", null, a.hudOn,
@@ -413,23 +316,15 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
                                 chipModifier = focus.track(page, "fill"), onChange = a.onFillScreen,
                             )
                             val fgOpen = host.open == "fg"
-                            val fgLabel = when (a.frameGenEngine) {
-                                FrameGen.ENGINE_WINFG -> "Win-FG ${a.frameGenMultiplier}×"
-                                FrameGen.ENGINE_LSFG -> "LSFG ${a.frameGenMultiplier}×"
-                                else -> "Off"
-                            }
+                            val fgLabel = FrameGen.label(a.frameGenEngine, a.frameGenMultiplier)
                             SettingsRow("Frame generation", null, highlighted = fgOpen) {
                                 Box {
                                     ValueChip(fgLabel, fgOpen, modifier = focus.track(page, "fg")) { host.open = if (fgOpen) null else "fg" }
-                                    AnchoredMenu(fgOpen, onDismiss = { if (host.open == "fg") host.open = null }, title = "Frame generation") { firstItemFocus ->
-                                        val need = if (a.lsfgReady) null else "Requires Lossless Scaling"
-                                        MenuItem("Off", checked = a.frameGenEngine == FrameGen.ENGINE_OFF, focusRequester = firstItemFocus) { a.onFrameGenPick(FrameGen.ENGINE_OFF, 2); host.open = null }
-                                        for (m in 2..4) MenuItem("Win-FG ${m}×", checked = a.frameGenEngine == FrameGen.ENGINE_WINFG && a.frameGenMultiplier == m) { a.onFrameGenPick(FrameGen.ENGINE_WINFG, m); host.open = null }
-                                        for (m in 2..4) MenuItem("LSFG ${m}×", checked = a.frameGenEngine == FrameGen.ENGINE_LSFG && a.frameGenMultiplier == m, enabled = a.lsfgReady, detail = need) { a.onFrameGenPick(FrameGen.ENGINE_LSFG, m); host.open = null }
-                                    }
+                                    FrameGenMenu(host, a.frameGenEngine, a.frameGenMultiplier, a.lsfgReady, a.onFrameGenPick)
                                 }
                             }
                         }
+                        DRAWER_PAGE_COMPONENTS -> ComponentsDrawerPage(host, a) { key -> focus.track(page, key) }
                         1 -> {
                             SettingsGroup("Controls") {
                                 ChoiceRow(host, "touch", "Touch", null,
@@ -445,16 +340,16 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
                             }
                             SettingsGroup("Keyboard") {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                                    DrawerOutlineButton("Hardware", modifier = Modifier.weight(1f).height(42.dp).then(focus.track(page, "hardware"))) {
+                                    DrawerOutlineButton("PC keyboard", modifier = Modifier.weight(1f).height(48.dp).then(focus.track(page, "hardware"))) {
                                         host.open = null; a.onHardwareKeyboard()
                                     }
-                                    DrawerOutlineButton("Android", modifier = Modifier.weight(1f).height(42.dp).then(focus.track(page, "android"))) {
+                                    DrawerOutlineButton("Android", modifier = Modifier.weight(1f).height(48.dp).then(focus.track(page, "android"))) {
                                         host.open = null; a.onKeyboard()
                                     }
                                 }
                             }
                             if (a.steam && a.secondScreenDisplays.isNotEmpty()) SettingsGroup("Second screen") {
-                                ChoiceRow(host, "second-screen-mode", "Controls", null,
+                                ChoiceRow(host, "second-screen-mode", "Shows", null,
                                     listOf(SecondScreenMode.NONE, SecondScreenMode.KEYBOARD_TRACKPAD, SecondScreenMode.TERMINAL).map { it to it.label },
                                     a.secondScreenMode, chipModifier = focus.track(page, "second-screen-mode"), onPick = a.onSecondScreenMode)
                                 if (a.secondScreenDisplays.size > 1) ChoiceRow(host, "second-screen-display", "Display", null,
@@ -514,13 +409,21 @@ fun SessionDrawer(open: Boolean, page: Int, controllerActive: Boolean, onPageCha
                                     FexPreset.all.map { it.id to it.label }, a.fexPreset,
                                     chipModifier = focus.track(page, "fex"), onPick = a.onFexPreset)
                             }
+                            SettingsGroup("Support") {
+                                SettingsRow("Session logs", "Send this session's logs with a bug report") {
+                                    DrawerOutlineButton("Share logs", modifier = focus.track(page, "share-logs")) {
+                                        host.open = null
+                                        a.onShareLogs()
+                                    }
+                                }
+                            }
                             Spacer(Modifier.height(18.dp))
                             if (!a.isHomeApp) DrawerOutlineButton("Background", modifier = focus.track(page, "background")) {
                                 host.open = null; a.onBackground()
                             }
                         }
                     }
-                }
+                } }
             }
         }
     }
@@ -594,33 +497,75 @@ private fun StopSessionButton(modifier: Modifier = Modifier, onClick: () -> Unit
     val src = remember { MutableInteractionSource() }
     val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
     val fill by animateColorAsState(if (hot) colors.error.copy(alpha = 0.18f) else Color.Transparent, Motion.tw(220), label = "dangerFill")
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier.size(42.dp).semantics { contentDescription = "Stop session" }
-            .clip(RoundedCornerShape(12.dp)).background(fill).border(1.dp, colors.error.copy(alpha = if (hot) 0.9f else 0.5f), RoundedCornerShape(12.dp))
+    val shape = RoundedCornerShape(20.dp)
+    Row(
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier.heightIn(min = 44.dp).semantics { contentDescription = "Stop session" }
+            .clip(shape).background(fill).border(if (hot) 2.dp else 1.dp, colors.error.copy(alpha = if (hot) 0.9f else 0.55f), shape)
             .hoverable(src).clickable(interactionSource = src, indication = LocalIndication.current, onClick = onClick)
-            .controllerConfirm(onClick = onClick),
-    ) { Text("×", fontSize = 25.sp, fontWeight = FontWeight.Medium, color = colors.error) }
+            .controllerConfirm(onClick = onClick)
+            .padding(start = 12.dp, end = 14.dp),
+    ) {
+        Icon(Icons.Outlined.PowerSettingsNew, contentDescription = null, tint = colors.error, modifier = Modifier.size(18.dp))
+        Text("Stop", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = colors.error)
+    }
 }
 
+/** One of the sheet's shortcuts into Steam: an icon over its name, the whole tile the target. */
 @Composable
-private fun ShareSessionLogsButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun QuickAction(
+    label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier,
+    compact: Boolean = false,
+    interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+    onConfirm: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val hot = interactionSource.collectIsFocusedAsState().value || interactionSource.collectIsHoveredAsState().value
+    val shape = RoundedCornerShape(12.dp)
+    val tile = modifier.height(if (compact) 44.dp else 64.dp).clip(shape)
+        .background(if (hot) pal.signal.copy(alpha = 0.14f) else colors.surface)
+        .border(if (hot) 2.dp else 1.dp, if (hot) pal.signal else pal.line, shape)
+        .hoverable(interactionSource)
+        .clickable(interactionSource = interactionSource, indication = LocalIndication.current, onClick = onClick)
+        .controllerConfirm(onClick = onConfirm ?: onClick)
+        .padding(horizontal = 6.dp)
+    val content: @Composable () -> Unit = {
+        Icon(icon, contentDescription = null, tint = if (hot) pal.signal else colors.onBackground, modifier = Modifier.size(20.dp))
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    if (compact) Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), modifier = tile,
+    ) { content() }
+    else Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically), modifier = tile,
+    ) { content() }
+}
+
+/** A bumper as a keycap, 44dp to touch; LB / RB on the pad turn the page too. */
+@Composable
+private fun DrawerBumper(label: String, description: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     val src = remember { MutableInteractionSource() }
     val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
+    val ring = RoundedCornerShape(10.dp)
+    val cap = RoundedCornerShape(7.dp)
     Box(
         contentAlignment = Alignment.Center,
-        modifier = modifier.widthIn(min = 88.dp).height(42.dp)
-            .semantics { contentDescription = "Send current session logs" }
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (hot) pal.signal.copy(alpha = 0.16f) else Color.Transparent)
-            .border(1.dp, if (hot) pal.signal else colors.outline.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-            .hoverable(src).clickable(interactionSource = src, indication = LocalIndication.current, onClick = onClick)
-            .controllerConfirm(onClick = onClick),
+        modifier = modifier.size(44.dp).clip(ring)
+            .border(2.dp, if (hot) pal.signal else Color.Transparent, ring)
+            .hoverable(src).clickable(interactionSource = src, indication = null, onClick = onClick)
+            .controllerConfirm(onClick = onClick)
+            .semantics { contentDescription = description },
     ) {
-        Text("send logs", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-            color = if (hot) pal.signal else colors.onSurfaceVariant, maxLines = 1)
+        Text(
+            label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (hot) colors.onBackground else colors.onSurfaceVariant,
+            modifier = Modifier.clip(cap).background(colors.surfaceVariant).border(1.dp, pal.line2, cap).padding(horizontal = 6.dp, vertical = 3.dp),
+        )
     }
 }
 
@@ -632,17 +577,24 @@ private fun ShareSessionLogsButton(modifier: Modifier = Modifier, onClick: () ->
  * pad like the dots it replaces.
  */
 @Composable
-private fun DrawerPageTabs(page: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+private fun DrawerPageTabs(page: Int, modifier: Modifier = Modifier, compact: Boolean = false, onSelect: (Int) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     val count = drawerPageIcons.size
     val middle = (count - 1) / 2f
     val motion = tween<Float>(durationMillis = 340, easing = FastOutSlowInEasing)
-    val lean by animateFloatAsState(-(page - middle) * DRAWER_TAB_LEAN_DP, motion, label = "tabLean")
-    Box(
+    androidx.compose.foundation.layout.BoxWithConstraints(
         contentAlignment = Alignment.Center,
-        modifier = modifier.height(64.dp).clipToBounds(),
+        modifier = modifier.height(if (compact) 44.dp else 64.dp).clipToBounds(),
     ) {
+        val tab = if (compact) 40f else 56f
+        // Fit the line to the room between LB and RB. Worst case is an end tab selected: full size
+        // ([tab] dp) and pushed outward by the lean, which scales with the spacing. So
+        //   (count-1) * spacing * (1 + lean/64) + 56 <= width
+        // - never more than the mock's 64 dp, never tighter than 32 dp.
+        val spacing = ((maxWidth.value - tab) / ((count - 1) * (1f + DRAWER_TAB_LEAN_DP / DRAWER_TAB_SPACING_DP))).coerceIn(32f, DRAWER_TAB_SPACING_DP)
+        val leanStep = DRAWER_TAB_LEAN_DP * spacing / DRAWER_TAB_SPACING_DP
+        val lean by animateFloatAsState(-(page - middle) * leanStep, motion, label = "tabLean")
         drawerPageIcons.forEachIndexed { index, icon ->
             val selected = index == page
             val source = remember { MutableInteractionSource() }
@@ -655,8 +607,8 @@ private fun DrawerPageTabs(page: Int, modifier: Modifier = Modifier, onSelect: (
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .offset(x = ((index - middle) * DRAWER_TAB_SPACING_DP + lean).dp)
-                    .size(56.dp)
+                    .offset(x = ((index - middle) * spacing + lean).dp)
+                    .size(tab.dp)
                     .graphicsLayer { scaleX = scale; scaleY = scale; this.alpha = alpha }
                     .clip(RoundedCornerShape(16.dp))
                     .background(
@@ -670,15 +622,146 @@ private fun DrawerPageTabs(page: Int, modifier: Modifier = Modifier, onSelect: (
                     .clickable(interactionSource = source, indication = LocalIndication.current, onClick = select)
                     .controllerConfirm(onClick = select),
             ) {
-                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(30.dp))
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(if (compact) 22.dp else 30.dp))
             }
         }
     }
 }
 
+/** Display, Controls, Components, Settings. */
+const val DRAWER_PAGES = 4
+
+private const val DRAWER_PAGE_COMPONENTS = 2
+
+/**
+ * The drawer's Components tab: quick swaps between what is already installed, per Proton. A swap
+ * into the Proton a running game uses waits until that game closes; downloading, importing and
+ * deleting stay on the Components page in the app.
+ */
+@Composable
+private fun ComponentsDrawerPage(host: MenuHost, a: DrawerActions, track: (String) -> Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val snap = a.components
+    if (snap == null) {
+        SettingsGroup("Components") {
+            Text("Reading the Protons…", fontSize = 13.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(14.dp))
+        }
+        return
+    }
+    val running = snap.protons.filter { it.inUseByGame }
+    var pick by rememberSaveable { mutableStateOf<String?>(null) }
+    val view = snap.protons.firstOrNull { it.proton.id == pick } ?: running.firstOrNull() ?: snap.protons.firstOrNull()
+    // Focusable, so the pad can climb from the Proton box up to it and the page scrolls it into view.
+    SettingsGroup("Running now") {
+        val src = remember { MutableInteractionSource() }
+        val hot = src.collectIsFocusedAsState().value
+        val pal = LocalPalette.current
+        Column(
+            modifier = Modifier.fillMaxWidth().then(track("cmp-running"))
+                .focusable(interactionSource = src)
+                .background(if (hot) pal.signal.copy(alpha = 0.12f) else Color.Transparent)
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+        ) {
+            if (running.isEmpty()) {
+                Text("No game is running on a Proton", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground)
+                Text("Changes apply the next time a game starts.", fontSize = 12.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+            } else for (r in running) {
+                Text(r.proton.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                for (comp in ComponentsManager.COMPONENTS) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 3.dp)) {
+                        Text(ComponentsManager.LABEL.getValue(comp), fontSize = 12.sp, color = colors.onSurfaceVariant, modifier = Modifier.width(96.dp))
+                        Text(r.components.getValue(comp).inUse, fontSize = 12.sp, color = colors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+    }
+    if (view == null) {
+        SettingsGroup("Components") {
+            Text("No Proton is installed yet.", fontSize = 13.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(14.dp))
+        }
+        return
+    }
+    val p = view.proton
+    SettingsGroup("Components") {
+        DrawerStackedChoice(
+            host, "cmp-proton", "Proton",
+            listOfNotNull(
+                p.version,
+                "game running".takeIf { view.inUseByGame },
+                view.reappliedAt.takeIf { it > 0 }?.let { "re-applied at launch " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(it * 1000)) },
+            ).joinToString(" · "),
+            snap.protons.map { it.proton.id to it.proton.name }, p.id,
+            chipModifier = track("cmp-proton"), onPick = { pick = it },
+        )
+        val build = ComponentsManager.safeName(p.version)
+        for (comp in ComponentsManager.COMPONENTS) {
+            val st = view.components.getValue(comp)
+            val originals = view.originals.filter { it.comp == comp }
+            val options = originals.map { "orig:${it.protonVersion}" to (if (it.protonVersion == build) "Original" else "Original · ${it.protonVersion}") } +
+                snap.packages.filter { it.comp == comp }.map { it.file to it.version }
+            if (options.isEmpty()) continue
+            val current = st.activeFile ?: "orig:$build"
+            val shown = options.firstOrNull { it.first == current }?.second
+            DrawerStackedChoice(
+                host, "cmp-$comp", ComponentsManager.LABEL.getValue(comp),
+                // The box already shows the choice: only say more when there is more to say.
+                st.queued?.let { "Next: $it · after the game closes" } ?: st.inUse.takeIf { it != shown },
+                options, current,
+                note = if (view.inUseByGame) "A game is running on this Proton: the change waits until it closes." else "Applies the next time a game starts.",
+                chipModifier = track("cmp-$comp"),
+                onPick = { v -> if (v != current || st.queued != null) a.onComponentSwap(p.id, comp, v) },
+            )
+        }
+    }
+    Text(
+        "Downloads, importing and deleting are on the Components page in the app.",
+        fontSize = 12.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+    )
+}
+
+/**
+ * A choice for the drawer's narrow column: label, then the box across the full width, then the
+ * detail underneath - so a long Proton or package name never squeezes the text beside it.
+ */
+@Composable
+private fun <T> DrawerStackedChoice(
+    host: MenuHost, key: String, label: String, hint: String?,
+    options: List<Pair<T, String>>, selected: T, note: String? = null,
+    chipModifier: Modifier = Modifier, onPick: (T) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val open = host.open == key
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .background(if (open) pal.signal.copy(alpha = 0.10f) else Color.Transparent)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground)
+        Box(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+            ValueChip(options.firstOrNull { it.first == selected }?.second ?: "-", open, modifier = chipModifier.fillMaxWidth()) {
+                host.open = if (open) null else key
+            }
+            AnchoredMenu(open, onDismiss = { if (host.open == key) host.open = null }, title = label, note = note) { firstItemFocus ->
+                options.forEachIndexed { index, (value, text) ->
+                    MenuItem(text, checked = value == selected, focusRequester = if (index == 0) firstItemFocus else null) {
+                        onPick(value)
+                        host.open = null
+                    }
+                }
+            }
+        }
+        if (hint != null) Text(hint, fontSize = 12.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 5.dp))
+    }
+    Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
+}
+
 /** The tab row's measure, from the approved mock: side tabs at half size, a little faded. */
 private const val DRAWER_TAB_SPACING_DP = 64f
-private const val DRAWER_TAB_LEAN_DP = 12f
-private const val DRAWER_TAB_SIDE_SCALE = 0.5f
-private const val DRAWER_TAB_SIDE_ALPHA = 0.7f
 
+private const val DRAWER_TAB_LEAN_DP = 12f
+
+private const val DRAWER_TAB_SIDE_SCALE = 0.5f
+
+private const val DRAWER_TAB_SIDE_ALPHA = 0.7f

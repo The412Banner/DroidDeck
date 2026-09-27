@@ -7,6 +7,44 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
+## 2026-09-25 - main `8cdedbe`: melonDS out of the box, touch in Big Picture, log privacy, Decky
+
+State: **main = `8cdedbe`** (PR #22 merge). Device-tested on the AYANEO Pocket FIT (repacked test builds)
+unless marked. gamescope now staged from release **`gamescope-3.16.29-p3`**.
+
+- **PR #18 → `9369dc3`** (`feat/melonds-preset`) - melonDS and the session:
+  - **melonDS preset** (`bannerlator-pad-defaults`): the top screen as big as the panel allows with the bottom
+    screen alone beside it, centred (Horizontal + Emphasize top; Hybrid repeats the top screen), sharp pixels;
+    full screen from the front end (`-f`) at the panel's own resolution; the guide button toggles full
+    screen, leaving to a 1x-wide 16:9 window whose menus gamescope stretches to a usable size; DS/DSi BIOS,
+    firmware and NAND found in `ROMs/nds/{bios,firmware}` (BIOS by checksum). Existing installs moved once.
+  - **Desktop**: `QT_QPA_PLATFORM="wayland;xcb"` (the melonDS AppImage ships only xcb and exited at once);
+    a labwc window rule opens melonDS at 800x600, centred.
+  - **HUD** follows the game window, not gamescope's 1x1 cursor or Qt menus (read 0 fps at 60).
+  - **Cursor**: hides on pad / on-screen-control input (Bannerlator's 1.2 s rule), and shows the program's own
+    shape - labwc's resize arrows, I-beams, a hide (Bannerlator's `wl_pointer.set_cursor` port; new here:
+    labwc's GPU cursor is a UBWC dma-buf, read back through `vkp_image_readback`).
+  - **Steam desktop switching**: "Steam Desktop UI" opens the desktop with Steam's desktop client in it (under
+    gamescope the client picks Big Picture regardless); the drawer's **DESKTOP** button does it from Big
+    Picture; relaunches restart the singleTop activity in place (`startActivity` from it was swallowed).
+    Big Picture's own Power → Switch to Desktop still hangs: it waits on SteamOS Manager before its
+    `steamos-session-select` fallback (stub included; a session bus did not help - tried and reverted).
+- **PR #19 → `ce0da01`** (`fix/log-privacy`) - no credentials or identities in session logs: the device's
+  public addresses (the client's IPv6 check logs "external address" ~20x a session), `network.txt` addresses
+  as their kind and the MAC masked, every Steam AccountName/PersonaName (plain account names leaked in the
+  UI log's login lines), and every text file scrubbed at session end and in the share-logs zip. Verified:
+  0 hits across 83 session folders.
+- **PR #16 → `5270574`** (Decky Loader, Kurt) - merged with the Steam CEF debugging marker tied to the
+  supervisor toggle (it was created at install; on Android any app can reach 127.0.0.1:8080 - proven from
+  another uid). Decky's own updater still points at the official project (no ARM64 build there).
+- **PR #20 → `036317f`** (Kurt) - local builds carry the CI payload (NDK proot, patched gamescope).
+- **PR #22 → `8cdedbe`** (`feat/steam-touch`) - touch in Big Picture: gamescope `0110` binds `wl_touch` in the
+  nested backend and feeds wlserver's touch path (Big Picture sets Passthrough: tap and swipe rows as on a
+  Deck); `0111` makes the nested pointer warp in Passthrough (touchpad mode: hover and tap-to-click work);
+  the compositor's pointer fallback no longer jams on a lost finger-up.
+- **In design, not built**: the drawer's page dots as QAM-style icons (Display / Controls / Settings), the
+  selected one "stepping forward" in a line; mock `droiddeck-drawer-tabs-preview.html`.
+
 ## 2026-09-24 (afternoon) - main `94f9935`: PS1, controller focus, own signing key, CI hardening
 
 State: **main = `94f9935`** (PR #41 merge), main build run 36036219740 - the first one signed with

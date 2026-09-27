@@ -249,7 +249,7 @@ fun CollapsibleRail(
                     TextButton(onClick = link.onClick, modifier = Modifier.padding(start = 4.dp)) {
                         Icon(link.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(link.label, fontSize = 11.sp)
+                        Text(link.label, fontSize = 12.sp)
                     }
                 }
             }
@@ -269,7 +269,7 @@ fun CollapsibleRail(
                 Text(
                     section.header,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    fontSize = 9.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.6.sp,
                     modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 2.dp),

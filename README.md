@@ -1,4 +1,9 @@
-# DroidDeck
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="artwork/droiddeck-banner-dark.svg">
+    <img alt="DroidDeck" src="artwork/droiddeck-banner-light.svg" width="100%">
+  </picture>
+</p>
 
 Run Valve's native ARM64 Steam client on an Adreno Android device. Steam runs in a Linux runtime under proot, with gamescope and an in-app Vulkan compositor. Windows games use Valve's ARM64 Proton and FEX. A desktop with LXQt, Firefox, and emulators is also available.
 

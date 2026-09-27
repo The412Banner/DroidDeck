@@ -5,7 +5,6 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
-import android.provider.Settings
 import android.util.Log
 import com.droiddeck.launcher.gpu.LinuxVulkanDriver
 import com.droiddeck.launcher.gpu.LinuxVulkanDriverManager
@@ -162,21 +161,7 @@ object DeviceReport {
         })
 
         h("Android process limits")
-        // Android 12 kills "phantom" processes - the children an app forks itself rather than
-        // starting through the framework - once there are more than a handful of them. A session is
-        // nothing but those: proot, gamescope, Xwayland, the client, its helpers, Wine, FEX. Where
-        // this is left on, the OS kills the session and nothing in our logs says why, because
-        // nothing in the session did it. Some ROMs expose it in Developer options as a
-        // "restrict child processes" switch; otherwise it is
-        //   adb shell settings put global settings_enable_monitor_phantom_procs false
-        val phantom = runCatching {
-            Settings.Global.getString(context.contentResolver, "settings_enable_monitor_phantom_procs")
-        }.getOrNull()
-        k("Phantom proc monitor", when (phantom?.lowercase()) {
-            "false", "0" -> "disabled  (good - the OS will not kill the session's children)"
-            null, "" -> "not set  (ROM default, usually ENABLED - see the note below)"
-            else -> "ENABLED  (the OS may kill the session with no log; turn off \"restrict child processes\")"
-        })
+        k("Phantom proc monitor", PhantomProcessLimit.reportValue(PhantomProcessLimit.read(context.contentResolver)))
 
         h("Device switch files in Download")
         for (name in listOf("droiddeck-env", "droiddeck-tu-debug", "droiddeck-driver",

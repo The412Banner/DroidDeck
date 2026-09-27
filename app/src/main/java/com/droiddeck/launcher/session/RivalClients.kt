@@ -3,7 +3,6 @@ package com.droiddeck.launcher.session
 import android.app.ActivityManager
 import android.content.Context
 import android.util.Log
-import android.widget.Toast
 
 /**
  * Other apps on the device that sign into the user's Steam account with their own client. Steam
@@ -34,31 +33,21 @@ object RivalClients {
     fun name(pkg: String): String = if (pkg == "com.xiaoji.egggame") "GameHub" else pkg
 
     /**
-     * Stop the installed rivals' background processes before the client starts, and say so. A
-     * rival in the foreground survives this, so the wording covers that case too. Call on the main
-     * thread; the Toast is shown from here.
+     * Stop the installed rivals' background processes before the client starts. A rival in the
+     * foreground survives this. The activity service call and its log messages are unchanged.
      */
     fun stopBeforeSession(context: Context) {
         val rivals = installed(context)
         if (rivals.isEmpty()) return
-        val who = name(rivals[0])
         Log.w(TAG, "competing Steam client installed: $rivals")
-        var asked = false
         try {
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             if (am != null) {
                 for (pkg in rivals) am.killBackgroundProcesses(pkg)
-                asked = true
                 Log.i(TAG, "asked Android to stop background processes of $rivals")
             }
         } catch (t: Throwable) {
             Log.w(TAG, "could not stop competing Steam clients", t)
         }
-        Toast.makeText(
-            context,
-            if (asked) "Closed $who in the background - it signs into your Steam account."
-            else "If $who is open, close it first - it signs into your Steam account and will sign this client out.",
-            Toast.LENGTH_LONG,
-        ).show()
     }
 }

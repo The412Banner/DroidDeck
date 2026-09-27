@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.droiddeck.launcher.ui.DroidDeckTheme
+import com.droiddeck.launcher.ui.onSignal
 import com.droiddeck.launcher.ui.LocalPalette
 
 class ControllerEditorActivity : ComponentActivity() {
@@ -47,7 +48,7 @@ class ControllerEditorActivity : ComponentActivity() {
                             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), RoundedCornerShape(50))
                             .padding(start = 14.dp, end = 5.dp, top = 5.dp, bottom = 5.dp),
                     ) {
-                        Text("Drag to move", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 4.dp))
+                        Text("Drag to move", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 4.dp))
                         EditorButton("Reset", false) { controls.resetLayout() }
                         EditorButton("Cancel", false) { finish() }
                         EditorButton("Save", true) {
@@ -67,7 +68,7 @@ class ControllerEditorActivity : ComponentActivity() {
         val pal = LocalPalette.current
         Text(
             label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-            color = if (primary) Color.White else MaterialTheme.colorScheme.onBackground,
+            color = if (primary) pal.onSignal else MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.clip(RoundedCornerShape(50))
                 .background(if (primary) pal.signal else Color.White.copy(alpha = 0.06f))
                 .clickable(onClick = onClick)

@@ -34,6 +34,7 @@
 #include <sys/types.h>
 
 int bl_status_without_tracer(const char *path, int flags) __attribute__((visibility("hidden")));
+int bl_writable_retry(int dirfd, const char *path, int flags) __attribute__((visibility("hidden")));
 
 static int retry_without_noatime(int fd, int flags) {
   return fd < 0 && errno == EPERM && (flags & O_NOATIME);
@@ -67,6 +68,8 @@ int open(const char *path, int flags, ...) {
   }
   fd = real_open(path, flags, mode);
   if (retry_without_noatime(fd, flags)) fd = real_open(path, flags & ~O_NOATIME, mode);
+  /* A read-only file the Steam client rewrites (perms.c). */
+  if (fd < 0 && bl_writable_retry(AT_FDCWD, path, flags)) fd = real_open(path, flags & ~O_NOATIME, mode);
   return fd;
 }
 
@@ -91,6 +94,7 @@ int openat(int dirfd, const char *path, int flags, ...) {
   }
   fd = real_openat(dirfd, path, flags, mode);
   if (retry_without_noatime(fd, flags)) fd = real_openat(dirfd, path, flags & ~O_NOATIME, mode);
+  if (fd < 0 && bl_writable_retry(dirfd, path, flags)) fd = real_openat(dirfd, path, flags & ~O_NOATIME, mode);
   return fd;
 }
 

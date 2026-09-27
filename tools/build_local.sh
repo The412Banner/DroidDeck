@@ -100,7 +100,7 @@ docker run --rm --platform linux/amd64 \
         d=app/src/main/assets/linuxfs
         mkdir -p "$d"
         aarch64-linux-gnu-g++ -shared -fPIC -O2 -Wall -Wno-attributes -Wno-nonnull-compare \
-            -pthread -std=c++17 -static-libstdc++ -static-libgcc \
+            -pthread -std=c++17 -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL \
             -o "$d/libfakeinput.so" app/src/main/cpp/fakeinput_steam.cpp -ldl
         aarch64-linux-gnu-strip --strip-unneeded "$d/libfakeinput.so"
         aarch64-linux-gnu-gcc -shared -fPIC -O2 -Wall -pthread \
@@ -290,7 +290,7 @@ rm -f "${apk}.aligned" "${apk}.idsig"
 
 signature_output=$("${build_tools}/apksigner" verify --min-sdk-version 21 --verbose --print-certs "${apk}")
 printf '%s\n' "${signature_output}"
-if ! unzip -l "${apk}" | grep -qE 'META-INF/.*\.(SF|RSA|DSA)$'; then
+if ! unzip -l "${apk}" | grep -E 'META-INF/.*\.(SF|RSA|DSA)$' >/dev/null; then
     echo "APK signature check failed: JAR signature files are missing." >&2
     exit 1
 fi

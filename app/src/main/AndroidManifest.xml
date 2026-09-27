@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Session logs go to Downloads so a failed run can be handed over as one folder. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
@@ -47,7 +48,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="sensorLandscape">
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="keyboard|keyboardHidden|navigation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -124,6 +126,10 @@
             android:name=".session.SessionService"
             android:exported="false"
             android:stopWithTask="false" />
+        <!-- Holds the process in the foreground while the Linux runtime downloads and unpacks. -->
+        <service
+            android:name=".runtime.RuntimeInstallService"
+            android:exported="false" />
         <!-- Hands a zipped session folder to the share sheet; nothing else is exposed. -->
         <provider
             android:name="androidx.core.content.FileProvider"

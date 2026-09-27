@@ -4,7 +4,9 @@ import android.content.Context;
 import android.util.Log;
 
 
+import com.droiddeck.launcher.core.ArchivePaths;
 import com.droiddeck.launcher.core.Downloader;
+import com.droiddeck.launcher.core.Hashes;
 import com.droiddeck.launcher.core.FileUtils;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
@@ -23,7 +25,8 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Downloads and unpacks the Linux runtime rootfs into {@code files/linuxfs}. It is opt-in: nothing
@@ -52,13 +55,30 @@ public final class LinuxRuntimeInstaller {
         public final String sha256;
         public final long size;
 
-        Release(String version, String url, String sha256, long size) {
+        public Release(String version, String url, String sha256, long size) {
             this.version = version;
             this.url = url;
             this.sha256 = sha256;
             this.size = size;
         }
     }
+
+    /**
+     * One install per process. The launcher and the session screen can both start one, and a
+     * launcher rebuilt mid-install (a pad plugged in, dark mode switched) forgets it had: a second
+     * install would share the first one's archive and staging directory and wreck both.
+     */
+    private static final class Job {
+        final CopyOnWriteArrayList<ProgressListener> listeners = new CopyOnWriteArrayList<>();
+        final CountDownLatch done = new CountDownLatch(1);
+        volatile String stage = "Starting\u2026";
+        volatile int percent = -1;
+        volatile boolean ok;
+    }
+
+    private static final Object JOB_LOCK = new Object();
+    private static Job running;
+    private static boolean removing;
 
     private LinuxRuntimeInstaller() {}
 
@@ -104,6 +124,66 @@ public final class LinuxRuntimeInstaller {
      * not. An update therefore keeps Steam, the login and the installed games.
      */
     public static boolean install(Context context, Release release, ProgressListener listener) {
+        Job job;
+        boolean owner;
+        synchronized (JOB_LOCK) {
+            if (removing) return false;
+            owner = running == null;
+            if (owner) running = new Job();
+            job = running;
+            if (listener != null) job.listeners.add(listener);
+        }
+        if (!owner) return join(job, listener);
+        try {
+            job.ok = installOnce(context.getApplicationContext(), release, (stage, percent) -> {
+                job.stage = stage;
+                job.percent = percent;
+                for (ProgressListener l : job.listeners) l.onProgress(stage, percent);
+            });
+            return job.ok;
+        } finally {
+            synchronized (JOB_LOCK) {
+                running = null;
+            }
+            job.done.countDown();
+        }
+    }
+
+    /** True while an install is running in this process, whoever started it. */
+    public static boolean isInstalling() {
+        synchronized (JOB_LOCK) {
+            return running != null;
+        }
+    }
+
+    /**
+     * Follows the install already running, for a screen that was rebuilt mid-install. Blocks until
+     * it ends and returns its result, or returns null at once when nothing is installing.
+     */
+    public static Boolean attach(ProgressListener listener) {
+        Job job;
+        synchronized (JOB_LOCK) {
+            job = running;
+            if (job == null) return null;
+            if (listener != null) job.listeners.add(listener);
+        }
+        return join(job, listener);
+    }
+
+    private static boolean join(Job job, ProgressListener listener) {
+        try {
+            if (listener != null) listener.onProgress(job.stage, job.percent);
+            job.done.await();
+            return job.ok;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } finally {
+            if (listener != null) job.listeners.remove(listener);
+        }
+    }
+
+    private static boolean installOnce(Context context, Release release, ProgressListener listener) {
         File archive = new File(context.getCacheDir(), "linuxfs.tar.zst");
         try {
             if (listener != null) listener.onProgress("Downloading", 0);
@@ -120,7 +200,7 @@ public final class LinuxRuntimeInstaller {
             }
 
             if (listener != null) listener.onProgress("Verifying", -1);
-            String actual = sha256(archive);
+            String actual = Hashes.sha256(archive);
             if (!release.sha256.equalsIgnoreCase(actual)) {
                 Log.w(TAG, "checksum mismatch: wanted " + release.sha256 + ", got " + actual);
                 return false;
@@ -177,8 +257,20 @@ public final class LinuxRuntimeInstaller {
         }
     }
 
-    public static void uninstall(Context context) {
-        FileUtils.delete(LinuxRuntime.rootDir(context));
+    /** Removes the runtime; returns false without touching it while an install is running. */
+    public static boolean uninstall(Context context) {
+        synchronized (JOB_LOCK) {
+            if (running != null || removing) return false;
+            removing = true;
+        }
+        try {
+            FileUtils.delete(LinuxRuntime.rootDir(context));
+            return true;
+        } finally {
+            synchronized (JOB_LOCK) {
+                removing = false;
+            }
+        }
     }
 
     /**
@@ -193,12 +285,10 @@ public final class LinuxRuntimeInstaller {
                 new BufferedInputStream(new FileInputStream(archive), 1 << 16));
              TarArchiveInputStream tar = new TarArchiveInputStream(in)) {
             TarArchiveEntry entry;
-            String base = destination.getCanonicalPath() + File.separator;
             while ((entry = tar.getNextTarEntry()) != null) {
-                File file = new File(destination, entry.getName());
                 // Refuse anything that would land outside the runtime directory.
-                if (!(file.getCanonicalPath() + (entry.isDirectory() ? File.separator : "")).startsWith(base)
-                        && !file.getCanonicalPath().equals(destination.getCanonicalPath())) {
+                File file = ArchivePaths.inside(destination, entry.getName());
+                if (file == null) {
                     Log.w(TAG, "skipping entry outside the rootfs: " + entry.getName());
                     continue;
                 }
@@ -215,7 +305,13 @@ public final class LinuxRuntimeInstaller {
                 } else if (entry.isLink()) {
                     // A hard link to an earlier entry. Link where the filesystem allows it and
                     // fall back to a copy, which costs space but always works.
-                    File target = new File(destination, entry.getLinkName());
+                    // The target is checked too: a link to "../../shared_prefs/x" would pull a
+                    // file from outside the rootfs into it.
+                    File target = ArchivePaths.inside(destination, entry.getLinkName());
+                    if (target == null) {
+                        Log.w(TAG, "skipping hard link outside the rootfs: " + entry.getLinkName());
+                        continue;
+                    }
                     file.delete();
                     try {
                         Files.createLink(file.toPath(), target.toPath());
@@ -243,17 +339,5 @@ public final class LinuxRuntimeInstaller {
             Log.e(TAG, "extract", e);
             return false;
         }
-    }
-
-    public static String sha256(File file) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (InputStream in = new BufferedInputStream(new FileInputStream(file), 1 << 16)) {
-            byte[] buffer = new byte[1 << 16];
-            int read;
-            while ((read = in.read(buffer)) != -1) digest.update(buffer, 0, read);
-        }
-        StringBuilder sb = new StringBuilder();
-        for (byte b : digest.digest()) sb.append(String.format("%02x", b));
-        return sb.toString();
     }
 }

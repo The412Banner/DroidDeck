@@ -41,12 +41,12 @@ fun ColumnScope.ControllerRows(host: MenuHost, oscMode: String, c: ControllerPre
         oscMode, note = "Auto shows all controls without a controller. Steam + QAM shows only those buttons.", onPick = a.onOsc,
     )
     val tintOpen = host.open == "controller-tint"
-    SettingsRow("Colour", "Tint of the on-screen buttons", highlighted = tintOpen) {
+    SettingsRow("Color", "Tint of the on-screen buttons", highlighted = tintOpen) {
         Box {
             ValueChip(ControllerPrefs.tints.firstOrNull { it.first == c.tint }?.second ?: "Custom", tintOpen) {
                 host.open = if (tintOpen) null else "controller-tint"
             }
-            AnchoredMenu(tintOpen, onDismiss = { if (host.open == "controller-tint") host.open = null }, title = "Colour") { firstItemFocus ->
+            AnchoredMenu(tintOpen, onDismiss = { if (host.open == "controller-tint") host.open = null }, title = "Color") { firstItemFocus ->
                 ControllerPrefs.tints.forEachIndexed { index, (color, name) ->
                     MenuItem(name, checked = c.tint == color, leading = { Swatch(color) }, focusRequester = if (index == 0) firstItemFocus else null) {
                         a.onTint(color)
@@ -59,7 +59,7 @@ fun ColumnScope.ControllerRows(host: MenuHost, oscMode: String, c: ControllerPre
     ChoiceRow(host, "controller-opacity", "Opacity", null, ControllerPrefs.opacities.map { it to "$it%" }, c.opacity, onPick = a.onOpacity)
     ChoiceRow(host, "controller-size", "Button size", "100% keeps the standard size", ControllerPrefs.sizes.map { it to "$it%" }, c.size, onPick = a.onSize)
     ToggleRow(host, "controller-stick-click", "Stick click", "Double-tap a stick and hold for L3 or R3", c.stickClick, onChange = a.onStickClick)
-    ToggleRow(host, "controller-adaptive", "Adaptive sticks", "A stick centres where your thumb lands and returns home when you let go", c.adaptiveSticks, onChange = a.onAdaptiveSticks)
+    ToggleRow(host, "controller-adaptive", "Adaptive sticks", "A stick centers where your thumb lands and returns home when you let go", c.adaptiveSticks, onChange = a.onAdaptiveSticks)
     SettingsRow("Layout", if (c.customLayout) "Custom positions saved" else "Placed for this screen's size and your grip") {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             SecondaryButton("Edit") { a.onEditLayout() }
@@ -68,7 +68,7 @@ fun ColumnScope.ControllerRows(host: MenuHost, oscMode: String, c: ControllerPre
     }
     val remapped = c.mapping.count { (id, target) -> id != target }
     ActionRow("Button mapping", if (remapped == 0) "Every button sends its own input" else "$remapped of ${c.mapping.size} buttons remapped", "Configure", a.onMapping)
-    ActionRow("Reset controller", "Restore the default colour, opacity, size, stick behaviour, mapping and layout", "Reset", a.onResetAll)
+    ActionRow("Reset controller", "Restore the default color, opacity, size, stick behavior, mapping and layout", "Reset", a.onResetAll)
 }
 
 @Composable

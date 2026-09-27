@@ -717,8 +717,36 @@ CEMU_XML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+# Cemu's settings, so its Getting Started dialog (shown while settings.xml is missing, and whose
+# folder picker cannot reach ROMs) never blocks a launch: the Wii U games folder, Vulkan
+# (Graphic api 1), and audio through Cubeb (the only backend on Linux; api 3) on the default
+# device for both the TV and the GamePad speaker - some titles play everything through the
+# GamePad - at full volume (Cemu's own default is 20 %). Keys from config/CemuConfig.cpp.
+CEMU_SETTINGS = """<?xml version="1.0" encoding="UTF-8"?>
+<content>
+    <mlc_path></mlc_path>
+    <GamePaths>
+        <Entry>{games}</Entry>
+    </GamePaths>
+    <Graphic>
+        <api>1</api>
+    </Graphic>
+    <Audio>
+        <api>3</api>
+        <TVVolume>100</TVVolume>
+        <PadVolume>100</PadVolume>
+        <TVDevice>default</TVDevice>
+        <PadDevice>default</PadDevice>
+    </Audio>
+</content>
+"""
+
+
 def cemu():
     seed(os.path.join(CONFIG, "Cemu/controllerProfiles/controller0.xml"), CEMU_XML, "Cemu")
+    games = system_folder(["wiiu", "wii u"], "wiiu")
+    seed(os.path.join(CONFIG, "Cemu/settings.xml"), CEMU_SETTINGS.format(games=games), "Cemu",
+         done=f"games in {games}, Vulkan, Cubeb audio on the default device")
 
 
 # melonDS 1.x: raw SDL joystick indices. The session's pad has the kernel's Xbox 360 layout

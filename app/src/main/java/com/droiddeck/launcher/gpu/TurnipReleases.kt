@@ -1,5 +1,6 @@
 package com.droiddeck.launcher.gpu
 
+import com.droiddeck.launcher.core.Hashes
 import android.content.Context
 import com.droiddeck.launcher.core.FileUtils
 import org.json.JSONArray
@@ -27,7 +28,9 @@ object TurnipReleases {
     private const val KEY_DOWNLOADS = "downloads"
 
     /** [label] names the variant for the menu: the GPUs it is for, and a build flavour. */
-    class Asset(val source: String, val tag: String, val name: String, val url: String, val size: Long, val linux: Boolean, val label: String)
+    /** [sha256] is the release asset's digest from GitHub; empty for a list cached before it was kept. */
+    class Asset(val source: String, val tag: String, val name: String, val url: String, val size: Long, val linux: Boolean, val label: String,
+                val sha256: String = "")
     /** [latest] = each source's newest release tag, for the refresh line. */
     class Check(val assets: List<Asset>, val latest: List<Pair<String, String>>, val failed: List<String>, val checkedAt: Long)
 
@@ -89,11 +92,13 @@ object TurnipReleases {
                         val a = list.getJSONObject(j)
                         val name = a.getString("name")
                         val (linux, label) = src.classify(name, tag) ?: continue
+                        // Only assets GitHub has a sha256 for are offered: the download is checked against it.
+                        val sha = Hashes.githubSha256(a.optString("digest")) ?: continue
                         // Newest first: the first release carrying a variant is the one offered.
                         if (!seen.add("$linux|$label")) continue
                         assets.put(JSONObject().put("source", src.label).put("tag", tag).put("name", name)
                             .put("url", a.getString("browser_download_url")).put("size", a.optLong("size"))
-                            .put("linux", linux).put("label", label))
+                            .put("linux", linux).put("label", label).put("sha256", sha))
                     }
                 }
                 if (newest != null) latest.put(JSONObject().put("source", src.label).put("tag", newest))
@@ -131,7 +136,7 @@ object TurnipReleases {
         for (i in 0 until list.length()) {
             val a = list.getJSONObject(i)
             out.add(Asset(a.getString("source"), a.getString("tag"), a.getString("name"), a.getString("url"),
-                a.optLong("size"), a.getBoolean("linux"), a.getString("label")))
+                a.optLong("size"), a.getBoolean("linux"), a.getString("label"), a.optString("sha256", "")))
         }
         val latest = ArrayList<Pair<String, String>>()
         val l = json.optJSONArray("latest") ?: JSONArray()
@@ -167,6 +172,7 @@ object TurnipReleases {
 
     /** Download an asset into the cache; the caller imports it and deletes the file. */
     fun download(context: Context, asset: Asset, progress: (Int) -> Unit): File {
+        if (asset.sha256.isEmpty()) throw IOException("This driver list predates checksums - refresh it and try again")
         val target = File(context.cacheDir, asset.name)
         val c = URL(asset.url).openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
@@ -190,6 +196,9 @@ object TurnipReleases {
                         if (pct != last) { last = pct; progress(pct) }
                     }
                 }
+            }
+            if (!asset.sha256.equals(Hashes.sha256(target), ignoreCase = true)) {
+                throw IOException("Checksum mismatch - the download was discarded")
             }
             return target
         } catch (e: Exception) {

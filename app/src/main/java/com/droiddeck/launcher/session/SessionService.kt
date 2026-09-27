@@ -263,150 +263,17 @@ class SessionService : Service() {
         killStragglers()
         SessionFiles.stage(this, root)
 
-        // One folder per session, claimed by whoever started first - the activity starts the
-        // compositor before this service runs - so the compositor's log lands in the same place.
-        val sessionDir = SessionPaths.beginOrCurrent(this)
+        val sessionDir = openSessionFolder()
         val sessionLog = File(sessionDir, "session.log")
-        SessionState.logFile = sessionLog
-        SessionState.logDirectory = sessionDir
-        SessionState.sessionId = sessionDir.name
-        SessionState.eventsFile = File(sessionDir, "events.jsonl")
-        SessionEvents.record("session.logs_ready", mapOf("logDir" to sessionDir.path))
-        // Written first, so a session that dies in its first second still says what it ran on.
-        DeviceReport.write(this, File(sessionDir, "device.txt"), SessionState.mode)
-        NetworkReport.write(this, File(sessionDir, "network.txt"))
-        // Everything the app decides from here on - the driver it chose, the audio line, a rival
-        // client stopped, the exit status - reaches logcat and nowhere a user can get at. Mirror it.
-        SessionLogCapture.start(File(sessionDir, "app.log"))
 
         val size = SessionState.outputSize
         val guest = ArrayList<String>()
-        guest.add("/usr/bin/env")
-        guest.add("-i")
-        guest.add("HOME=/root")
-        guest.add("USER=root")
-        guest.add("PATH=/usr/local/bin:/usr/bin:/bin")
-        guest.add("TERM=xterm-256color")
-        guest.add("LANG=C.UTF-8")
-        // Without this the session is UTC: the client's clock, its logs and every timestamp in a
-        // session bundle sit hours off the device's. Bannerlator carries the same line.
-        guest.add("TZ=" + java.util.TimeZone.getDefault().id)
-        guest.add("XDG_RUNTIME_DIR=" + runtimeDir.path)
-        guest.add("XDG_SESSION_TYPE=wayland")
-        guest.add("WAYLAND_DISPLAY=wayland-0")
-        guest.add("GAMESCOPE_FORCE_GENERAL_QUEUE=1")
-        // Steam's CEF needs GL and the rootfs ships no native GL driver: route it through Zink.
-        guest.add("MESA_LOADER_DRIVER_OVERRIDE=zink")
-        guest.add("GALLIUM_DRIVER=zink")
-        guest.add("LIBGL_KOPPER_DRI2=true")
-        LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
-        // An imported glibc Turnip for this mode, when the user chose one: the session script checks
-        // the manifest and its library from inside and points the loader at it with VK_DRIVER_FILES,
-        // so the runtime's own driver above stays untouched and is what a bad import falls back to.
-        // A program from the rail is one of the desktop's emulators, so it draws with the desktop's
-        // Linux driver, not the Steam session's: the driver's shader cache is keyed on the driver
-        // build, and with two drivers every emulator compiled its shaders twice - once per way of
-        // starting it (RPCS3's 6650 interpreter variants on each first boot).
-        val driverMode = if (SessionState.mode == MODE_RUN) MODE_DESKTOP else SessionPrefs.prefMode(SessionState.mode)
-        val linuxDriverId = SessionPrefs.linuxDriver(this, driverMode)
-        LinuxVulkanDriver.resolveIcdPath(this, linuxDriverId)
-            ?.let { guest.add(LinuxVulkanDriver.ENV + "=" + it) }
-        // Turnip's own debug switches, for the runtime's driver and everything on it. The file in
-        // Downloads holds the value verbatim ("sysmem", "sysmem,deck_emu"); with nothing there, an
-        // imported driver from the A710/A720/A722 legs gets "sysmem" on its own, which is what both
-        // its authors advise for those GPUs and what nothing else in the list needs.
-        tuDebug(linuxDriverId)?.let { guest.add("TU_DEBUG=$it") }
-        // Zink renders the client's UI (Chromium -> ANGLE -> Zink -> Turnip). Lazy descriptors is
-        // the mode Zink recommends where the driver has no descriptor buffer, and what Ludashi ships
-        // by default for its Zink path; a switch here because on one Fold the menus run at 14 fps.
-        if (SessionPrefs.zinkLazy(this)) guest.add("ZINK_DESCRIPTORS=lazy")
-        // The rest of the client-interface switches (SessionPrefs): GL marshalled off the calling
-        // thread, no GL error checks, and the client run as SteamOS runs it (the script reads
-        // BL_STEAMDECK; it is the one that builds the command line).
-        if (SessionPrefs.glThread(this)) guest.add("mesa_glthread=true")
-        if (SessionPrefs.noGlError(this)) guest.add("MESA_NO_ERROR=1")
-        if (SessionState.mode == MODE_STEAM) guest.add("BL_STEAMDECK=" + (if (SessionPrefs.steamDeckMode(this)) "1" else "0"))
         // The desktop's Steam launchers start the client there (bannerlator-steam-launch), through the
         // same set-up as a Steam session: it gets what the client and its games are started with.
         val steamHere = SessionState.mode == MODE_STEAM || SessionState.mode == MODE_DESKTOP
-        if (steamHere) guest.add("BL_STEAM_CHANNEL=" + SessionPrefs.steamChannel(this))
-        if (SessionState.mode == MODE_STEAM) {
-            guest.add("BL_GAMESCOPE_FORCE_FULLSCREEN=" + (if (SessionPrefs.forceFullscreen(this)) "1" else "0"))
-            SessionPrefs.writeForceFullscreenFlag(this)
-        }
-        // Proton's own gate for its xalia helper (its `proton` script reads this, and sets
-        // XALIA_SUPPORTED_ONLY itself otherwise). Off by default: xalia is Valve's, and on a device
-        // whose seccomp answers its syscalls normally there is no reason to take it away.
-        if (SessionPrefs.noXalia(this)) guest.add("PROTON_USE_XALIA=0")
-        // The FEXCore preset for the x86 games the client launches: its FEX_* variables go in
-        // here, before the script, so every game process inherits them from the client. The
-        // default preset sets nothing, which is what every session ran on before.
-        if (steamHere) {
-            val preset = SessionPrefs.fexPreset(this)
-            val vars = com.droiddeck.launcher.core.FexPreset.env(preset)
-            vars.forEach { guest.add(it) }
-            if (vars.isNotEmpty()) Log.i(TAG, "fex preset $preset: ${vars.joinToString(" ")}")
-        }
-        // Anything else, for a device that cannot be reached with a debugger: Downloads/droiddeck-env
-        // holds KEY=VALUE lines that go into the session's environment as written, after ours, so a
-        // line here wins. Zink and Turnip tunables (ZINK_DESCRIPTORS=lazy, MESA_*), gamescope's,
-        // the client's - whatever the experiment needs, without a build per attempt.
-        extraEnv().forEach { guest.add(it) }
-        // Core masks, Bannerlator's two (cfca3912). The client's is sent whenever the override is
-        // on, even naming every core: it exists to undo the pin Steam applies to its own interface
-        // renderer, and the scheduler's default is exactly what that pin takes away. A game's is
-        // sent only when it is a real restriction - a game has no pin of its own to undo.
-        if (steamHere && SessionPrefs.clientCpusOverride(this)) {
-            guest.add("BL_CLIENT_CPUS=" + CpuCores.listOrAll(SessionPrefs.clientCpus(this)))
-        }
-        // The game cores also pin the desktop and a program from the rail; without a choice the
-        // session script picks every core but the slowest cluster for those (program_cores).
-        CpuCores.restrictionOrEmpty(SessionPrefs.gameCpus(this))
-            .takeIf { it.isNotEmpty() }?.let { guest.add("BL_GAME_CPUS=$it") }
+        addClientEnvironment(guest, runtimeDir, steamHere)
 
-        // PulseAudio always: the client is a native Linux program and has no other way to make a
-        // sound - its menus, its music and its voice chat all go through here. DirectAudio is not
-        // an alternative to it on this path: it replaces the audio driver INSIDE Wine, so it
-        // changes what games do and leaves the client alone. The microphone is its own opt-in on
-        // top, and the helper only opens an input stream when asked - so a user who wants game
-        // sound but no recording gets exactly that, and Android's recording indicator stays off.
-        val wantsDirectAudio = SessionState.mode == MODE_STEAM && SessionPrefs.directAudio(this)
-        val wantsMic = SessionPrefs.micEnabled(this) &&
-            checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        // Both paths sit under the app's files directory, which the session binds at its own path,
-        // so the same string is valid on both sides and nothing has to be translated.
-        val audioDir = File(filesDir, "directaudio").apply { mkdirs() }
-        val relaySocket = File(audioDir, "relay.sock")
-        val micFifo = if (wantsMic) File(audioDir, "mic.fifo") else null
-
-        val audioLog = File(sessionDir, "audio.log")
-        val pulse = PulseAudioComponent(this, micFifo?.absolutePath)
-        // With DirectAudio on, the client's own sound goes through the relay too: the daemon
-        // fills the relay's ring and the relay, outside proot, drives the device.
-        // The client's own sound: the classic AAudio sink unless the user chose the relay.
-        val clientDirectAudio = SessionState.mode == MODE_STEAM && SessionPrefs.clientDirectAudio(this)
-        if (clientDirectAudio) pulse.setRelaySocket(relaySocket.absolutePath)
-        pulse.setLogFile(audioLog)
-        pulse.attach(this)
-        guest.add("PULSE_SERVER=unix:" + pulse.socket().absolutePath)
-        components.add(pulse)
-        if (wantsDirectAudio || wantsMic || clientDirectAudio) {
-            // After the daemon in the list, so it can wait for the pipe the daemon makes.
-            val relay = DirectAudioRelayComponent(relaySocket, micFifo)
-            relay.setLogFile(audioLog)
-            relay.attach(this)
-            components.add(relay)
-        }
-        if (wantsDirectAudio) {
-            // Read by the Proton wrappers, which point Wine at the driver and name it in the
-            // prefix. Absent, they take an early return and the game uses Proton's own audio - so
-            // this variable is the whole of the selection.
-            guest.add("BL_DIRECTAUDIO=/" + SessionFiles.DIRECTAUDIO_DIR)
-            guest.add("BANNER_AUDIO_DIRECT_RELAY=" + relaySocket.absolutePath)
-        }
-        Log.i(TAG, "audio: client " + (if (clientDirectAudio) "DirectAudio" else "classic AAudio sink") + (if (wantsDirectAudio) " + DirectAudio for games" else "")
-            + (if (wantsMic) " + microphone" else "") +
-            (if (SessionPrefs.micEnabled(this) && !wantsMic) " (microphone wanted but RECORD_AUDIO not granted)" else ""))
+        val pulse = startAudio(guest, sessionDir)
 
         guest.add("BL_WIDTH=" + size.first)
         guest.add("BL_HEIGHT=" + size.second)
@@ -424,28 +291,7 @@ class SessionService : Service() {
 
         val fakeInputDir = File(sessionRoot, "dev/input").apply { mkdirs() }
         val controllersOn = !File(Environment.getExternalStorageDirectory(), NO_PAD_SWITCH).exists()
-        if (controllersOn) {
-            FakeInputWriter.prepareRingSlots(fakeInputDir, 4)
-            guest.add("FAKE_EVDEV_DIR=" + fakeInputDir.path)
-            val rings = FakeInputWriter.getRingEnv(fakeInputDir)
-            if (!rings.isNullOrEmpty()) guest.add("FAKE_EVDEV_MEMFD_PATHS=$rings")
-            // SDL and Steam key their mapping database on bus+vendor+product: only a known
-            // identity gets the standard layout without the user configuring the pad by hand.
-            guest.add("FAKE_EVDEV_IDENTITY=xbox360")
-            guest.add("FAKE_EVDEV_VIBRATION=1")
-            // Steam Input's virtual-gamepad identity is for games the client starts, which are
-            // meant to see that pad. Everywhere else (the desktop, a program from the rail) it
-            // hides the pad: SDL ignores a Steam virtual gamepad unless it runs under Steam, so
-            // every SDL emulator came up with no controller. There it is a plain Xbox 360 pad.
-            if (SessionState.mode == MODE_STEAM) guest.add("FAKE_EVDEV_STEAM_VIRTUAL=1")
-            guest.add("SDL_JOYSTICK_DISABLE_UDEV=1")
-            guest.add("SDL_HIDAPI_JOYSTICK_DISABLE_UDEV=1")
-            guest.add("SDL_JOYSTICK_HIDAPI=0")
-            if (File(Environment.getExternalStorageDirectory(), PAD_LOG_SWITCH).exists()) {
-                guest.add("FAKE_EVDEV_LOG=1")
-            }
-            SessionState.fakeInputDir = fakeInputDir
-        }
+        if (controllersOn) addControllerEnvironment(guest, fakeInputDir)
         // The desktop is wlroots (labwc). Stock wlroots allocates through gbm on a real DRM render
         // node, and ours is a KGSL stand-in - labwc died at "unable to create allocator" - so the
         // default is pixman (software, shm), where a Vulkan program cannot draw at all; those run
@@ -506,63 +352,7 @@ class SessionService : Service() {
         // whatever a session leaves behind. The client abandons tens of megabytes of streams a run.
         FileUtils.clear(File(cacheDir, "shm"))
 
-        val binds = ArrayList<String>()
-        if (controllersOn) binds.add(fakeInputDir.path + ":/dev/input")
-        // The client's battery readout (the Quick Access Menu, the top bar) reads
-        // /sys/class/power_supply/BAT<n>/..., a laptop's or a Deck's naming; Android's supply is
-        // called "battery" and its files differ, so the client sees no battery at all. A directory
-        // of our own, written from Android's battery API every few seconds, is bound over it.
-        val battery = BatteryComponent(File(filesDir, "session/sys/power_supply"))
-        battery.attach(this)
-        components.add(battery)
-        binds.add(battery.dir.path + ":/sys/class/power_supply")
-        // Rumble for the on-screen pad: the fake evdev layer sends force-feedback effects to this
-        // listener, which drives the phone's vibrator (see RumbleComponent).
-        if (controllersOn) components.add(RumbleComponent().also { it.attach(this) })
-        // Where the device's files appear inside the session. Internal storage is bound at its own
-        // path already, and every program's file dialog opens at home and lists "Computer" from
-        // /proc/mounts, where a proot bind never shows - so a user saw only the runtime's own
-        // tree and could not find the phone at all. The same storage is placed under home as
-        // well, and the ROMs folder chosen on the main screen beside it; a bind rather than a
-        // link, so a folder on an SD card works the same.
-        val home = File(LinuxRuntime.rootDir(this), "root")
-        File(home, "Storage").mkdirs()
-        binds.add(Environment.getExternalStorageDirectory().path + ":/root/Storage")
-        // A second Steam library: the storage chosen in the Steam cog, at the path the runtime's
-        // bannerlator-steam-library registers with the client. Nothing bound = the script removes
-        // the entry, so the client never offers a place that is not there.
-        val library = GameStorage.effective(this)
-        if (library != null) {
-            val problem = GameStorage.prepare(library.path)
-            if (problem == null) {
-                File(LinuxRuntime.rootDir(this), "mnt/bannerlator-sd").mkdirs()
-                binds.add("${library.path}:/mnt/bannerlator-sd")
-                Log.i(TAG, "game storage: ${library.path} -> /mnt/bannerlator-sd (\"${library.label}\")")
-            } else {
-                Log.w(TAG, "game storage: $problem; internal only this session")
-            }
-        } else {
-            Log.i(TAG, "game storage: internal only")
-        }
-        // The user's own games folder (the Steam cog's "Added games"), bound at a fixed place so
-        // the shortcuts the app writes point somewhere whatever storage the folder is on.
-        for (root in com.droiddeck.launcher.frontend.AddedGames.roots(this)) {
-            if (root.host.isDirectory && root.host.canRead()) {
-                File(LinuxRuntime.rootDir(this), root.guest.removePrefix("/")).mkdirs()
-                binds.add(root.host.path + ":" + root.guest)
-                Log.i(TAG, "added games: ${root.host} -> ${root.guest}")
-            } else {
-                Log.w(TAG, "added games: ${root.host} is not a readable folder this session")
-            }
-        }
-        val roms = SessionPrefs.romsDir(this).takeIf { it.isNotEmpty() }?.let { File(it) }
-        if (roms != null && roms.isDirectory && roms.canRead()) {
-            File(home, "ROMs").mkdirs()
-            binds.add(roms.path + ":/root/ROMs")
-            Log.i(TAG, "roms: $roms -> /root/ROMs")
-        } else if (roms != null) {
-            Log.w(TAG, "roms: $roms is not a readable folder; /root/ROMs not offered this session")
-        }
+        val binds = sessionBinds(controllersOn, fakeInputDir)
 
         val command = LinuxRuntime.command(
             this, sessionRoot, runtimeDir, Environment.getExternalStorageDirectory(), binds, guest,
@@ -644,6 +434,243 @@ class SessionService : Service() {
         }
     }
 
+    /** The session's own log folder, opened and filled with what is known before anything starts. */
+    private fun openSessionFolder(): File {
+        // One folder per session, claimed by whoever started first - the activity starts the
+        // compositor before this service runs - so the compositor's log lands in the same place.
+        val sessionDir = SessionPaths.beginOrCurrent(this)
+        val sessionLog = File(sessionDir, "session.log")
+        SessionState.logFile = sessionLog
+        SessionState.logDirectory = sessionDir
+        SessionState.sessionId = sessionDir.name
+        SessionState.eventsFile = File(sessionDir, "events.jsonl")
+        SessionEvents.record("session.logs_ready", mapOf("logDir" to sessionDir.path))
+        // Written first, so a session that dies in its first second still says what it ran on.
+        DeviceReport.write(this, File(sessionDir, "device.txt"), SessionState.mode)
+        NetworkReport.write(this, File(sessionDir, "network.txt"))
+        // Everything the app decides from here on - the driver it chose, the audio line, a rival
+        // client stopped, the exit status - reaches logcat and nowhere a user can get at. Mirror it.
+        SessionLogCapture.start(File(sessionDir, "app.log"))
+        return sessionDir
+    }
+
+    /** The guest's base environment: paths, the display, the GL/Vulkan stack and the client's switches. */
+    private fun addClientEnvironment(guest: MutableList<String>, runtimeDir: File, steamHere: Boolean) {
+        guest.add("/usr/bin/env")
+        guest.add("-i")
+        guest.add("HOME=/root")
+        guest.add("USER=root")
+        guest.add("PATH=/usr/local/bin:/usr/bin:/bin")
+        guest.add("TERM=xterm-256color")
+        guest.add("LANG=C.UTF-8")
+        // Without this the session is UTC: the client's clock, its logs and every timestamp in a
+        // session bundle sit hours off the device's. Bannerlator carries the same line.
+        guest.add("TZ=" + java.util.TimeZone.getDefault().id)
+        guest.add("XDG_RUNTIME_DIR=" + runtimeDir.path)
+        guest.add("XDG_SESSION_TYPE=wayland")
+        guest.add("WAYLAND_DISPLAY=wayland-0")
+        guest.add("GAMESCOPE_FORCE_GENERAL_QUEUE=1")
+        // Steam's CEF needs GL and the rootfs ships no native GL driver: route it through Zink.
+        guest.add("MESA_LOADER_DRIVER_OVERRIDE=zink")
+        guest.add("GALLIUM_DRIVER=zink")
+        guest.add("LIBGL_KOPPER_DRI2=true")
+        LinuxRuntime.vulkanIcd(this)?.let { guest.add("VK_ICD_FILENAMES=" + it.path) }
+        // An imported glibc Turnip for this mode, when the user chose one: the session script checks
+        // the manifest and its library from inside and points the loader at it with VK_DRIVER_FILES,
+        // so the runtime's own driver above stays untouched and is what a bad import falls back to.
+        // A program from the rail is one of the desktop's emulators, so it draws with the desktop's
+        // Linux driver, not the Steam session's: the driver's shader cache is keyed on the driver
+        // build, and with two drivers every emulator compiled its shaders twice - once per way of
+        // starting it (RPCS3's 6650 interpreter variants on each first boot).
+        val driverMode = if (SessionState.mode == MODE_RUN) MODE_DESKTOP else SessionPrefs.prefMode(SessionState.mode)
+        val linuxDriverId = SessionPrefs.linuxDriver(this, driverMode)
+        LinuxVulkanDriver.resolveIcdPath(this, linuxDriverId)
+            ?.let { guest.add(LinuxVulkanDriver.ENV + "=" + it) }
+        // Turnip's own debug switches, for the runtime's driver and everything on it. The file in
+        // Downloads holds the value verbatim ("sysmem", "sysmem,deck_emu"); with nothing there, an
+        // imported driver from the A710/A720/A722 legs gets "sysmem" on its own, which is what both
+        // its authors advise for those GPUs and what nothing else in the list needs.
+        tuDebug(linuxDriverId)?.let { guest.add("TU_DEBUG=$it") }
+        // Zink renders the client's UI (Chromium -> ANGLE -> Zink -> Turnip). Lazy descriptors is
+        // the mode Zink recommends where the driver has no descriptor buffer, and what Ludashi ships
+        // by default for its Zink path; a switch here because on one Fold the menus run at 14 fps.
+        if (SessionPrefs.zinkLazy(this)) guest.add("ZINK_DESCRIPTORS=lazy")
+        // The rest of the client-interface switches (SessionPrefs): GL marshalled off the calling
+        // thread, no GL error checks, and the client run as SteamOS runs it (the script reads
+        // BL_STEAMDECK; it is the one that builds the command line).
+        if (SessionPrefs.glThread(this)) guest.add("mesa_glthread=true")
+        if (SessionPrefs.noGlError(this)) guest.add("MESA_NO_ERROR=1")
+        if (SessionState.mode == MODE_STEAM) guest.add("BL_STEAMDECK=" + (if (SessionPrefs.steamDeckMode(this)) "1" else "0"))
+        if (steamHere) guest.add("BL_STEAM_CHANNEL=" + SessionPrefs.steamChannel(this))
+        if (SessionState.mode == MODE_STEAM) {
+            guest.add("BL_GAMESCOPE_FORCE_FULLSCREEN=" + (if (SessionPrefs.forceFullscreen(this)) "1" else "0"))
+            SessionPrefs.writeForceFullscreenFlag(this)
+        }
+        // Proton's own gate for its xalia helper (its `proton` script reads this, and sets
+        // XALIA_SUPPORTED_ONLY itself otherwise). Off by default: xalia is Valve's, and on a device
+        // whose seccomp answers its syscalls normally there is no reason to take it away.
+        if (SessionPrefs.noXalia(this)) guest.add("PROTON_USE_XALIA=0")
+        // The FEXCore preset for the x86 games the client launches: its FEX_* variables go in
+        // here, before the script, so every game process inherits them from the client. The
+        // default preset sets nothing, which is what every session ran on before.
+        if (steamHere) {
+            val preset = SessionPrefs.fexPreset(this)
+            val vars = com.droiddeck.launcher.core.FexPreset.env(preset)
+            vars.forEach { guest.add(it) }
+            if (vars.isNotEmpty()) Log.i(TAG, "fex preset $preset: ${vars.joinToString(" ")}")
+        }
+        // Anything else, for a device that cannot be reached with a debugger: Downloads/droiddeck-env
+        // holds KEY=VALUE lines that go into the session's environment as written, after ours, so a
+        // line here wins. Zink and Turnip tunables (ZINK_DESCRIPTORS=lazy, MESA_*), gamescope's,
+        // the client's - whatever the experiment needs, without a build per attempt.
+        extraEnv().forEach { guest.add(it) }
+        // Core masks, Bannerlator's two (cfca3912). The client's is sent whenever the override is
+        // on, even naming every core: it exists to undo the pin Steam applies to its own interface
+        // renderer, and the scheduler's default is exactly what that pin takes away. A game's is
+        // sent only when it is a real restriction - a game has no pin of its own to undo.
+        if (steamHere && SessionPrefs.clientCpusOverride(this)) {
+            guest.add("BL_CLIENT_CPUS=" + CpuCores.listOrAll(SessionPrefs.clientCpus(this)))
+        }
+        // The game cores also pin the desktop and a program from the rail; without a choice the
+        // session script picks every core but the slowest cluster for those (program_cores).
+        CpuCores.restrictionOrEmpty(SessionPrefs.gameCpus(this))
+            .takeIf { it.isNotEmpty() }?.let { guest.add("BL_GAME_CPUS=$it") }
+    }
+
+    /** PulseAudio, and the DirectAudio relay when a path needs it; returns the daemon for suspend and resume. */
+    private fun startAudio(guest: MutableList<String>, sessionDir: File): PulseAudioComponent {
+        // PulseAudio always: the client is a native Linux program and has no other way to make a
+        // sound - its menus, its music and its voice chat all go through here. DirectAudio is not
+        // an alternative to it on this path: it replaces the audio driver INSIDE Wine, so it
+        // changes what games do and leaves the client alone. The microphone is its own opt-in on
+        // top, and the helper only opens an input stream when asked - so a user who wants game
+        // sound but no recording gets exactly that, and Android's recording indicator stays off.
+        val wantsDirectAudio = SessionState.mode == MODE_STEAM && SessionPrefs.directAudio(this)
+        val wantsMic = SessionPrefs.micEnabled(this) &&
+            checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        // Both paths sit under the app's files directory, which the session binds at its own path,
+        // so the same string is valid on both sides and nothing has to be translated.
+        val audioDir = File(filesDir, "directaudio").apply { mkdirs() }
+        val relaySocket = File(audioDir, "relay.sock")
+        val micFifo = if (wantsMic) File(audioDir, "mic.fifo") else null
+
+        val audioLog = File(sessionDir, "audio.log")
+        val pulse = PulseAudioComponent(this, micFifo?.absolutePath)
+        // With DirectAudio on, the client's own sound goes through the relay too: the daemon
+        // fills the relay's ring and the relay, outside proot, drives the device.
+        // The client's own sound: the classic AAudio sink unless the user chose the relay.
+        val clientDirectAudio = SessionState.mode == MODE_STEAM && SessionPrefs.clientDirectAudio(this)
+        if (clientDirectAudio) pulse.setRelaySocket(relaySocket.absolutePath)
+        pulse.setLogFile(audioLog)
+        pulse.attach(this)
+        guest.add("PULSE_SERVER=unix:" + pulse.socket().absolutePath)
+        components.add(pulse)
+        if (wantsDirectAudio || wantsMic || clientDirectAudio) {
+            // After the daemon in the list, so it can wait for the pipe the daemon makes.
+            val relay = DirectAudioRelayComponent(relaySocket, micFifo)
+            relay.setLogFile(audioLog)
+            relay.attach(this)
+            components.add(relay)
+        }
+        if (wantsDirectAudio) {
+            // Read by the Proton wrappers, which point Wine at the driver and name it in the
+            // prefix. Absent, they take an early return and the game uses Proton's own audio - so
+            // this variable is the whole of the selection.
+            guest.add("BL_DIRECTAUDIO=/" + SessionFiles.DIRECTAUDIO_DIR)
+            guest.add("BANNER_AUDIO_DIRECT_RELAY=" + relaySocket.absolutePath)
+        }
+        Log.i(TAG, "audio: client " + (if (clientDirectAudio) "DirectAudio" else "classic AAudio sink") + (if (wantsDirectAudio) " + DirectAudio for games" else "")
+            + (if (wantsMic) " + microphone" else "") +
+            (if (SessionPrefs.micEnabled(this) && !wantsMic) " (microphone wanted but RECORD_AUDIO not granted)" else ""))
+        return pulse
+    }
+
+    /** The fake evdev pads: the ring files the app writes and the identity SDL and Steam see. */
+    private fun addControllerEnvironment(guest: MutableList<String>, fakeInputDir: File) {
+        FakeInputWriter.prepareRingSlots(fakeInputDir, 4)
+        guest.add("FAKE_EVDEV_DIR=" + fakeInputDir.path)
+        val rings = FakeInputWriter.getRingEnv(fakeInputDir)
+        if (!rings.isNullOrEmpty()) guest.add("FAKE_EVDEV_MEMFD_PATHS=$rings")
+        // SDL and Steam key their mapping database on bus+vendor+product: only a known
+        // identity gets the standard layout without the user configuring the pad by hand.
+        guest.add("FAKE_EVDEV_IDENTITY=xbox360")
+        guest.add("FAKE_EVDEV_VIBRATION=1")
+        // Steam Input's virtual-gamepad identity is for games the client starts, which are
+        // meant to see that pad. Everywhere else (the desktop, a program from the rail) it
+        // hides the pad: SDL ignores a Steam virtual gamepad unless it runs under Steam, so
+        // every SDL emulator came up with no controller. There it is a plain Xbox 360 pad.
+        if (SessionState.mode == MODE_STEAM) guest.add("FAKE_EVDEV_STEAM_VIRTUAL=1")
+        guest.add("SDL_JOYSTICK_DISABLE_UDEV=1")
+        guest.add("SDL_HIDAPI_JOYSTICK_DISABLE_UDEV=1")
+        guest.add("SDL_JOYSTICK_HIDAPI=0")
+        if (File(Environment.getExternalStorageDirectory(), PAD_LOG_SWITCH).exists()) {
+            guest.add("FAKE_EVDEV_LOG=1")
+        }
+        SessionState.fakeInputDir = fakeInputDir
+    }
+
+    /** What proot binds into the guest: the pads, the battery, storage, the game library, added games and ROMs. */
+    private fun sessionBinds(controllersOn: Boolean, fakeInputDir: File): ArrayList<String> {
+        val binds = ArrayList<String>()
+        if (controllersOn) binds.add(fakeInputDir.path + ":/dev/input")
+        // The client's battery readout (the Quick Access Menu, the top bar) reads
+        // /sys/class/power_supply/BAT<n>/..., a laptop's or a Deck's naming; Android's supply is
+        // called "battery" and its files differ, so the client sees no battery at all. A directory
+        // of our own, written from Android's battery API every few seconds, is bound over it.
+        val battery = BatteryComponent(File(filesDir, "session/sys/power_supply"))
+        battery.attach(this)
+        components.add(battery)
+        binds.add(battery.dir.path + ":/sys/class/power_supply")
+        // Rumble for the on-screen pad: the fake evdev layer sends force-feedback effects to this
+        // listener, which drives the phone's vibrator (see RumbleComponent).
+        if (controllersOn) components.add(RumbleComponent().also { it.attach(this) })
+        // Where the device's files appear inside the session. Internal storage is bound at its own
+        // path already, and every program's file dialog opens at home and lists "Computer" from
+        // /proc/mounts, where a proot bind never shows - so a user saw only the runtime's own
+        // tree and could not find the phone at all. The same storage is placed under home as
+        // well, and the ROMs folder chosen on the main screen beside it; a bind rather than a
+        // link, so a folder on an SD card works the same.
+        val home = File(LinuxRuntime.rootDir(this), "root")
+        File(home, "Storage").mkdirs()
+        binds.add(Environment.getExternalStorageDirectory().path + ":/root/Storage")
+        // A second Steam library: the storage chosen in the Steam cog, at the path the runtime's
+        // bannerlator-steam-library registers with the client. Nothing bound = the script removes
+        // the entry, so the client never offers a place that is not there.
+        val library = GameStorage.effective(this)
+        if (library != null) {
+            val problem = GameStorage.prepare(library.path)
+            if (problem == null) {
+                File(LinuxRuntime.rootDir(this), "mnt/bannerlator-sd").mkdirs()
+                binds.add("${library.path}:/mnt/bannerlator-sd")
+                Log.i(TAG, "game storage: ${library.path} -> /mnt/bannerlator-sd (\"${library.label}\")")
+            } else {
+                Log.w(TAG, "game storage: $problem; internal only this session")
+            }
+        } else {
+            Log.i(TAG, "game storage: internal only")
+        }
+        // The user's own games folder (the Steam cog's "Added games"), bound at a fixed place so
+        // the shortcuts the app writes point somewhere whatever storage the folder is on.
+        for (root in com.droiddeck.launcher.frontend.AddedGames.roots(this)) {
+            if (root.host.isDirectory && root.host.canRead()) {
+                File(LinuxRuntime.rootDir(this), root.guest.removePrefix("/")).mkdirs()
+                binds.add(root.host.path + ":" + root.guest)
+                Log.i(TAG, "added games: ${root.host} -> ${root.guest}")
+            } else {
+                Log.w(TAG, "added games: ${root.host} is not a readable folder this session")
+            }
+        }
+        val roms = SessionPrefs.romsDir(this).takeIf { it.isNotEmpty() }?.let { File(it) }
+        if (roms != null && roms.isDirectory && roms.canRead()) {
+            File(home, "ROMs").mkdirs()
+            binds.add(roms.path + ":/root/ROMs")
+            Log.i(TAG, "roms: $roms -> /root/ROMs")
+        } else if (roms != null) {
+            Log.w(TAG, "roms: $roms is not a readable folder; /root/ROMs not offered this session")
+        }
+        return binds
+    }
+
     private fun teardown(prootPid: Int, expectedStartTime: Long? = null) {
         fun stillSameProcess(): Boolean = expectedStartTime == null || readStat(prootPid)?.second == expectedStartTime
         if (!stillSameProcess()) return
@@ -714,6 +741,30 @@ class SessionService : Service() {
      * behind, still holding the Wayland socket and the audio server the next session needs. They
      * are our uid, so they are ours to kill.
      */
+    /**
+     * Every process of ours still running a program out of the Linux runtime once proot is gone.
+     * proot's --kill-on-exit and the tree sweep only reach what proot still traces; a tracee it
+     * lost - an Xwayland that aborted from one thread and then looped on a syscall proot's own
+     * seccomp filter, with no tracer left, answers ENOSYS - survives both, reparented to init,
+     * and wrote 9 GB of one line into the session log before anything killed it.
+     */
+    private fun killGuestLeftovers() {
+        val me = android.os.Process.myPid()
+        val rootfs = try { File(filesDir, "linuxfs").canonicalPath } catch (e: Exception) { return } + "/"
+        val procs = File("/proc").listFiles { f -> f.name.all { it.isDigit() } } ?: return
+        var killed = 0
+        for (proc in procs) {
+            val pid = proc.name.toIntOrNull() ?: continue
+            if (pid == me) continue
+            // Another uid's exe is not ours to read; a process already gone has none.
+            val exe = try { File(proc, "exe").canonicalPath } catch (e: Exception) { continue }
+            if (!exe.startsWith(rootfs)) continue
+            android.os.Process.killProcess(pid)
+            killed++
+        }
+        if (killed > 0) Log.w(TAG, "killed $killed guest process(es) proot no longer tracked")
+    }
+
     private fun killStragglers() {
         val me = android.os.Process.myPid()
         val procs = File("/proc").listFiles { f -> f.name.all { it.isDigit() } } ?: return
@@ -890,6 +941,7 @@ class SessionService : Service() {
                 Thread({
                     auxiliary.forEach { (pid, started) -> teardown(pid, started) }
                     if (prootPid > 1) teardown(prootPid)
+                    killGuestLeftovers()
                     finishSessionStop(status)
                 }, "session-teardown").start()
             } else {

@@ -1,5 +1,6 @@
 package com.droiddeck.launcher.runtime
 
+import com.droiddeck.launcher.core.Hashes
 import android.content.Context
 import android.util.Log
 import com.droiddeck.launcher.core.Downloader
@@ -18,6 +19,12 @@ import java.io.File
 object DesktopCatalog {
     private const val TAG = "DesktopCatalog"
     const val CATALOG_URL = "https://raw.githubusercontent.com/The412Banner/winlator-contents/main/desktop.json"
+    /**
+     * Valve's Proton Experimental (ARM64) with its appmanifest, laid out as the client keeps it.
+     * In a catalog of its own so it never shows among the packages a user picks from.
+     */
+    const val STEAM_SEED_URL = "https://raw.githubusercontent.com/The412Banner/winlator-contents/main/steam-seed.json"
+    const val PROTON_SEED_ID = "proton-arm64"
 
     class Entry(
         val id: String, val name: String, val tier: Int, val version: String, val kind: String,
@@ -26,8 +33,8 @@ object DesktopCatalog {
         val icon: String, val category: String,
     )
 
-    fun fetch(): List<Entry>? {
-        val body = Downloader.downloadString(CATALOG_URL) ?: return null
+    fun fetch(url: String = CATALOG_URL): List<Entry>? {
+        val body = Downloader.downloadString(url) ?: return null
         return try {
             val json = JSONObject(body)
             val arr = json.getJSONArray("packages")
@@ -57,6 +64,15 @@ object DesktopCatalog {
     fun installed(context: Context, id: String): String? =
         FileUtils.readString(marker(context, id))?.trim()?.takeIf { it.isNotEmpty() }
 
+    /**
+     * True until the ARM64 Proton has been placed once. Its appmanifest counts too, so an install
+     * the client fetched itself is never overwritten; after the first placement the client owns it
+     * and updates it like any other app, and a user who removes it is not given it back.
+     */
+    fun protonSeedNeeded(context: Context): Boolean =
+        installed(context, PROTON_SEED_ID) == null &&
+            !File(LinuxRuntime.rootDir(context), "root/.local/share/Steam/steamapps/appmanifest_4427310.acf").isFile
+
     // labwc comes with the hosted desktop package itself (its launcher is staged by the app at
     // every session, so it cannot tell whether the package is there); SessionFiles uses the same test.
     fun desktopInstalled(context: Context): Boolean =
@@ -66,6 +82,8 @@ object DesktopCatalog {
     fun install(context: Context, entry: Entry, listener: LinuxRuntimeInstaller.ProgressListener?): String? {
         val root = LinuxRuntime.rootDir(context)
         if (!root.isDirectory) return "The Linux runtime is not installed"
+        // Every catalog row carries a sha256; one without is refused rather than trusted.
+        if (entry.sha256.isEmpty()) return "The catalog has no checksum for ${entry.name}"
         val download = File(context.cacheDir, "pkg-${entry.id}.download")
         try {
             listener?.onProgress("Downloading ${entry.name}", 0)
@@ -73,11 +91,9 @@ object DesktopCatalog {
                 listener?.onProgress("Downloading ${entry.name}", if (f < 0) -1 else Math.round(f * 100f))
             }
             if (!ok) return "Download failed"
-            if (entry.sha256.isNotEmpty()) {
-                listener?.onProgress("Verifying", -1)
-                val actual = LinuxRuntimeInstaller.sha256(download)
-                if (!entry.sha256.equals(actual, ignoreCase = true)) return "Checksum mismatch - nothing was changed"
-            }
+            listener?.onProgress("Verifying", -1)
+            val actual = Hashes.sha256(download)
+            if (!entry.sha256.equals(actual, ignoreCase = true)) return "Checksum mismatch - nothing was changed"
             listener?.onProgress("Installing ${entry.name}", -1)
             when (entry.kind) {
                 "appimage" -> {

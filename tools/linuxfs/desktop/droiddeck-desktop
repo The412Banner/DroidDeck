@@ -55,6 +55,10 @@ if [ -n "${BL_DEBUG_DIR:-}" ]; then
   echo "== droiddeck-desktop $(date -u '+%Y-%m-%d %H:%M:%S UTC') renderer=$WLR_RENDERER"
 fi
 export WLR_BACKENDS=wayland
+# The app's compositor draws no wl_pointer cursor surfaces, so a cursor wlroots hands to its
+# parent ("hardware" cursor on the wayland backend) never shows - on the GPU renderers the whole
+# cursor was missing. Draw it into the desktop's own frames instead.
+export WLR_NO_HARDWARE_CURSORS=${WLR_NO_HARDWARE_CURSORS:-1}
 mkdir -p "$HOME/.config/labwc" "$HOME/.config/lxqt"
 # Our defaults for labwc and the panel, refreshed every session. What a user changes in the
 # panel's own settings lands in panel.conf and is kept; only rc.xml and autostart are ours.

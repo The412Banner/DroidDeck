@@ -121,6 +121,10 @@ android {
     }
 
     packagingOptions {
+        resources {
+            // Kadb's Bouncy Castle artifacts repeat the same multi-release JAR manifest.
+            excludes += ['META-INF/versions/9/OSGI-INF/MANIFEST.MF']
+        }
         jniLibs {
             // The PulseAudio daemon is executed from the native library directory and its
             // libraries are read out of the apk by the class loader: both want the old,
@@ -136,6 +140,11 @@ android {
         buildConfig true
     }
 
+    testOptions {
+        // Plain JVM tests: a stray android.util.Log call returns a default instead of throwing.
+        unitTests.returnDefaultValues = true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -148,7 +157,7 @@ android {
 dependencies {
     // The runtime tarball is a zstd-compressed tar.
     implementation 'com.github.luben:zstd-jni:1.5.2-3@aar'
-    implementation 'org.apache.commons:commons-compress:1.20'
+    implementation 'org.apache.commons:commons-compress:1.27.1'
     // The UI: every menu, dialog and overlay is Compose. The session's SurfaceView and the
     // on-screen pad are Views underneath it, which is what they are in every Compose app.
     implementation platform('androidx.compose:compose-bom:2024.02.00')
@@ -160,6 +169,11 @@ dependencies {
     implementation 'androidx.compose.material:material-icons-extended'
     implementation 'io.coil-kt:coil-compose:2.6.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    // ADB-over-Wi-Fi pairing and authenticated shell client. Users still approve pairing from
+    // Android's Wireless debugging screen; DroidDeck only runs its one fixed setting command.
+    implementation 'com.flyfishxu:kadb-android:1.2.1'
     // Android terminal view/emulator used by the in-session secondary-display Linux shell.
     implementation 'com.termux.termux-app:terminal-view:0.118.0'
+
+    testImplementation 'junit:junit:4.13.2'
 }

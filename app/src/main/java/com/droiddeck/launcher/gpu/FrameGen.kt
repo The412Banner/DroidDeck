@@ -40,9 +40,11 @@ object FrameGen {
     }
 
     /** "Off", "Win-FG 2×", "LSFG 3×" - for the main screen. */
-    fun label(context: Context): String = when (engine(context)) {
-        ENGINE_WINFG -> "Win-FG ${multiplier(context)}×"
-        ENGINE_LSFG -> "LSFG ${multiplier(context)}×"
+    fun label(context: Context): String = label(engine(context), multiplier(context))
+
+    fun label(engine: String, multiplier: Int): String = when (engine) {
+        ENGINE_WINFG -> "Win-FG $multiplier×"
+        ENGINE_LSFG -> "LSFG $multiplier×"
         else -> "Off"
     }
 
@@ -80,48 +82,6 @@ object FrameGen {
         }
         Log.i(TAG, "frame generation: $engine x$multiplier at ${refreshHz}Hz")
         return problem
-    }
-
-    /**
-     * Off, or an engine at 2x/3x/4x; saved on pick, then [onChanged]. The LSFG rows are greyed
-     * and unpickable until Lossless Scaling is installed in the Steam client - the engine cannot
-     * run without its DLL, so offering it would only produce a setting that silently does nothing.
-     */
-    fun showPicker(activity: android.app.Activity, onChanged: () -> Unit) {
-        val lsfgReady = LsfgNative.isInstalled(activity)
-        val lsfgNote = if (lsfgReady) "" else "  - install Lossless Scaling in Steam"
-        val choices = listOf("Off",
-            "Win-FG 2×", "Win-FG 3×", "Win-FG 4×",
-            "LSFG 2×$lsfgNote", "LSFG 3×$lsfgNote", "LSFG 4×$lsfgNote")
-        val current = when (engine(activity)) {
-            ENGINE_WINFG -> multiplier(activity) - 1
-            ENGINE_LSFG -> if (lsfgReady) multiplier(activity) + 2 else 0
-            else -> 0
-        }
-        val adapter = object : android.widget.ArrayAdapter<String>(
-            activity, android.R.layout.simple_list_item_single_choice, choices) {
-            override fun isEnabled(position: Int) = lsfgReady || position < 4
-            override fun areAllItemsEnabled() = lsfgReady
-            override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
-                val view = super.getView(position, convertView, parent)
-                view.isEnabled = isEnabled(position)
-                view.alpha = if (isEnabled(position)) 1f else 0.38f
-                return view
-            }
-        }
-        android.app.AlertDialog.Builder(activity)
-            .setTitle(com.droiddeck.launcher.R.string.frame_gen_title)
-            .setSingleChoiceItems(adapter, current) { dialog, which ->
-                when (which) {
-                    0 -> set(activity, ENGINE_OFF, 2)
-                    in 1..3 -> set(activity, ENGINE_WINFG, which + 1)
-                    else -> set(activity, ENGINE_LSFG, which - 2)
-                }
-                dialog.dismiss()
-                onChanged()
-            }
-            .setNeutralButton(android.R.string.ok, null)
-            .show()
     }
 
     private const val TAG = "FrameGen"

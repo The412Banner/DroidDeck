@@ -1,5 +1,6 @@
 package com.droiddeck.launcher.session
 
+import com.droiddeck.launcher.core.Hashes
 import android.content.Context
 import android.os.StatFs
 import android.util.Log
@@ -7,7 +8,6 @@ import com.droiddeck.launcher.core.Downloader
 import com.droiddeck.launcher.core.FileUtils
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import java.io.File
-import java.security.MessageDigest
 import org.json.JSONArray
 
 /** Immediate download and installation of the optional ARM64 Proton builds. */
@@ -21,7 +21,9 @@ object ProtonExtras {
 
     class Tool(val id: String, val name: String, val prefix: String, val repo: String, val assetPattern: Regex)
 
-    private data class Asset(val tag: String, val name: String, val url: String, val sha512: String?, val size: Long)
+    /** [sha256] from GitHub's asset digest; [sha512] the URL of a checksum file published beside it. */
+    private data class Asset(val tag: String, val name: String, val url: String, val sha512: String?, val size: Long,
+                             val sha256: String? = null)
 
     val tools = listOf(
         Tool("ge", "GE-Proton", "GE-Proton", "GloriousEggroll/proton-ge-custom", Regex("aarch64\\.tar\\.(gz|xz)$")),
@@ -99,14 +101,24 @@ object ProtonExtras {
             return "Download was incomplete; the partial file is kept for a resumable retry"
         }
 
-        asset.sha512?.let { checksumUrl ->
-            onProgress("Verifying download", -1)
-            val checksumText = Downloader.downloadString(checksumUrl)
-            val expected = checksumText?.let { Regex("(?i)\\b[0-9a-f]{128}\\b").find(it)?.value }
-            if (expected != null && !expected.equals(sha512(archive), ignoreCase = true)) {
-                archive.delete()
-                return "Checksum mismatch; the download was deleted"
+        // One checksum has to be found and has to match: GitHub's sha256 digest, else the
+        // release's own sha512 file. A download neither vouches for is not installed.
+        onProgress("Verifying download", -1)
+        val verified = when {
+            asset.sha256 != null -> asset.sha256.equals(Hashes.sha256(archive), ignoreCase = true)
+            asset.sha512 != null -> {
+                val expected = Downloader.downloadString(asset.sha512)?.let { Regex("(?i)\\b[0-9a-f]{128}\\b").find(it)?.value }
+                    ?: return "Could not read the release checksum; try again"
+                expected.equals(Hashes.sha512(archive), ignoreCase = true)
             }
+            else -> {
+                archive.delete()
+                return "${tool.name} ${asset.tag} publishes no checksum; nothing was installed"
+            }
+        }
+        if (!verified) {
+            archive.delete()
+            return "Checksum mismatch; the download was deleted"
         }
 
         if (SessionState.running) return "A session started during the download; stop it before installing compatibility tools"
@@ -170,6 +182,7 @@ object ProtonExtras {
                     release.optString("tag_name"), name,
                     archive.optString("browser_download_url").takeIf { it.startsWith("http") } ?: continue, checksum,
                     archive.optLong("size", 0L),
+                    Hashes.githubSha256(archive.optString("digest")),
                 )
             }
             null
@@ -177,19 +190,6 @@ object ProtonExtras {
             Log.w(TAG, "release metadata for ${tool.id}", e)
             null
         }
-    }
-
-    private fun sha512(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-512")
-        file.inputStream().buffered().use { input ->
-            val buffer = ByteArray(4 * 1024 * 1024)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     private fun requestLines(context: Context): List<String> =

@@ -37,11 +37,10 @@ public final class TarZst {
         destination.mkdirs();
         try (InputStream in = new ZstdCompressorInputStream(new BufferedInputStream(source, 1 << 16));
              TarArchiveInputStream tar = new TarArchiveInputStream(in)) {
-            String base = destination.getCanonicalPath() + File.separator;
             TarArchiveEntry entry;
             while ((entry = tar.getNextTarEntry()) != null) {
-                File file = new File(destination, entry.getName());
-                if (!file.getCanonicalPath().startsWith(base)) continue;
+                File file = ArchivePaths.inside(destination, entry.getName());
+                if (file == null) continue;
                 if (entry.isDirectory()) {
                     //noinspection ResultOfMethodCallIgnored
                     file.mkdirs();

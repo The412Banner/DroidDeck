@@ -8,6 +8,6 @@
       <rect x="56.055" y="178.72" width="15.83" height="45" fill="#000"/>
     </mask>
   </defs>
-  <path fill="#1b1b1b" mask="url(#negative-space)" d="M-31.98 0H63.97c61.84 0 111.96 50.08 111.96 111.86S125.81 223.72 63.97 223.72H-31.98V0Z"/>
+  <path fill="#FFFFFF" mask="url(#negative-space)" d="M-31.98 0H63.97c61.84 0 111.96 50.08 111.96 111.86S125.81 223.72 63.97 223.72H-31.98V0Z"/>
   <circle cx="63.98" cy="111.86" r="55.98" fill="#1A9FFF"/>
 </svg>
