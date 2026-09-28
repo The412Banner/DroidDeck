@@ -97,6 +97,8 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     private var touchMode by mutableStateOf(SessionPrefs.TOUCH_AUTO)
     private var cursorPos by mutableStateOf(androidx.compose.ui.geometry.Offset(-100f, -100f))
     private var cursorVisible by mutableStateOf(false)
+    /** The blue the front end flooded to on the way in; the loading screen opens on it (LaunchFlood). */
+    private var floodColor by mutableStateOf<Int?>(null)
     private val cursorHide = Runnable { cursorVisible = false }
     /** When the pad or the on-screen controls were last used (uptimeMillis); see [showCursor]. */
     private var lastPadInputMs = 0L
@@ -232,7 +234,7 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         root.pointerIcon = noCursor
         surfaceView.pointerIcon = noCursor
 
-        loading = LoadingState(this)
+        loading = LoadingState(this, steam = loadingMode() == SessionService.MODE_STEAM)
         if (!SessionState.running) {
             val needRuntime = com.droiddeck.launcher.runtime.LinuxRuntimeInstaller.installedVersion(this) == null
             val needDesktop = intent.getStringExtra(SessionService.EXTRA_MODE) == SessionService.MODE_DESKTOP &&
@@ -252,6 +254,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
         }
         readPrefs()
 
+        intent.getIntExtra(com.droiddeck.launcher.ui.EXTRA_FLOOD, 0).takeIf { it != 0 && loading.visible }?.let {
+            floodColor = it
+            window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(it))
+        }
         sessionOverlay = createSessionOverlay()
         root.addView(sessionOverlay)
         setContentView(root)
@@ -304,6 +310,11 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
                     onRetry = { retrySession() },
                     onShareLogs = { shareCurrentSessionLogs() },
                     onClose = { finish() },
+                    flood = floodColor?.let { androidx.compose.ui.graphics.Color(it) },
+                    onFlooded = {
+                        floodColor = null
+                        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
+                    },
                 )
                 // Opening the drawer takes the controller away from the game: release its pad.
                 androidx.compose.runtime.LaunchedEffect(drawerOpen) {
@@ -1483,6 +1494,10 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
     }
 
     override fun onPause() {
+        // Do not carry transient session UI across an app/display transition. In particular, the
+        // drawer's dim layer can otherwise remain over Steam when this activity returns.
+        drawerOpen = false
+        pcKeyboardOpen = false
         (getSystemService(INPUT_SERVICE) as? InputManager)?.unregisterInputDeviceListener(deviceListener)
         releaseDrawerDirection()
         // A button held when the app goes away would stay held in the ring for the whole session.
