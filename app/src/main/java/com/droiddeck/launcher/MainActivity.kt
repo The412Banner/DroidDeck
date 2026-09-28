@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.toArgb
 import com.droiddeck.launcher.gpu.FrameGen
 import com.droiddeck.launcher.gpu.TurnipDriver
 import com.droiddeck.launcher.gpu.LsfgNative
@@ -83,6 +84,10 @@ class MainActivity : ComponentActivity() {
 
     // The screen's state. Compose redraws whatever reads these when they change.
     private var installed by mutableStateOf<String?>(null)
+    /** A session launch waiting on its button to fill the page (LaunchFlood). */
+    private var flood by mutableStateOf<PendingFlood?>(null)
+    private var floodProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
+    private class PendingFlood(val from: androidx.compose.ui.geometry.Rect, val intent: Intent)
     private var ready by mutableStateOf(false)
     private var available by mutableStateOf<LinuxRuntimeInstaller.Release?>(null)
     private var busy by mutableStateOf(false)
@@ -225,8 +230,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        if (intent?.component?.className == SessionActivity::class.java.name) {
+            if (flood != null) return
+            // Started by a blue button: it floods the page first. A running session is re-joined
+            // as before, rising over the front end.
+            val from = com.droiddeck.launcher.ui.LaunchOrigin.take()
+            if (from != null && !SessionState.running && com.droiddeck.launcher.ui.Motion.scale != 0f) {
+                flood = PendingFlood(from, intent)
+                return
+            }
+            com.droiddeck.launcher.ui.LaunchOrigin.flooding = null
+        }
         super.startActivity(intent)
         if (intent?.component?.className == SessionActivity::class.java.name) overridePendingTransition(R.anim.session_rise, R.anim.session_hold)
+    }
+
+    /** The page is all blue: the session opens on the same blue, with no animation of its own. */
+    private fun launchFlooded(f: PendingFlood) {
+        val signal = com.droiddeck.launcher.ui.Themes.byId(theme).signal
+        super.startActivity(f.intent.putExtra(com.droiddeck.launcher.ui.EXTRA_FLOOD, signal.toArgb()))
+        overridePendingTransition(0, 0)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -248,6 +271,7 @@ class MainActivity : ComponentActivity() {
                     showMapping -> { { MappingHost() } }
                     else -> null
                 }
+                com.droiddeck.launcher.ui.FloodBehind({ floodProgress }) {
                 FrontEndScreen(
                     FrontEndState(
                         installed = installed, ready = ready, available = available?.version,
@@ -320,6 +344,10 @@ class MainActivity : ComponentActivity() {
                         onPerformance = { refreshCores(); showProtons = false; showComponents = false; showMapping = false; showPerformance = true },
                         onRoms = { showRoms = true },
                         onFiles = { startActivity(Intent(this, com.droiddeck.launcher.files.FileManagerActivity::class.java)) },
+                        onBrowseFiles = { dir ->
+                            startActivity(Intent(this, com.droiddeck.launcher.files.FileManagerActivity::class.java)
+                                .putExtra(com.droiddeck.launcher.files.FileManagerActivity.EXTRA_START_DIR, dir.absolutePath))
+                        },
                         onLogs = {
                             SessionPrefs.setLogsEnabled(this, !SessionPrefs.logsEnabled(this))
                             logsEnabled = SessionPrefs.logsEnabled(this)
@@ -417,6 +445,7 @@ class MainActivity : ComponentActivity() {
                     ),
                     page = page,
                 )
+                }
                 if (showRoms) RomsDialog(
                     path = romsDir,
                     onChoose = {
@@ -443,6 +472,7 @@ class MainActivity : ComponentActivity() {
                     onDismiss = { showRemove = false },
                 )
                 if (showCredits) CreditsDialog { showCredits = false }
+                flood?.let { f -> com.droiddeck.launcher.ui.LaunchFlood(f.from, onProgress = { floodProgress = it }) { launchFlooded(f) } }
             }
         }
 
@@ -552,6 +582,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         displayManager.unregisterDisplayListener(secondScreenDisplayListener)
+        // The session covers the page by now; coming back finds it as it was.
+        flood = null
+        floodProgress = 0f
+        com.droiddeck.launcher.ui.LaunchOrigin.flooding = null
         super.onStop()
     }
 
@@ -952,7 +986,13 @@ class MainActivity : ComponentActivity() {
         // The libraries, off the main thread: manifests and a folder scan.
         Thread({
             val games = if (ready) Library.steamGames(this) + com.droiddeck.launcher.frontend.AddedGames.scan(this).map { g ->
-                com.droiddeck.launcher.frontend.AddedGameArt.resolve(this, g).let { art -> Library.SteamGame(g.appId.toInt(), g.name, art.portrait ?: art.header, "added", g.gameId, hero = art.hero ?: art.header) }
+                com.droiddeck.launcher.frontend.AddedGameArt.resolve(this, g).let { art ->
+                    Library.SteamGame(
+                        g.appId.toInt(), g.name, art.portrait ?: art.header, "added", g.gameId,
+                        hero = art.hero ?: art.header, gameFiles = g.folder,
+                        protonPrefix = Library.protonPrefix(this, g.appId),
+                    )
+                }
             } else emptyList()
             val emus = Library.emulators(this) { id -> DesktopCatalog.installed(this, id) != null }
             ui.post { steamGames = games; emulatorList = emus }
