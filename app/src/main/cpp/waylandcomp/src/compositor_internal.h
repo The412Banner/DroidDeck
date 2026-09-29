@@ -60,6 +60,9 @@ struct client_info {
     /* An OpenGL program whose EGL gave up on the GPU: it asked for dma-buf feedback (EGL's
      * Wayland GPU path always does), never made a dma-buf buffer, and draws wl_shm frames. */
     unsigned asked_feedback : 1, shm_gl_said : 1;
+    /* Clients that describe opaque regions can use alpha outside those regions. Wine windows
+     * never describe them, and their unused alpha channel must not make them translucent. */
+    unsigned declares_opaque : 1;
     unsigned dmabuf_buffers, shm_frames;
     struct client_info *next;
 };

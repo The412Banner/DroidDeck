@@ -24,7 +24,9 @@ object SessionFiles {
      * rename, so a session that still has one mapped keeps the file it opened.
      */
     fun stage(context: Context, root: File) {
+        GameEnvironmentStore.publish(context)
         val files = arrayOf(
+            "usr/local/bin/bannerlator-game-env" to "usr/local/bin/bannerlator-game-env",
             "libblsession.so" to "usr/local/lib/libblsession.so",
             "libfakeinput.so" to "usr/local/lib/libfakeinput.so",
             "usr/local/bin/bannerlator-session" to "usr/local/bin/bannerlator-session",
@@ -38,6 +40,7 @@ object SessionFiles {
             "usr/local/bin/bannerlator-desktop-games" to "usr/local/bin/bannerlator-desktop-games",
             "usr/local/bin/bannerlator-steam-shim" to "usr/local/bin/bannerlator-steam-shim",
             "usr/local/bin/bannerlator-steam-shortcuts" to "usr/local/bin/bannerlator-steam-shortcuts",
+            "usr/local/bin/bannerlator-steam-games" to "usr/local/bin/bannerlator-steam-games",
             "usr/local/bin/bannerlator-pad-defaults" to "usr/local/bin/bannerlator-pad-defaults",
             // The SteamOS helpers the client calls in Deck mode: the two Armada found it needs, plus
             // the three under /usr/bin, all no-ops that answer "nothing to do" (see each file).

@@ -147,6 +147,7 @@ object DeviceReport {
         k("FEX preset", SessionPrefs.fexPreset(context).ifEmpty { "FEX defaults" })
         k("Skip xalia", SessionPrefs.noXalia(context))
         k("proot without seccomp", SessionPrefs.prootNoSeccomp(context))
+        k("Guest host name", SessionPrefs.guestHostname(context))
         k("DirectAudio for games", SessionPrefs.directAudio(context))
         k("Stretch games to fill", SessionPrefs.forceFullscreen(context))
         k("Client audio", if (SessionPrefs.clientDirectAudio(context)) "DirectAudio" else "classic")
@@ -161,7 +162,7 @@ object DeviceReport {
         })
 
         h("Android process limits")
-        k("Phantom proc monitor", PhantomProcessLimit.reportValue(PhantomProcessLimit.read(context.contentResolver)))
+        k("Phantom proc monitor", PhantomProcessLimit.reportValue(PhantomProcessLimit.read(context)))
 
         h("Device switch files in Download")
         for (name in listOf("droiddeck-env", "droiddeck-tu-debug", "droiddeck-driver",

@@ -57,6 +57,7 @@ import java.util.Locale
  */
 class SessionService : Service() {
     private val components = java.util.concurrent.CopyOnWriteArrayList<SessionPart>()
+    private val stopLock = Any()
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var sessionPid = -1
@@ -84,7 +85,7 @@ class SessionService : Service() {
         }
     }
     /** Counts sessions this service has started; a process exit from an earlier one is ignored. */
-    private var sessionGen = 0
+    @Volatile private var sessionGen = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -308,6 +309,7 @@ class SessionService : Service() {
             val added = com.droiddeck.launcher.frontend.AddedGames.scan(this)
             val listing = com.droiddeck.launcher.frontend.AddedGames.writeListing(this, added)
             guest.add("BL_ADDED_GAMES=" + listing.path)
+            if (OfflineMode.enabled(this)) guest.add("BL_STEAM_OFFLINE=1")
             if (added.isNotEmpty()) Log.i(TAG, "added games: " + added.joinToString { "${it.name} (${it.exe.name})" })
         }
         // Where the guest leaves a request for another session (the desktop's Steam launchers).
@@ -392,6 +394,11 @@ class SessionService : Service() {
         networkLink.attach(this)
         networkLink.publish()
         components.add(networkLink)
+        if (gen != sessionGen || !SessionState.running) {
+            Log.i(TAG, "session stopped while it was starting; not launching it")
+            if (gen == sessionGen) components.clear()
+            return
+        }
         components.forEach { it.start() }
 
         val line = command.joinToString(" ") {
@@ -402,7 +409,7 @@ class SessionService : Service() {
         // by the teardown a second after the new one has started, and its exit used to arrive
         // here as "session ended: 137" and end the NEW session. An exit belongs to the session
         // that started it.
-        sessionPid = HostProcess.start(line, hostEnv.asArray(), root, { status ->
+        val pid = HostProcess.start(line, hostEnv.asArray(), root, { status ->
             if (gen != sessionGen) {
                 Log.i(TAG, "an earlier session's process ended ($status); the current one carries on")
                 return@start
@@ -410,12 +417,24 @@ class SessionService : Service() {
             Log.i(TAG, "session ended: $status")
             stopSession(status ?: -1)
         }, null)
-        Log.i(TAG, "session pid $sessionPid, log ${sessionLog.path}")
-        if (gen == sessionGen && SessionState.running && sessionPid > 1) {
-            SessionEvents.guestStarted(sessionPid)
-        } else if (gen == sessionGen && SessionState.running) {
-            SessionEvents.record("guest.start_failed", mapOf("pid" to sessionPid))
-            SessionEvents.fail("GUEST_START_FAILED", "The guest process could not be started", sessionPid)
+        Log.i(TAG, "session pid $pid, log ${sessionLog.path}")
+        if (gen != sessionGen || !SessionState.running) {
+            Log.i(TAG, "session stopped while its guest was starting; taking it down")
+            if (gen == sessionGen) {
+                launchWatcher?.stopWatching()
+                launchWatcher = null
+                components.reversed().forEach { runCatching { it.stop() } }
+                components.clear()
+            }
+            if (pid > 1) Thread({ teardown(pid) }, "session-teardown").start()
+            return
+        }
+        sessionPid = pid
+        if (pid > 1) {
+            SessionEvents.guestStarted(pid)
+        } else {
+            SessionEvents.record("guest.start_failed", mapOf("pid" to pid))
+            SessionEvents.fail("GUEST_START_FAILED", "The guest process could not be started", pid)
             stopSession(-1)
             return
         }
@@ -510,15 +529,6 @@ class SessionService : Service() {
         // XALIA_SUPPORTED_ONLY itself otherwise). Off by default: xalia is Valve's, and on a device
         // whose seccomp answers its syscalls normally there is no reason to take it away.
         if (SessionPrefs.noXalia(this)) guest.add("PROTON_USE_XALIA=0")
-        // The FEXCore preset for the x86 games the client launches: its FEX_* variables go in
-        // here, before the script, so every game process inherits them from the client. The
-        // default preset sets nothing, which is what every session ran on before.
-        if (steamHere) {
-            val preset = SessionPrefs.fexPreset(this)
-            val vars = com.droiddeck.launcher.core.FexPreset.env(preset)
-            vars.forEach { guest.add(it) }
-            if (vars.isNotEmpty()) Log.i(TAG, "fex preset $preset: ${vars.joinToString(" ")}")
-        }
         // Anything else, for a device that cannot be reached with a debugger: Downloads/droiddeck-env
         // holds KEY=VALUE lines that go into the session's environment as written, after ours, so a
         // line here wins. Zink and Turnip tunables (ZINK_DESCRIPTORS=lazy, MESA_*), gamescope's,
@@ -726,6 +736,24 @@ class SessionService : Service() {
         return try { Pair(fields[1].toInt(), fields[19].toLong()) } catch (e: NumberFormatException) { null }
     }
 
+    private fun askSteamToExit(prootPid: Int) {
+        if (!File("/proc/$prootPid").exists()) return
+        val request = File(LinuxRuntime.sessionRoot(this), "steam-stop")
+        try {
+            request.writeText("")
+        } catch (e: Exception) {
+            Log.w(TAG, "could not ask the Steam client to exit", e)
+            return
+        }
+        val started = System.currentTimeMillis()
+        if (waitForExit(prootPid, STEAM_PICKUP_MS) || request.exists()) {
+            request.delete()
+            return
+        }
+        val exited = waitForExit(prootPid, STEAM_EXIT_MS)
+        Log.i(TAG, "Steam client ${if (exited) "exited" else "did not exit"} after ${System.currentTimeMillis() - started} ms")
+    }
+
     private fun waitForExit(pid: Int, timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
@@ -877,8 +905,12 @@ class SessionService : Service() {
         }
     }
 
-    private fun finishSessionStop(status: Int) {
+    private fun finishSessionStop(status: Int, stoppedGen: Int) {
         mainHandler.post {
+            if (stoppedGen != sessionGen || SessionState.running) {
+                Log.i(TAG, "session $stoppedGen finished stopping after a new one started")
+                return@post
+            }
             SessionState.suspended = false
             SessionState.guestPid = -1
             releaseLocks()
@@ -897,8 +929,11 @@ class SessionService : Service() {
     }
 
     private fun stopSession(status: Int) {
-        if (!SessionState.running) return
-        SessionState.running = false
+        synchronized(stopLock) {
+            if (!SessionState.running) return
+            SessionState.running = false
+        }
+        val stoppedGen = sessionGen
         SessionState.stopRequested = false
         SessionEvents.record("guest.exited", mapOf("status" to status))
         SessionEvents.transition(SessionPhase.STOPPING, "session.stopping", mapOf("status" to status))
@@ -936,16 +971,18 @@ class SessionService : Service() {
         }
         components.clear()
         FakeInputWriter.releaseAllRingSlots()
+        val steamClientMayRun = SessionState.mode == MODE_STEAM || SessionState.mode == MODE_DESKTOP
         val finishAfterTeardown: () -> Unit = {
             if (prootPid > 1 || auxiliary.isNotEmpty()) {
                 Thread({
+                    if (prootPid > 1 && steamClientMayRun) askSteamToExit(prootPid)
                     auxiliary.forEach { (pid, started) -> teardown(pid, started) }
                     if (prootPid > 1) teardown(prootPid)
                     killGuestLeftovers()
-                    finishSessionStop(status)
+                    finishSessionStop(status, stoppedGen)
                 }, "session-teardown").start()
             } else {
-                finishSessionStop(status)
+                finishSessionStop(status, stoppedGen)
             }
         }
         if (prootPid > 1) acquireLocks()
@@ -1097,6 +1134,8 @@ class SessionService : Service() {
             "steamwebhelper", "linuxfs/opt/android-host/proot", "/libproot.so", "pulseaudio/libpulseaudio.so")
         /** How long proot gets to run its own cleanup before it is killed outright. */
         private const val GRACE_MS = 1200L
+        private const val STEAM_PICKUP_MS = 1500L
+        private const val STEAM_EXIT_MS = 10_000L
         private const val NO_PAD_SWITCH = "Download/droiddeck-no-pad"
         private const val PAD_LOG_SWITCH = "Download/droiddeck-pad-log"
 
@@ -1127,6 +1166,10 @@ class SessionService : Service() {
         }
 
         fun stop(context: Context) {
+            if (!SessionState.running) {
+                SessionState.stopRequested = true
+                return
+            }
             context.startService(Intent(context, SessionService::class.java).setAction(ACTION_STOP))
         }
 

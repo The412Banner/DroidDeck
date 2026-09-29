@@ -26,6 +26,10 @@ public final class WaylandCompositor {
      *  listener must marshal to the UI thread itself. */
     public static void setFirstFrameListener(Runnable r) { firstFrameListener = r; }
 
+    public static synchronized void clearFirstFrameListener(Runnable r) {
+        if (firstFrameListener == r) firstFrameListener = null;
+    }
+
     /** Invoked from native (banner_on_first_frame) on the first present. */
     @SuppressWarnings("unused")
     static void onFirstFramePresented() {
@@ -52,6 +56,10 @@ public final class WaylandCompositor {
 
     public static void setGameListener(GameListener l) { gameListener = l; }
 
+    public static synchronized void clearGameListener(GameListener l) {
+        if (gameListener == l) gameListener = null;
+    }
+
     /** Invoked from native (banner_on_game_surface). */
     @SuppressWarnings("unused")
     static void onGameSurface(String window, String gpuName) {
@@ -59,9 +67,30 @@ public final class WaylandCompositor {
         if (l != null) l.onGameSurface(window, gpuName);
     }
 
+    private static volatile long lastFrameNanos;
+    private static volatile long frameIntervalNanos;
+
+    /**
+     * How long frames are taking to arrive right now, in ms, or -1 before the first: the smoothed
+     * interval, or the time since the last frame when that is longer (a session that has stalled).
+     */
+    public static long recentFrameIntervalMs() {
+        long last = lastFrameNanos;
+        if (last == 0) return -1;
+        return Math.max(frameIntervalNanos, System.nanoTime() - last) / 1_000_000;
+    }
+
     /** Invoked from native (banner_on_game_frame) for every frame of the HUD's window. */
     @SuppressWarnings("unused")
     static void onGameFrame() {
+        long now = System.nanoTime();
+        long previous = lastFrameNanos;
+        lastFrameNanos = now;
+        if (previous != 0) {
+            long interval = now - previous;
+            long smoothed = frameIntervalNanos;
+            frameIntervalNanos = smoothed == 0 ? interval : (smoothed * 3 + interval) / 4;
+        }
         com.droiddeck.launcher.session.PerfHints.onFrame();
         GameListener l = gameListener;
         if (l != null) l.onGameFrame();

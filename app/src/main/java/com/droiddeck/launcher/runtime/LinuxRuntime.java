@@ -6,6 +6,7 @@ import android.system.ErrnoException;
 import android.system.Os;
 import android.system.StructStat;
 import android.system.StructUtsname;
+import com.droiddeck.launcher.session.SessionPrefs;
 
 
 import java.io.File;
@@ -33,7 +34,6 @@ public final class LinuxRuntime {
     /** Shortcut extra naming which of the modes above a Linux entry launches. */
     public static final String EXTRA_LINUX_MODE = "linux_mode";
     private static final String KGSL_DEVICE = "/dev/kgsl-3d0";
-    private static final String GUEST_HOSTNAME = "DroidDeck";
     /** Where every Linux session's debug log lands: public, so a user can just hand the folder over. */
     public static final String DEBUG_LOG_DIR = "DroidDeck";
 
@@ -119,7 +119,7 @@ public final class LinuxRuntime {
         cmd.add(prootBinary(context).getPath());
         cmd.add("--kill-on-exit");
         // Preserve the host kernel identity while giving the guest the app's branded host name.
-        cmd.add("--kernel-release=" + guestUtsname());
+        cmd.add("--kernel-release=" + guestUtsname(SessionPrefs.guestHostname(context)));
         // Android's app seccomp policy traps the whole set*id family. Xwayland's Popen() calls
         // setgid()/setuid() before it execs xkbcomp and _exit(127)s when they fail, so without
         // this the keymap never compiles and Xwayland dies. -i makes proot answer those calls
@@ -193,6 +193,8 @@ public final class LinuxRuntime {
             }
         }
         bindGpuNode(context, cmd);
+        bindAdrenoStats(cmd);
+        bindCpuTemps(cmd, root);
         if (extraBinds != null) {
             for (String spec : extraBinds) bind(cmd, spec);
         }
@@ -244,15 +246,91 @@ public final class LinuxRuntime {
         bind(cmd, KGSL_DEVICE + ":/dev/dri/" + node);
     }
 
+    /**
+     * Valve's mangoapp (Deck mode's performance overlay) reads an Adreno GPU's load, clock and
+     * temperatures from where they are on Valve's own hardware; every Adreno under Android keeps
+     * them in KGSL's sysfs, readable by the app, though which files a kernel has differs between
+     * Snapdragon generations - so each value takes the first source that exists, the order other
+     * Android PC emulators (GameNative, Winlator forks) read them in. A value found nowhere is left
+     * alone.
+     */
+    private static void bindAdrenoStats(List<String> cmd) {
+        String kgsl = "/sys/class/kgsl/kgsl-3d0/";
+        String gpuTemp = firstReadable(kgsl + "temp", kgsl + "devfreq/temp", thermalZone("gpu"));
+        String[][] stats = {
+                {firstReadable(kgsl + "gpu_busy_percentage", kgsl + "devfreq/gpu_load"), "/sys/kernel/debug/dri/0/perf_now"},
+                {firstReadable(kgsl + "devfreq/cur_freq", kgsl + "gpuclk"),
+                        "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu/cur_freq"},
+                {gpuTemp, "/sys/class/thermal/thermal_zone28/temp"},
+                {gpuTemp, "/sys/class/thermal/thermal_zone26/temp"},
+                {thermalZone("ddr"), "/sys/class/thermal/thermal_zone22/temp"},
+        };
+        for (String[] stat : stats) {
+            if (stat[0] != null) bind(cmd, stat[0] + ":" + stat[1]);
+        }
+    }
+
+    /**
+     * mangoapp's CPU temperature is the mean of the thermal zones named cpuN-thermal or
+     * cpuN-top-thermal, as mainline kernels name them; Android kernels name the same sensors
+     * cpuss-0, cpu-1-0, cpu0-silver-usr, apc1-cpu0-usr and the like, so those zones are shown
+     * under the mainline name.
+     */
+    private static void bindCpuTemps(List<String> cmd, File root) {
+        File name = new File(root, "etc/bannerlator/cpu-thermal-type");
+        try {
+            if (!name.isFile()) Files.write(name.toPath(), "cpu0-thermal\n".getBytes(StandardCharsets.US_ASCII));
+        } catch (IOException e) {
+            return;
+        }
+        for (java.util.Map.Entry<String, File> zone : thermalZones().entrySet()) {
+            String type = zone.getKey();
+            if (type.contains("cpu") && !type.contains("gpu") && !type.matches("cpu\\d-(top-)?thermal")) {
+                bind(cmd, name.getPath() + ":" + new File(zone.getValue(), "type").getPath());
+            }
+        }
+    }
+
+    private static String firstReadable(String... paths) {
+        for (String path : paths) {
+            if (path != null && new File(path).canRead()) return path;
+        }
+        return null;
+    }
+
+    /** The temp file of the thermal zone for a sensor: the one named so, else the first whose name has it. */
+    private static String thermalZone(String sensor) {
+        java.util.Map<String, File> zones = thermalZones();
+        File zone = zones.get(sensor);
+        for (java.util.Map.Entry<String, File> e : new java.util.TreeMap<>(zones).entrySet()) {
+            if (zone == null && e.getKey().contains(sensor)) zone = e.getValue();
+        }
+        return zone != null ? new File(zone, "temp").getPath() : null;
+    }
+
+    /** The device's thermal zones by their sensor's name, in lower case. */
+    private static java.util.Map<String, File> thermalZones() {
+        java.util.Map<String, File> byType = new java.util.HashMap<>();
+        File[] zones = new File("/sys/class/thermal").listFiles((dir, n) -> n.startsWith("thermal_zone"));
+        if (zones == null) return byType;
+        for (File zone : zones) {
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(new File(zone, "type")))) {
+                byType.putIfAbsent(String.valueOf(r.readLine()).trim().toLowerCase(java.util.Locale.ROOT), zone);
+            } catch (IOException ignored) {
+            }
+        }
+        return byType;
+    }
+
     private static void bind(List<String> cmd, String spec) {
         cmd.add("-b");
         cmd.add(spec);
     }
 
     /** PRoot's complex -k format: sysname, nodename, release, version, machine, domain, HWCAP. */
-    private static String guestUtsname() {
+    private static String guestUtsname(String hostname) {
         StructUtsname host = Os.uname();
-        return "\\" + host.sysname + "\\" + GUEST_HOSTNAME + "\\" + host.release
+        return "\\" + host.sysname + "\\" + hostname + "\\" + host.release
                 + "\\" + host.version + "\\" + host.machine + "\\localdomain\\-1\\";
     }
 

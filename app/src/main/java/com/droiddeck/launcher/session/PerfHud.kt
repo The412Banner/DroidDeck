@@ -81,7 +81,7 @@ class PerfHud(context: Context) {
 
     fun stop() {
         running = false
-        WaylandCompositor.setGameListener(null)
+        WaylandCompositor.clearGameListener(listener)
         text = ""
     }
 

@@ -1,13 +1,17 @@
 # DroidDeck boot animation
 
 This source accompanies the single Steam startup movie bundled by the app:
-`app/src/main/assets/steam-startup/droiddeck-startup.webm` (1920×1080, pitch black background, VP9 video
+`app/src/main/assets/steam-startup/droiddeck-startup.webm` (1280×720 at 30 fps, pitch black background, VP8 video
 with Opus audio). `droiddeck-boot.html` is the editable animation; the scripts and WAV below
-reproduce the selected render. No alternate MP4 or WebM exports are kept in the repository.
+render the animation at the bundled playback profile. No alternate MP4 or WebM exports are kept in the repository.
 
 From the repository root, render the movie with:
 
-    python3 artwork/boot-animation-source/render.py 1920 1080 60 app/src/main/assets/steam-startup/droiddeck-startup.webm dark
+    python3 artwork/boot-animation-source/render.py 1280 720 30 app/src/main/assets/steam-startup/droiddeck-startup.webm dark
+
+The bundled profile reduces decoded pixels per second by 78% compared with 1080p/60.
+VP8 also lowers software decode cost while Steam is starting. Keep the bundled movie at
+720p/30; higher-resolution exports are intended for sharing.
 
 The app stages that file into Steam's `config/uioverrides/movies` folder before each session. If
 Steam still has its built-in startup movie selected, DroidDeck sets this movie as the device's
@@ -27,13 +31,12 @@ it down or step frame by frame (arrow keys).
 
 ## Re-render the video
 
-    pip install playwright && playwright install chromium   # ffmpeg with libvpx-vp9 also required
-    python3 render.py 1280 800 60 droiddeck-boot-1280x800.webm
-    python3 render.py 1920 1080 60 droiddeck-boot-1920x1080.webm
+    pip install playwright && playwright install chromium   # ffmpeg with libvpx also required
+    python3 render.py 1280 720 30 droiddeck-boot-1280x720.webm
     python3 render.py 1920 1080 60 droiddeck-boot-1920x1080.mp4    # .mp4 = H.264 for sharing
-    python3 render.py 1280 800 60 droiddeck-boot-dark-1280x800.webm dark   # dark version
+    python3 render.py 1280 720 30 droiddeck-boot-dark-1280x720.webm dark   # dark version
 
-Each frame gets real motion blur (180° shutter, adaptive sub-frames). Output is VP9 for .webm or H.264 for .mp4, both BT.709,
+Each frame gets real motion blur (180° shutter, adaptive sub-frames). Output is VP8 for .webm or H.264 for .mp4, both BT.709,
 so the orb stays #1A9FFF after compression.
 
 ## Sound

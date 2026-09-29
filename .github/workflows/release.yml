@@ -35,6 +35,10 @@ jobs:
         run: |
           set -euo pipefail
           [[ $VERSION =~ ^[0-9A-Za-z._-]+$ ]] || { echo "::error::version '$VERSION': letters, digits, . _ - only"; exit 1; }
+          name=$(sed -n 's/^ *versionName "\(.*\)"$/\1/p' app/build.gradle)
+          [[ $VERSION == "$name" || $VERSION == "$name"-* ]] || {
+            echo "::error::version '$VERSION' does not match versionName '$name' in app/build.gradle: bump versionName and versionCode first"; exit 1;
+          }
           runs=$(gh run list -R "$GITHUB_REPOSITORY" --workflow build.yml --branch main --commit "$GITHUB_SHA" \
                    --status success --json databaseId,event,headSha -L 20)
           id=$(jq -r --arg sha "$GITHUB_SHA" \

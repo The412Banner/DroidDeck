@@ -30,6 +30,7 @@
 #include <time.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <poll.h>
 #include <sys/timerfd.h>
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
@@ -237,6 +238,8 @@ struct surface {
     struct dmabuf_buffer *dmabuf_buf;       /* its imported image, kept until replaced or the surface goes */
     struct wl_listener dmabuf_destroy;
     int buf_w, buf_h, has_content;
+    int buf_alpha;
+    int opaque[4], pending_opaque[4], pending_opaque_set; /* x, y, w, h; w = 0: none */
     int src_set, dst_set;
     float src[4];
     int dst[2];
@@ -247,6 +250,10 @@ struct surface {
     int releases_pending;                   /* FPS limiter: buffers of this surface still to be released */
 
     enum surface_role role;
+    /* A role-less surface's last buffer, held unreleased: it may become the pointer's image
+     * (wl_pointer.set_cursor after the commit, which is wlroots' order). */
+    struct wl_resource *idle_buffer;
+    struct wl_listener idle_buffer_destroy;
     struct wl_resource *xdg_surface, *xdg_toplevel;
     struct wl_resource *viewport;
 
@@ -461,6 +468,12 @@ static struct seat_pointer g_ptrs[MAX_PTRS];
 static int g_nptrs;
 static struct seat_keyboard g_kbs[MAX_PTRS];
 static int g_nkbs;
+/* Modifier state in the keymap's real-modifier bits (Shift=0x1, Lock=0x2, Control=0x4, Mod1=0x8,
+ * Mod4=0x40). A client of the wayland backend - gamescope, labwc - takes modifiers only from
+ * wl_keyboard.modifiers and ignores what a Shift key event does to its xkb state, so without this
+ * every capital arrived lowercase. */
+static uint32_t g_mods_depressed, g_mods_locked;
+static uint32_t g_mod_keys_held; /* one bit per modifier key below, so a repeat press is harmless */
 static struct seat_touch g_touches[MAX_PTRS];
 static int g_ntouches;
 
@@ -475,12 +488,21 @@ static int g_ntouches;
 #define CURSOR_MAX_PX (256 * 256)
 static pthread_mutex_t g_cursor_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct surface *g_cursor_surface;     /* compositor thread only */
+static struct surface *g_cursor_shown;       /* compositor thread: whose image g_cursor_px holds */
 static int g_cursor_hx, g_cursor_hy;         /* hotspot, surface-local */
 static uint32_t g_cursor_px[CURSOR_MAX_PX];  /* guarded by g_cursor_lock: ARGB8888 snapshot */
 static uint32_t g_cursor_rb[CURSOR_MAX_PX];  /* compositor thread: GPU readback staging */
 static int g_cursor_w, g_cursor_h;           /* 0 = nothing to draw */
 static int g_cursor_hidden = 1;              /* the client asked for no pointer */
 static int g_cursor_serial;                  /* bumped on every change; the app polls it */
+
+/* The last image again, after a hide: the same surface set as the pointer once more with nothing
+ * newly committed to it (wlroots re-sets its cursor surface each time the pointer enters). */
+static void cursor_publish_shown(void) {
+    pthread_mutex_lock(&g_cursor_lock);
+    if (g_cursor_w > 0) { g_cursor_hidden = 0; g_cursor_serial++; }  /* serial: the hotspot may be new */
+    pthread_mutex_unlock(&g_cursor_lock);
+}
 
 static void cursor_publish_hidden(void) {
     pthread_mutex_lock(&g_cursor_lock);
@@ -702,6 +724,7 @@ static void take_shm(struct surface *s, struct wl_shm_buffer *shm, struct wl_res
     wl_buffer_send_release(buffer);
     s->buf_w = w;
     s->buf_h = h;
+    s->buf_alpha = wl_shm_buffer_get_format(shm) == WL_SHM_FORMAT_ARGB8888;
     s->has_content = s->shm_img != NULL;
     g_stat_shm++;
     struct client_info *ci = client_info_of(wl_resource_get_client(s->resource));
@@ -753,6 +776,7 @@ static void take_dmabuf(struct surface *s, struct dmabuf_buffer *b, struct wl_re
     }
     s->buf_w = b->width;
     s->buf_h = b->height;
+    s->buf_alpha = (b->format & 0xff) == 'A';
     s->has_content = b->img != NULL;
     g_stat_dmabuf++;
     const int announced_now = !s->announced_vulkan;
@@ -924,12 +948,93 @@ static void surface_frame(struct wl_client *c, struct wl_resource *r, uint32_t c
     wl_resource_set_implementation(callback, NULL, NULL, frame_callback_destroy);
     wl_list_insert(s->pending_frames.prev, wl_resource_get_link(callback));
 }
+/* The bounding box serves pointer confinement. The exact flag also tells opaque-region handling
+ * whether the bounding box itself is the whole region. */
+struct region { int set, exact; int x, y, w, h; };
+
+/* A wl_surface's opaque region is pending until its next commit. An exact region that covers
+ * the surface lets the blit path keep handling an otherwise alpha-capable buffer. */
 static void surface_set_opaque(struct wl_client *c, struct wl_resource *r,
-                               struct wl_resource *region) {}
+                               struct wl_resource *region) {
+    struct surface *s = wl_resource_get_user_data(r);
+    struct region *rg = region ? wl_resource_get_user_data(region) : NULL;
+    memset(s->pending_opaque, 0, sizeof(s->pending_opaque));
+    s->pending_opaque_set = 1;
+    if (rg && rg->set && rg->exact) {
+        s->pending_opaque[0] = rg->x;
+        s->pending_opaque[1] = rg->y;
+        s->pending_opaque[2] = rg->w;
+        s->pending_opaque[3] = rg->h;
+    }
+    struct client_info *ci = client_info_of(c);
+    if (ci) ci->declares_opaque = 1;
+}
 static void surface_set_input(struct wl_client *c, struct wl_resource *r,
                               struct wl_resource *region) {}
 
 static void send_toplevel_configure(struct surface *s);
+
+/* The pointer image from a cursor surface's buffer: wl_shm is copied, a dma-buf (labwc on a GPU
+ * renderer) is read back once the client's render into it is done - its implicit fence, as the
+ * zero-copy path waits for it (ahb_swapchain_present). */
+static void cursor_publish_buffer(struct surface *s, struct wl_resource *buffer) {
+    struct dmabuf_buffer *db = get_dmabuf(buffer);
+    struct wl_shm_buffer *shm = db ? NULL : wl_shm_buffer_get(buffer);
+    if (shm) {
+        cursor_publish_shm(shm, g_cursor_hx, g_cursor_hy);
+    } else if (db && db->n_planes >= 1 && db->width > 0 && db->height > 0 &&
+               (int64_t)db->width * db->height <= CURSOR_MAX_PX) {
+        if (!db->img && !db->import_failed) {
+            db->img = vkp_image_from_dmabuf(db->fd[0], db->format, db->modifier, db->width, db->height,
+                                            db->stride[0], db->offset[0]);
+            if (!db->img) db->import_failed = 1;
+        }
+        if (!db->img) return;
+        struct pollfd p = {.fd = db->fd[0], .events = POLLIN};
+        int r;
+        do { r = poll(&p, 1, 100); } while (r < 0 && errno == EINTR);
+        if (vkp_image_readback(db->img, g_cursor_rb, CURSOR_MAX_PX) != 0) return;
+        cursor_publish_pixels((const uint8_t *)g_cursor_rb, db->width, db->height,
+                              (size_t)db->width * 4, g_cursor_hx, g_cursor_hy);
+    } else {
+        return;
+    }
+    g_cursor_shown = s;
+}
+
+static void on_idle_buffer_destroyed(struct wl_listener *l, void *data) {
+    struct surface *s = wl_container_of(l, s, idle_buffer_destroy);
+    wl_list_remove(&s->idle_buffer_destroy.link);
+    wl_list_init(&s->idle_buffer_destroy.link);
+    s->idle_buffer = NULL;
+}
+
+/* Only what could be a pointer image is held; anything larger goes straight back. */
+static void surface_hold_idle(struct surface *s, struct wl_resource *buffer) {
+    struct dmabuf_buffer *db = get_dmabuf(buffer);
+    struct wl_shm_buffer *shm = db ? NULL : wl_shm_buffer_get(buffer);
+    int64_t px = db ? (int64_t)db->width * db->height
+               : shm ? (int64_t)wl_shm_buffer_get_width(shm) * wl_shm_buffer_get_height(shm) : 0;
+    if (px <= 0 || px > CURSOR_MAX_PX) { wl_buffer_send_release(buffer); return; }
+    s->idle_buffer = buffer;
+    s->idle_buffer_destroy.notify = on_idle_buffer_destroyed;
+    wl_resource_add_destroy_listener(buffer, &s->idle_buffer_destroy);
+}
+
+/* Lets go of the held buffer; release = give it back to the client (not while it is going away). */
+static struct wl_resource *surface_take_idle(struct surface *s) {
+    struct wl_resource *buffer = s->idle_buffer;
+    if (!buffer) return NULL;
+    wl_list_remove(&s->idle_buffer_destroy.link);
+    wl_list_init(&s->idle_buffer_destroy.link);
+    s->idle_buffer = NULL;
+    return buffer;
+}
+
+static void surface_drop_idle(struct surface *s) {
+    struct wl_resource *buffer = surface_take_idle(s);
+    if (buffer) wl_buffer_send_release(buffer);
+}
 
 static void surface_commit(struct wl_client *c, struct wl_resource *r) {
     struct surface *s = wl_resource_get_user_data(r);
@@ -954,6 +1059,10 @@ static void surface_commit(struct wl_client *c, struct wl_resource *r) {
         memcpy(s->dst, s->pending_dst, sizeof(s->dst));
         s->pending_dst_set = 0;
     }
+    if (s->pending_opaque_set) {
+        memcpy(s->opaque, s->pending_opaque, sizeof(s->opaque));
+        s->pending_opaque_set = 0;
+    }
 
     if (s->pending_attach) {
         struct wl_resource *buffer = s->pending_buffer;
@@ -970,28 +1079,19 @@ static void surface_commit(struct wl_client *c, struct wl_resource *r) {
         s->pending_buffer = NULL;
         s->pending_attach = 0;
 
+        surface_drop_idle(s);  /* replaced, whatever the surface is now */
         if (s->role == ROLE_CURSOR) {
             /* The client's pointer image, copied out for the app's overlay (see cursor_publish_*)
              * rather than composited, so it survives the zero-copy and HDR layer paths. */
             if (!buffer) {
                 cursor_publish_hidden();  /* wlroots clears its cursor surface to hide the pointer */
-            } else if (shm) {
-                cursor_publish_shm(shm, g_cursor_hx, g_cursor_hy);
-            } else if (db && db->n_planes >= 1 && db->width > 0 && db->height > 0 &&
-                       (int64_t)db->width * db->height <= CURSOR_MAX_PX) {
-                if (!db->img && !db->import_failed) {
-                    db->img = vkp_image_from_dmabuf(db->fd[0], db->format, db->modifier, db->width, db->height,
-                                                    db->stride[0], db->offset[0]);
-                    if (!db->img) db->import_failed = 1;
-                }
-                if (db->img && vkp_image_readback(db->img, g_cursor_rb, CURSOR_MAX_PX) == 0)
-                    cursor_publish_pixels((const uint8_t *)g_cursor_rb, db->width, db->height,
-                                          (size_t)db->width * 4, g_cursor_hx, g_cursor_hy);
+            } else {
+                cursor_publish_buffer(s, buffer);
+                wl_buffer_send_release(buffer);
             }
-            if (buffer) wl_buffer_send_release(buffer);
         } else if (s->role == ROLE_NONE) {
-            /* Role-less surface: never drawn. */
-            if (buffer) wl_buffer_send_release(buffer);
+            /* Role-less surface: never drawn, but its buffer is kept for a set_cursor to come. */
+            if (buffer) surface_hold_idle(s, buffer);
         } else if (db) {
             take_dmabuf(s, db, buffer);
         } else if (shm) {
@@ -1063,6 +1163,8 @@ static void surface_resource_destroy(struct wl_resource *r) {
     for (int i = 0; i < g_nkbs; i++) if (g_kbs[i].focus == r) g_kbs[i].focus = NULL;
     touch_cancel_surface(s);
     if (g_cursor_surface == s) { g_cursor_surface = NULL; cursor_publish_hidden(); }
+    if (g_cursor_shown == s) g_cursor_shown = NULL;
+    surface_take_idle(s);
     if (g_grab == s) g_grab = NULL;
     if (g_key_target == s) g_key_target = NULL;
     if (g_ime_click == s) g_ime_click = NULL;
@@ -1099,24 +1201,29 @@ static void surface_resource_destroy(struct wl_resource *r) {
 
 /* ------------------------------------------------------------------ wl_region */
 
-/* A region is kept as the bounding box of its rectangles: enough for pointer confinement,
- * where winewayland sends one rectangle (the ClipCursor area). Subtractions are ignored. */
-struct region { int set; int x, y, w, h; };
-
 static void region_destroy(struct wl_client *c, struct wl_resource *r) { wl_resource_destroy(r); }
 static void region_add(struct wl_client *c, struct wl_resource *r,
                        int32_t x, int32_t y, int32_t w, int32_t h) {
     struct region *rg = wl_resource_get_user_data(r);
     if (!rg || w <= 0 || h <= 0) return;
-    if (!rg->set) { rg->x = x; rg->y = y; rg->w = w; rg->h = h; rg->set = 1; return; }
-    int x2 = rg->x + rg->w > x + w ? rg->x + rg->w : x + w;
-    int y2 = rg->y + rg->h > y + h ? rg->y + rg->h : y + h;
+    if (!rg->set) { rg->x = x; rg->y = y; rg->w = w; rg->h = h; rg->set = rg->exact = 1; return; }
+    long long x2 = (long long)rg->x + rg->w, y2 = (long long)rg->y + rg->h;
+    long long nx2 = (long long)x + w, ny2 = (long long)y + h;
+    int inside = x >= rg->x && y >= rg->y && nx2 <= x2 && ny2 <= y2;
+    int around = x <= rg->x && y <= rg->y && nx2 >= x2 && ny2 >= y2;
+    if (!inside && !around) rg->exact = 0;
+    if (nx2 > x2) x2 = nx2;
+    if (ny2 > y2) y2 = ny2;
     if (x < rg->x) rg->x = x;
     if (y < rg->y) rg->y = y;
-    rg->w = x2 - rg->x; rg->h = y2 - rg->y;
+    rg->w = (int)(x2 - rg->x > INT32_MAX ? INT32_MAX : x2 - rg->x);
+    rg->h = (int)(y2 - rg->y > INT32_MAX ? INT32_MAX : y2 - rg->y);
 }
 static void region_subtract(struct wl_client *c, struct wl_resource *r,
-                            int32_t x, int32_t y, int32_t w, int32_t h) {}
+                            int32_t x, int32_t y, int32_t w, int32_t h) {
+    struct region *rg = wl_resource_get_user_data(r);
+    if (rg && w > 0 && h > 0) rg->exact = 0;
+}
 static void region_resource_destroy(struct wl_resource *r) { free(wl_resource_get_user_data(r)); }
 static const struct wl_region_interface region_impl = {
     .destroy = region_destroy,
@@ -1139,6 +1246,7 @@ static void compositor_create_surface(struct wl_client *c, struct wl_resource *r
     wl_list_init(&s->child_link);
     wl_list_init(&s->toplevel_link);
     wl_list_init(&s->pending_buffer_destroy.link);
+    wl_list_init(&s->idle_buffer_destroy.link);
     wl_list_insert(&g_surfaces, &s->link);
     wl_resource_set_implementation(s->resource, &surface_impl, s, surface_resource_destroy);
 }
@@ -1589,6 +1697,17 @@ static void note_hdr_unimported(const struct draw_list *dl, struct surface *s, i
     g_hdr_unimported_below = dl->n;
 }
 
+/* A client that describes opaque regions can intentionally leave part of an alpha buffer see-through.
+ * Gamescope uses this for its full-size Steam notification and overlay planes. */
+static int surface_translucent(const struct surface *s, int w, int h) {
+    if (!s->buf_alpha) return 0;
+    const struct client_info *ci = client_info_of(wl_resource_get_client(s->resource));
+    if (!ci || !ci->declares_opaque) return 0;
+    const int *o = s->opaque;
+    return !(o[2] > 0 && o[0] <= 0 && o[1] <= 0 &&
+             (long long)o[0] + o[2] >= w && (long long)o[1] + o[3] >= h);
+}
+
 static void add_surface(struct draw_list *dl, struct surface *s, int ox, int oy) {
     struct vkp_image *img = surface_image(s);
     float sx = 0, sy = 0, sw = (float)s->buf_w, sh = (float)s->buf_h;
@@ -1608,7 +1727,8 @@ static void add_surface(struct draw_list *dl, struct surface *s, int ox, int oy)
         dl->d = d;
         dl->cap = cap;
     }
-    dl->d[dl->n++] = (struct vkp_draw){img, sx, sy, sw, sh, ox, oy, dw, dh};
+    dl->d[dl->n++] = (struct vkp_draw){img, sx, sy, sw, sh, ox, oy, dw, dh,
+                                      surface_translucent(s, dw, dh)};
     s->drawn = 1;
 }
 
@@ -1679,6 +1799,7 @@ static int on_frame_timer(void *data) {
 static int layer_candidate(const struct draw_list *dl, int scene_w, int scene_h) {
     for (int i = dl->n - 1; i >= 0 && i >= dl->n - 2; i--) {
         const struct vkp_draw *d = &dl->d[i];
+        if (d->blend) continue; /* the translucent plane must not replace the opaque game layer */
         if (!vkp_image_is_dmabuf(d->img)) continue;
         if (d->dx != 0 || d->dy != 0 || d->dw != scene_w || d->dh != scene_h) continue;
         if (d->sx != 0 || d->sy != 0 || (int)d->sw != vkp_image_width(d->img) ||
@@ -2017,7 +2138,7 @@ static void render_scene(void) {
              * its own layer, cropped and placed by the display. */
             int go[8], ov = 0;
             if (over == 1 && li >= 0 && vkp_map_draw(&dl.d[li + 1], go))
-                ov = sc_layer_present_overlay(dl.d[li + 1].img, go) == 0 ? 1 : -1;
+                ov = sc_layer_present_overlay(dl.d[li + 1].img, go, dl.d[li + 1].blend) == 0 ? 1 : -1;
             if (ov <= 0) sc_layer_hide_overlay();
             if (ov < 0) { /* the overlay layer refused it: draw the whole scene the old way */
                 sc_layer_hide();
@@ -2143,6 +2264,16 @@ static void pointer_set_cursor(struct wl_client *c, struct wl_resource *r, uint3
     g_cursor_surface = s;
     g_cursor_hx = hx;
     g_cursor_hy = hy;
+    /* Its content may already be committed: wlroots' Wayland backend attaches and commits the
+     * cursor surface first and sets it as the pointer after, and sets it again with nothing new
+     * committed each time the pointer re-enters. */
+    struct wl_resource *buffer = surface_take_idle(s);
+    if (buffer) {
+        cursor_publish_buffer(s, buffer);
+        wl_buffer_send_release(buffer);
+    } else if (g_cursor_shown == s) {
+        cursor_publish_shown();
+    }
 }
 static void pointer_release(struct wl_client *c, struct wl_resource *r) { wl_resource_destroy(r); }
 static const struct wl_pointer_interface pointer_impl = {
@@ -2290,8 +2421,8 @@ static void keyboard_focus(struct wl_resource *target) {
         if (sk->focus == target) continue;
         sk->focus = target;
         wl_keyboard_send_enter(sk->kb, wl_display_next_serial(g_display), target, &keys);
-        /* Baseline modifiers = none; Shift/Ctrl arrive as their own key events. */
-        wl_keyboard_send_modifiers(sk->kb, wl_display_next_serial(g_display), 0, 0, 0, 0);
+        wl_keyboard_send_modifiers(sk->kb, wl_display_next_serial(g_display),
+                                   g_mods_depressed, 0, g_mods_locked, 0);
     }
     wl_array_release(&keys);
     banner_clipboard_keyboard_focus(client); /* wl_data_device selection follows focus */
@@ -2988,7 +3119,34 @@ static void scroll_event(int steps) {
     wl_display_flush_clients(g_display);
 }
 
+/* Folds a key into the modifier state; returns whether the state changed. */
+static int update_modifiers(uint32_t evdev, int pressed) {
+    static const struct { uint32_t evdev, mask; } mod_keys[] = {
+        { 42, 0x1 }, { 54, 0x1 },     /* Shift L/R */
+        { 29, 0x4 }, { 97, 0x4 },     /* Control L/R */
+        { 56, 0x8 }, { 100, 0x8 },    /* Alt L/R, both Mod1 in this keymap */
+        { 125, 0x40 }, { 126, 0x40 }, /* Super L/R */
+    };
+    uint32_t depressed = g_mods_depressed, locked = g_mods_locked;
+    if (evdev == 58) { /* Caps Lock toggles on press */
+        if (pressed) locked ^= 0x2;
+    } else {
+        int i, n = (int)(sizeof(mod_keys) / sizeof(mod_keys[0]));
+        for (i = 0; i < n && mod_keys[i].evdev != evdev; i++) {}
+        if (i == n) return 0;
+        if (pressed) g_mod_keys_held |= 1u << i; else g_mod_keys_held &= ~(1u << i);
+        depressed = 0;
+        for (int j = 0; j < n; j++) if (g_mod_keys_held & (1u << j)) depressed |= mod_keys[j].mask;
+    }
+    if (depressed == g_mods_depressed && locked == g_mods_locked) return 0;
+    g_mods_depressed = depressed;
+    g_mods_locked = locked;
+    return 1;
+}
+
 static void key_event(uint32_t evdev, int pressed) {
+    /* Tracked even with nothing to deliver to, so a Shift released unseen is not left held. */
+    int mods_changed = update_modifiers(evdev, pressed);
     /* Keys go to the program window the user last clicked (else the topmost non-shell window),
      * never to Wine's desktop surface: winewayland hands each key to the hwnd of the surface that
      * holds keyboard focus, and a key handed to explorer's desktop hwnd is queued to explorer's
@@ -3008,9 +3166,13 @@ static void key_event(uint32_t evdev, int pressed) {
     struct seat_keyboard *sk;
     if (!keyboard_for(client)) return;
     keyboard_focus(target->resource);
-    for_each_keyboard_of(client, sk)
+    for_each_keyboard_of(client, sk) {
         wl_keyboard_send_key(sk->kb, wl_display_next_serial(g_display), now_ms(), evdev,
                              pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+        if (mods_changed)
+            wl_keyboard_send_modifiers(sk->kb, wl_display_next_serial(g_display),
+                                       g_mods_depressed, 0, g_mods_locked, 0);
+    }
     wl_display_flush_clients(g_display);
 }
 

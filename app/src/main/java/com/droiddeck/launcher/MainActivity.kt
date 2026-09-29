@@ -45,6 +45,7 @@ import com.droiddeck.launcher.core.CpuCores
 import com.droiddeck.launcher.core.PhantomProcessLimit
 import com.droiddeck.launcher.core.PhantomProcessStatus
 import com.droiddeck.launcher.core.WirelessAdbFix
+import com.droiddeck.launcher.core.WirelessAdbPairingService
 import com.droiddeck.launcher.ui.CoreRow
 import com.droiddeck.launcher.ui.PerformancePage
 import com.droiddeck.launcher.ui.ModeSettingsPage
@@ -88,6 +89,9 @@ class MainActivity : ComponentActivity() {
     private var flood by mutableStateOf<PendingFlood?>(null)
     private var floodProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
     private class PendingFlood(val from: androidx.compose.ui.geometry.Rect, val intent: Intent)
+    /** A session stopped behind a flood: its blue, drawn back into the button it started from (FloodReturn). */
+    private var returning by mutableStateOf<ReturningFlood?>(null)
+    private class ReturningFlood(val color: Int, val to: androidx.compose.ui.geometry.Rect?)
     private var ready by mutableStateOf(false)
     private var available by mutableStateOf<LinuxRuntimeInstaller.Release?>(null)
     private var busy by mutableStateOf(false)
@@ -124,6 +128,7 @@ class MainActivity : ComponentActivity() {
     private var zinkLazy by mutableStateOf(false)
     private var noXalia by mutableStateOf(false)
     private var prootNoSeccomp by mutableStateOf(false)
+    private var guestHostname by mutableStateOf(SessionPrefs.DEFAULT_GUEST_HOSTNAME)
     private var phantomWarning by mutableStateOf<String?>(null)
     private var phantomProcessStatus by mutableStateOf(PhantomProcessStatus.NOT_APPLICABLE)
     private var showPhantomGate by mutableStateOf(false)
@@ -430,6 +435,12 @@ class MainActivity : ComponentActivity() {
                             android.widget.Toast.makeText(this, "ADB command copied", android.widget.Toast.LENGTH_SHORT).show()
                         },
                         onDismissPhantomGate = { showPhantomGate = false },
+                        onStartWirelessAdbPairing = { WirelessAdbPairingService.start(this) },
+                        onOpenNotificationSettings = {
+                            startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        },
                         controller = ControllerActions(
                             onOsc = { o -> SessionPrefs.setOscMode(this, o); oscMode = o },
                             onTint = { t -> ControllerPrefs.setTint(this, t); refreshController() },
@@ -473,6 +484,13 @@ class MainActivity : ComponentActivity() {
                 )
                 if (showCredits) CreditsDialog { showCredits = false }
                 flood?.let { f -> com.droiddeck.launcher.ui.LaunchFlood(f.from, onProgress = { floodProgress = it }) { launchFlooded(f) } }
+                returning?.let { r ->
+                    com.droiddeck.launcher.ui.FloodReturn(androidx.compose.ui.graphics.Color(r.color), r.to, onProgress = { floodProgress = it }) {
+                        returning = null
+                        floodProgress = 0f
+                        com.droiddeck.launcher.ui.LaunchOrigin.flooding = null
+                    }
+                }
             }
         }
 
@@ -549,6 +567,10 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         com.droiddeck.launcher.ui.Motion.refresh(this)
+        // Back from a session stopped behind a flood: open on its blue, before the first frame.
+        com.droiddeck.launcher.ui.QuitFlood.take()?.let { c ->
+            returning = ReturningFlood(c, com.droiddeck.launcher.ui.LaunchOrigin.takeReturn())
+        }
         refreshPhantomStatus()
         // Swaps queued while a game ran on that Proton go in once nothing uses it (usually the
         // session has just ended). Cheap when nothing is queued.
@@ -584,6 +606,7 @@ class MainActivity : ComponentActivity() {
         displayManager.unregisterDisplayListener(secondScreenDisplayListener)
         // The session covers the page by now; coming back finds it as it was.
         flood = null
+        returning = null
         floodProgress = 0f
         com.droiddeck.launcher.ui.LaunchOrigin.flooding = null
         super.onStop()
@@ -782,6 +805,7 @@ class MainActivity : ComponentActivity() {
                 storageOptions = storageOptions,
                 fexPreset = if (mode == SessionService.MODE_STEAM) fexPreset else null,
                 steamChannel = if (mode == SessionService.MODE_STEAM) steamChannel else null,
+                steamDeckMode = mode == SessionService.MODE_STEAM && steamDeckMode,
                 runSteamAtStartup = mode == SessionService.MODE_STEAM && runSteamAtStartup,
                 addedGamesDirs = if (mode == SessionService.MODE_STEAM) addedGamesDirs else null,
                 addedGames = if (mode == SessionService.MODE_STEAM) addedGames else emptyList(),
@@ -833,6 +857,11 @@ class MainActivity : ComponentActivity() {
                 },
                 onFexPreset = { id -> SessionPrefs.setFexPreset(this, id); fexPreset = id },
                 onSteamChannel = { id -> SessionPrefs.setSteamChannel(this, id); steamChannel = id },
+                onSteamDeckMode = { on ->
+                    SessionPrefs.setSteamDeckMode(this, on)
+                    steamDeckMode = on
+                    steamChannel = SessionPrefs.steamChannel(this)
+                },
                 onRunSteamAtStartup = { on ->
                     SessionPrefs.setRunSteamAtStartup(this, on)
                     runSteamAtStartup = on
@@ -863,16 +892,16 @@ class MainActivity : ComponentActivity() {
         PerformancePage(
             cores = CpuCores.all.map { c -> CoreRow(c, "cpu$c" + (CpuCores.maxGhz(c)?.let { String.format(java.util.Locale.US, " · %.1f GHz", it) } ?: "")) },
             clientOverride = clientOverride, clientCores = clientCores, gameCores = gameCores,
-            tuSysmem = tuSysmem, zinkLazy = zinkLazy, glThread = glThread, noGlError = noGlError, steamDeckMode = steamDeckMode, noXalia = noXalia,
-            prootNoSeccomp = prootNoSeccomp, phantomWarning = phantomWarning,
+            tuSysmem = tuSysmem, zinkLazy = zinkLazy, glThread = glThread, noGlError = noGlError, noXalia = noXalia,
+            prootNoSeccomp = prootNoSeccomp, guestHostname = guestHostname, phantomWarning = phantomWarning,
             onClientOverride = { on -> SessionPrefs.setClientCpusOverride(this, on); clientOverride = on },
             onTuSysmem = { on -> SessionPrefs.setTuSysmem(this, on); tuSysmem = on },
             onZinkLazy = { on -> SessionPrefs.setZinkLazy(this, on); zinkLazy = on },
             onGlThread = { on -> SessionPrefs.setGlThread(this, on); glThread = on },
             onNoGlError = { on -> SessionPrefs.setNoGlError(this, on); noGlError = on },
-            onSteamDeckMode = { on -> SessionPrefs.setSteamDeckMode(this, on); steamDeckMode = on },
             onNoXalia = { on -> SessionPrefs.setNoXalia(this, on); noXalia = on },
             onProotNoSeccomp = { on -> SessionPrefs.setProotNoSeccomp(this, on); prootNoSeccomp = on },
+            onGuestHostname = { name -> SessionPrefs.setGuestHostname(this, name) },
             onClientCore = { core, on ->
                 clientCores = if (on) clientCores + core else clientCores - core
                 SessionPrefs.setClientCpus(this, CpuCores.format(clientCores))
@@ -965,6 +994,7 @@ class MainActivity : ComponentActivity() {
         zinkLazy = SessionPrefs.zinkLazy(this)
         noXalia = SessionPrefs.noXalia(this)
         prootNoSeccomp = SessionPrefs.prootNoSeccomp(this)
+        guestHostname = SessionPrefs.guestHostname(this)
         refreshPhantomStatus()
     }
 
@@ -988,14 +1018,14 @@ class MainActivity : ComponentActivity() {
             val games = if (ready) Library.steamGames(this) + com.droiddeck.launcher.frontend.AddedGames.scan(this).map { g ->
                 com.droiddeck.launcher.frontend.AddedGameArt.resolve(this, g).let { art ->
                     Library.SteamGame(
-                        g.appId.toInt(), g.name, art.portrait ?: art.header, "added", g.gameId,
+                        g.steamAppId ?: g.appId.toInt(), g.name, art.portrait ?: art.header, "added", g.gameId,
                         hero = art.hero ?: art.header, gameFiles = g.folder,
-                        protonPrefix = Library.protonPrefix(this, g.appId),
+                        protonPrefix = Library.protonPrefix(this, g.steamAppId?.toLong() ?: g.appId),
                     )
                 }
             } else emptyList()
             val emus = Library.emulators(this) { id -> DesktopCatalog.installed(this, id) != null }
-            ui.post { steamGames = games; emulatorList = emus }
+            ui.post { steamGames = games.distinctBy { it.gameId }; emulatorList = emus }
             // Box art for the games that have none, fetched after the list is up; the list is
             // rebuilt once if any was found.
             if (!OfflineMode.enabled(this) && CoverArt.fetchMissing(this, emus.flatMap { it.games })) {
@@ -1037,15 +1067,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshPhantomStatus() {
-        phantomProcessStatus = PhantomProcessLimit.read(contentResolver)
+        phantomProcessStatus = PhantomProcessLimit.read(this)
         phantomWarning = if (PhantomProcessLimit.blocksSteam(phantomProcessStatus)) {
-            "${PhantomProcessLimit.title(phantomProcessStatus)}. ${PhantomProcessLimit.instructions(phantomProcessStatus)}\n\n${PhantomProcessLimit.ADB_COMMAND}"
+            "${PhantomProcessLimit.title(phantomProcessStatus)}. ${PhantomProcessLimit.instructions(phantomProcessStatus)}\n\n${PhantomProcessLimit.adbCommand()}"
         } else null
     }
 
     private fun openDeveloperOptions(displayId: Int?) {
+        val highlight = if (PhantomProcessLimit.hasDeveloperToggle() &&
+            WirelessAdbPairingService.stage.value == WirelessAdbPairingService.Stage.Idle) null else "toggle_adb_wireless"
         val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .apply { if (highlight != null) putExtra(":settings:fragment_args_key", highlight) }
         try {
             if (displayId == null) startActivity(intent)
             else startActivity(intent, ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle())
