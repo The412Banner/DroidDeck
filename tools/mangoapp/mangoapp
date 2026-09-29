@@ -1,4 +1,8 @@
 #!/bin/sh
 # gamescope --mangoapp runs `mangoapp` from PATH; this puts Valve's build beside the libraries the
 # runtime lacks (fmt 10, spdlog 1.13, glfw, libtracefs, libtraceevent), staged by the app.
+# mangoapp reads its window through GLFW's X11 API. GLFW 3.4 takes XDG_SESSION_TYPE=wayland with a
+# WAYLAND_DISPLAY as Wayland-only, and unset, libwayland falls back to wayland-0 - DroidDeck's own
+# compositor, which shares XDG_RUNTIME_DIR - so both fail; x11 makes GLFW use gamescope's X server.
+export XDG_SESSION_TYPE=x11
 LD_LIBRARY_PATH=/usr/local/lib/mangoapp${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} exec /usr/local/lib/mangoapp/mangoapp "$@"

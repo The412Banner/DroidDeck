@@ -1,11 +1,8 @@
-<!--
-  Status-bar icon: Android renders it as a single-colour silhouette, so this is the launcher
-  controller reduced to one path, with the d-pad and the buttons punched out (evenOdd) rather
-  than drawn in a second colour that would never survive.
--->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
-    android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
-        android:pathData="M40,36 H68 C79,36 87,44.5 87,55.5 v4 c0,6.6 -5.4,12 -12,12 c-4.5,0 -8.6,-2.5 -10.6,-6.5 L62,60 H46 l-2.4,5 C41.6,69 37.5,71.5 33,71.5 c-6.6,0 -12,-5.4 -12,-12 v-4 C21,44.5 29,36 40,36 Z M33,47.5 h4.5 v-4.5 h4.5 v4.5 h4.5 v4.5 h-4.5 v4.5 h-4.5 v-4.5 h-4.5 z M71,43 a2.5,2.5 0 1,0 0.01,0 z M77,47.5 a2.5,2.5 0 1,0 0.01,0 z M65,47.5 a2.5,2.5 0 1,0 0.01,0 z M71,52 a2.5,2.5 0 1,0 0.01,0 z M54,44 a6,6 0 1,0 0.01,0 z" />
+    android:viewportWidth="239.92" android:viewportHeight="239.92">
+    <group android:translateX="55.98" android:translateY="8.1">
+        <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+            android:pathData="M-31.98,0 H63.97 C125.81,0 175.93,50.08 175.93,111.86 S125.81,223.72 63.97,223.72 H-31.98 Z M-7.83,111.86 a71.81,71.81 0 1,0 143.62,0 a71.81,71.81 0 1,0 -143.62,0 Z M8,111.86 a55.98,55.98 0 1,0 111.96,0 a55.98,55.98 0 1,0 -111.96,0 Z M56.055,0 h15.83 v40.49 h-15.83 Z M56.055,183.23 h15.83 v40.49 h-15.83 Z" />
+    </group>
 </vector>

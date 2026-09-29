@@ -157,6 +157,8 @@ class FrontEndActions(
     val onSetPhantomProcessLimit: (Boolean, (String?) -> Unit) -> Unit = { _, done -> done("Wireless debugging is unavailable") },
     val onCopyPhantomCommand: (Boolean) -> Unit = {},
     val onDismissPhantomGate: () -> Unit = {},
+    val onStartWirelessAdbPairing: () -> Unit = {},
+    val onOpenNotificationSettings: () -> Unit = {},
     val controller: ControllerActions? = null,
 )
 
@@ -469,7 +471,13 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
                     status = s.phantomProcessStatus,
                     onDismiss = a.onDismissPhantomGate,
                     onOpenDeveloperOptions = requestDeveloperOptions,
-                    onSetUpWirelessAdb = { requestWirelessAdbFix(false) },
+                    onFixWithWirelessDebugging = {
+                        a.onStartWirelessAdbPairing()
+                        requestDeveloperOptions()
+                    },
+                    onEnterAddressManually = { requestWirelessAdbFix(false) },
+                    onCopyCommand = { a.onCopyPhantomCommand(false) },
+                    onOpenNotificationSettings = a.onOpenNotificationSettings,
                 )
             }
         }

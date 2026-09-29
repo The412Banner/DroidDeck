@@ -36,9 +36,18 @@ import kotlinx.coroutines.coroutineScope
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.animation.core.spring
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.unit.Dp
+import java.lang.ref.WeakReference
+import kotlin.math.PI
+import kotlin.math.sin
 
 // Starting a session from a blue button: the button grows until the page is its blue, and the
 // loading screen opens on that blue and gathers it into the ball of the throbber.
+// Stopping one from the drawer runs it the other way: Stop grows until the page is blue, and the
+// front end opens on that blue and draws it back down into the button the session came from.
 
 /** Carries the flood's colour to the session, which opens on it. */
 const val EXTRA_FLOOD = "com.droiddeck.launcher.FLOOD"
@@ -48,6 +57,8 @@ internal object LaunchOrigin {
     private var bounds: Rect? = null
     private var button: Any? = null
     private var at = 0L
+    /** The last button a session was started from, for a stop to return into. */
+    private var last: WeakReference<Any>? = null
 
     /** The button a flood is growing out of: it steps aside so only the flood shows. */
     var flooding by mutableStateOf<Any?>(null)
@@ -55,7 +66,20 @@ internal object LaunchOrigin {
     fun mark(r: Rect, key: Any) {
         bounds = r
         button = key
+        last = WeakReference(key)
         at = SystemClock.uptimeMillis()
+    }
+
+    /**
+     * Where the button the running session was started from sits now, if it is still on screen;
+     * it hides for the return, as for the flood.
+     */
+    fun takeReturn(): Rect? {
+        val key = last?.get() as? Array<*> ?: return null
+        val c = key.getOrNull(0) as? LayoutCoordinates ?: return null
+        if (!c.isAttached) return null
+        flooding = key
+        return c.boundsInRoot()
     }
 
     /** The button behind a launch starting now, if one was pressed just before; it hides for the flood. */
@@ -65,6 +89,23 @@ internal object LaunchOrigin {
         bounds = null
         button = null
         return b
+    }
+}
+
+/** A session stopped behind a flood: the blue the front end opens on, for a few seconds. */
+internal object QuitFlood {
+    private var color: Int? = null
+    private var at = 0L
+
+    fun mark(argb: Int) {
+        color = argb
+        at = SystemClock.uptimeMillis()
+    }
+
+    fun take(): Int? {
+        val c = color?.takeIf { SystemClock.uptimeMillis() - at < 3_000 }
+        color = null
+        return c
     }
 }
 
@@ -87,9 +128,17 @@ private val Gather = CubicBezierEasing(0.6f, 0f, 0.15f, 1f)
  * Swallows touches while it runs.
  */
 @Composable
-internal fun LaunchFlood(from: Rect, onProgress: (Float) -> Unit, onCovered: () -> Unit) {
+internal fun LaunchFlood(
+    from: Rect,
+    onProgress: (Float) -> Unit,
+    /** The button's own colours, where it is not the page's blue one (a red Stop). */
+    fromColors: Pair<Color, Color>? = null,
+    cornerAtRest: Dp = 12.dp,
+    onCovered: () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
+    val start = fromColors ?: (colors.primary to pal.primary2)
     // Left, top, right, bottom: 0 on the button, 1 on the page's edge. Springs overshoot past the
     // edge, off the page, so the wobble is felt in the pull and never seen as a shrink.
     val edges = remember { List(4) { Animatable(0f) } }
@@ -117,30 +166,83 @@ internal fun LaunchFlood(from: Rect, onProgress: (Float) -> Unit, onCovered: () 
         }
     }
     Canvas(Modifier.fillMaxSize().onSizeChanged { page = Size(it.width.toFloat(), it.height.toFloat()) }.pointerInput(Unit) { awaitEachGesture { while (true) awaitPointerEvent().changes.forEach { it.consume() } } }) {
-        val (l, t, r, b) = edges.map { it.value }
-        val mean = edges.sumOf { it.value.coerceIn(0f, 1f).toDouble() }.toFloat() / 4f
-        // The button sinks with the page behind (FloodBehind), so the flood leaves from where it is now.
-        val k = sinkScale(mean)
-        val cx = size.width / 2f
-        val cy = size.height / 2f
-        val left = lerp(cx + (from.left - cx) * k, 0f, l)
-        val top = lerp(cy + (from.top - cy) * k, 0f, t)
-        val right = lerp(cx + (from.right - cx) * k, size.width, r)
-        val bottom = lerp(cy + (from.bottom - cy) * k, size.height, b)
-        val w = (right - left).coerceAtLeast(0f)
-        val h = (bottom - top).coerceAtLeast(0f)
-        // A button's corners at rest, a blob in flight, square once it fills the page.
-        val blob = kotlin.math.sin(Math.PI * mean).toFloat().coerceAtLeast(0f)
-        val corner = lerp(12.dp.toPx() * (1f - mean), minOf(w, h) * 0.42f, blob)
-        // The button's gradient gives way to the ball's flat blue in the first half.
-        val mix = (mean * 2f).coerceAtMost(1f)
-        drawRoundRect(
-            Brush.linearGradient(
-                listOf(lerp(colors.primary, pal.signal, mix), lerp(pal.primary2, pal.signal, mix)),
-                start = Offset(left, top), end = Offset(right, bottom),
-            ),
-            topLeft = Offset(left, top), size = Size(w, h), cornerRadius = CornerRadius(corner),
-        )
+        drawFlood(from, edges.map { it.value }, start, pal.signal, cornerAtRest.toPx())
+    }
+}
+
+/**
+ * The flood from a button at [from] with its edges [v] of the way to the page's (left, top, right,
+ * bottom): the button sinking with the page behind, blobby in flight, its colours [start] giving
+ * way to the flat [signal] in the first half.
+ */
+private fun DrawScope.drawFlood(from: Rect, v: List<Float>, start: Pair<Color, Color>, signal: Color, cornerAtRest: Float) {
+    val (l, t, r, b) = v
+    val mean = v.sumOf { it.coerceIn(0f, 1f).toDouble() }.toFloat() / 4f
+    // The button sinks with the page behind (FloodBehind), so the flood leaves from where it is now.
+    val k = sinkScale(mean)
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    val left = lerp(cx + (from.left - cx) * k, 0f, l)
+    val top = lerp(cy + (from.top - cy) * k, 0f, t)
+    val right = lerp(cx + (from.right - cx) * k, size.width, r)
+    val bottom = lerp(cy + (from.bottom - cy) * k, size.height, b)
+    val w = (right - left).coerceAtLeast(0f)
+    val h = (bottom - top).coerceAtLeast(0f)
+    // A button's corners at rest, a blob in flight, square once it fills the page.
+    val blob = sin(PI * mean).toFloat().coerceAtLeast(0f)
+    val corner = lerp(cornerAtRest * (1f - mean), minOf(w, h) * 0.42f, blob)
+    // The button's gradient gives way to the ball's flat blue in the first half.
+    val mix = (mean * 2f).coerceAtMost(1f)
+    val brush = Brush.linearGradient(
+        listOf(lerp(start.first, signal, mix), lerp(start.second, signal, mix)),
+        start = Offset(left, top), end = Offset(right, bottom),
+    )
+    drawRoundRect(brush, topLeft = Offset(left, top), size = Size(w, h), cornerRadius = CornerRadius(corner))
+}
+
+/**
+ * The front end's first frames after a stop: the page in [flood] after a beat, drawn back down
+ * into the button at [to] (root px, measured before the page sank) on critically damped springs,
+ * the far edges first, so it sets down on the button without a bounce. [onProgress] (1 to 0) lets
+ * the page behind rise back. No button to return to: the blue fades. Calls [onLanded] at the end.
+ */
+@Composable
+internal fun FloodReturn(flood: Color, to: Rect?, onProgress: (Float) -> Unit, onLanded: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val edges = remember { List(4) { Animatable(1f) } }
+    val fade = remember { Animatable(1f) }
+    val landed by rememberUpdatedState(onLanded)
+    val progress by rememberUpdatedState(onProgress)
+    var page by remember { mutableStateOf(Size.Zero) }
+    LaunchedEffect(page != Size.Zero) {
+        if (page == Size.Zero) return@LaunchedEffect
+        progress(1f)
+        // A beat of plain blue first, so the change of screen does not read as a cut.
+        delay(Motion.ms(220).toLong())
+        if (to == null || Motion.scale == 0f) {
+            fade.animateTo(0f, tween(Motion.ms(240).coerceAtLeast(1)))
+        } else {
+            val travel = listOf(to.left, to.top, page.width - to.right, page.height - to.bottom).map { it.coerceAtLeast(0f) }
+            val far = travel.max().coerceAtLeast(1f)
+            coroutineScope {
+                edges.mapIndexed { i, edge ->
+                    val lead = travel[i] / far
+                    launch {
+                        delay(Motion.ms((180 * (1f - lead)).toInt()).toLong())
+                        edge.animateTo(0f, spring(dampingRatio = 1f, stiffness = lerp(110f, 190f, lead))) {
+                            progress(edges.sumOf { it.value.coerceIn(0f, 1f).toDouble() }.toFloat() / 4f)
+                        }
+                    }
+                }.forEach { it.join() }
+            }
+        }
+        progress(0f)
+        landed()
+    }
+    Canvas(Modifier.fillMaxSize().onSizeChanged { page = Size(it.width.toFloat(), it.height.toFloat()) }.pointerInput(Unit) { awaitEachGesture { while (true) awaitPointerEvent().changes.forEach { it.consume() } } }) {
+        if (to == null) drawRect(flood, alpha = fade.value)
+        else drawFlood(to, edges.map { it.value }, colors.primary to pal.primary2, flood, 12.dp.toPx())
     }
 }
 

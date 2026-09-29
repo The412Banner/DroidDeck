@@ -1,6 +1,6 @@
 package com.droiddeck.launcher.core
 
-import android.content.ContentResolver
+import android.content.Context
 import android.os.Build
 import android.provider.Settings
 
@@ -14,26 +14,86 @@ enum class PhantomProcessStatus {
 }
 
 object PhantomProcessLimit {
-    const val ADB_COMMAND = "adb shell settings put global settings_enable_monitor_phantom_procs false"
-    const val SHELL_COMMAND = "settings put global settings_enable_monitor_phantom_procs false"
     private const val SETTING = "settings_enable_monitor_phantom_procs"
 
-    fun adbCommand(enabled: Boolean): String =
-        "adb shell settings put global $SETTING ${if (enabled) "true" else "false"}"
+    private const val MAX_PHANTOM = "2147483647"
+    private const val PREFS = "phantom-process-limit"
+    private const val PREF_ANDROID_12_OFF = "android12-off"
 
-    fun read(resolver: ContentResolver, sdk: Int = Build.VERSION.SDK_INT): PhantomProcessStatus {
+    fun usesDeviceConfig(sdk: Int = Build.VERSION.SDK_INT): Boolean = sdk == Build.VERSION_CODES.S
+
+    fun shellCommands(enabled: Boolean, sdk: Int = Build.VERSION.SDK_INT): List<String> = when {
+        usesDeviceConfig(sdk) && enabled -> listOf(
+            "device_config delete activity_manager max_phantom_processes",
+            "device_config set_sync_disabled_for_tests none",
+        )
+        usesDeviceConfig(sdk) -> listOf(
+            "device_config set_sync_disabled_for_tests persistent",
+            "device_config put activity_manager max_phantom_processes $MAX_PHANTOM",
+        )
+        else -> listOf("settings put global $SETTING ${if (enabled) "true" else "false"}")
+    }
+
+    fun verifyCommand(sdk: Int = Build.VERSION.SDK_INT): String =
+        if (usesDeviceConfig(sdk)) "device_config get activity_manager max_phantom_processes"
+        else "settings get global $SETTING"
+
+    fun verified(output: String, enabled: Boolean, sdk: Int = Build.VERSION.SDK_INT): Boolean {
+        val value = output.trim()
+        return if (usesDeviceConfig(sdk)) (value == MAX_PHANTOM) != enabled
+        else value == if (enabled) "true" else "false"
+    }
+
+    fun adbCommand(enabled: Boolean, sdk: Int = Build.VERSION.SDK_INT): String =
+        shellCommands(enabled, sdk).joinToString(" && ") { "adb shell $it" }
+
+    fun adbCommand(): String = adbCommand(false)
+
+    fun rememberAndroid12(context: Context, off: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(PREF_ANDROID_12_OFF, off).apply()
+    }
+
+    fun read(context: Context, sdk: Int = Build.VERSION.SDK_INT): PhantomProcessStatus {
         if (sdk < Build.VERSION_CODES.S) return PhantomProcessStatus.NOT_APPLICABLE
-        val value = try {
-            Settings.Global.getString(resolver, SETTING)
+        if (usesDeviceConfig(sdk)) {
+            val off = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(PREF_ANDROID_12_OFF, false)
+            return if (off) PhantomProcessStatus.DISABLED else PhantomProcessStatus.UNREADABLE
+        }
+        val global = try {
+            Settings.Global.getString(context.contentResolver, SETTING)
         } catch (_: Exception) {
             return PhantomProcessStatus.UNREADABLE
         }
-        return when (value?.trim()?.lowercase()) {
+        return status(global, systemProperty(OVERRIDE_PROPERTY))
+    }
+
+    /**
+     * The value Android itself acts on, in FeatureFlagUtils.isEnabled's order: the global setting
+     * when it is set, otherwise the feature-flag override property. Developer options' "Disable
+     * child process restrictions" writes only the property, so a device switched off there has no
+     * global setting at all and must not be reported as unset.
+     */
+    fun status(global: String?, override: String?): PhantomProcessStatus {
+        val value = global?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+            ?: override?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+        return when (value) {
             "false", "0" -> PhantomProcessStatus.DISABLED
-            null, "" -> PhantomProcessStatus.UNSET
+            null -> PhantomProcessStatus.UNSET
             else -> PhantomProcessStatus.ENABLED
         }
     }
+
+    private const val OVERRIDE_PROPERTY = "persist.sys.fflag.override.$SETTING"
+
+    private fun systemProperty(name: String): String? = try {
+        Class.forName("android.os.SystemProperties")
+            .getMethod("get", String::class.java)
+            .invoke(null, name) as? String
+    } catch (_: Exception) {
+        null
+    }
+
+    fun hasDeveloperToggle(sdk: Int = Build.VERSION.SDK_INT): Boolean = sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
 
     fun blocksSteam(status: PhantomProcessStatus): Boolean =
         status != PhantomProcessStatus.NOT_APPLICABLE && status != PhantomProcessStatus.DISABLED
@@ -47,19 +107,19 @@ object PhantomProcessLimit {
     }
 
     fun instructions(status: PhantomProcessStatus): String = when (status) {
-        PhantomProcessStatus.ENABLED -> "Turn off “Restrict child processes” in Developer options. If you cannot find that option, connect this device to a computer with ADB and run the command below. Return here and check again."
-        PhantomProcessStatus.UNSET -> "This setting is unset, so the ROM default applies and may enforce the limit. Set “Restrict child processes” to off in Developer options. If you cannot find that option, connect this device to a computer with ADB and run the command below. Return here and check again."
-        PhantomProcessStatus.UNREADABLE -> "DroidDeck could not read the setting. Set “Restrict child processes” to off in Developer options. If you cannot find that option, connect this device to a computer with ADB and run the command below. Return here and check again."
+        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE -> fixSentence() + " If that is not possible, connect this device to a computer with ADB and run the command below. Return here and check again."
         PhantomProcessStatus.DISABLED -> "Steam sessions can start."
         PhantomProcessStatus.NOT_APPLICABLE -> "This Android version does not use this limit."
     }
 
     fun gateInstructions(status: PhantomProcessStatus): String = when (status) {
-        PhantomProcessStatus.ENABLED -> "Turn off “Restrict child processes” in Developer options."
-        PhantomProcessStatus.UNSET -> "The ROM default may enforce this limit. Explicitly turn off “Restrict child processes” in Developer options."
-        PhantomProcessStatus.UNREADABLE -> "DroidDeck could not check this setting. Turn off “Restrict child processes” in Developer options."
+        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE -> fixSentence()
         else -> instructions(status)
     }
+
+    fun fixSentence(sdk: Int = Build.VERSION.SDK_INT): String =
+        if (hasDeveloperToggle(sdk)) "Turn on “Disable child process restrictions” in Developer options, and keep Developer options on afterwards."
+        else "This Android version has no switch for it. Use Wireless debugging to change it from this device."
 
     fun reportValue(status: PhantomProcessStatus): String = when (status) {
         PhantomProcessStatus.DISABLED -> "disabled (good - the OS will not kill the session's children)"

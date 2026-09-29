@@ -2,11 +2,11 @@
 """Render the DroidDeck boot animation to .webm (Steam) or .mp4 (H.264).
 
 Usage:  python3 render.py [WIDTH] [HEIGHT] [FPS] [OUT] [light|dark]
-        python3 render.py 1280 800 60 droiddeck-boot.webm
+        python3 render.py 1280 720 30 droiddeck-boot.webm
         python3 render.py 1920 1080 60 droiddeck-boot.mp4
-        python3 render.py 1280 800 60 droiddeck-boot-dark.webm dark
+        python3 render.py 1280 720 30 droiddeck-boot-dark.webm dark
 
-Needs: pip install playwright && playwright install chromium, plus ffmpeg with libvpx-vp9.
+Needs: pip install playwright && playwright install chromium, plus ffmpeg with libvpx.
 The animation is drawn by droiddeck-boot.html (same folder); each frame gets real
 motion blur (180-degree shutter, up to 48 sub-frames when things move fast).
 """
@@ -15,8 +15,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 W = int(sys.argv[1]) if len(sys.argv) > 1 else 1280
-H = int(sys.argv[2]) if len(sys.argv) > 2 else 800
-FPS = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+H = int(sys.argv[2]) if len(sys.argv) > 2 else 720
+FPS = int(sys.argv[3]) if len(sys.argv) > 3 else 30
 OUT = sys.argv[4] if len(sys.argv) > 4 else f"droiddeck-boot-{W}x{H}.webm"
 THEME = sys.argv[5] if len(sys.argv) > 5 else "light"                  # light | dark
 ONLY = [int(x) for x in os.environ.get("FRAMES", "").split(",") if x]   # debug: render some frames only
@@ -54,9 +54,9 @@ cmd += ["-vf", "scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+ful
 if OUT.lower().endswith(".mp4"):   # H.264 for sharing, previews and anything that won't play webm
     cmd += ["-c:v", "libx264", "-preset", "slow", "-crf", "15", "-profile:v", "high", "-tune", "animation",
             "-g", str(FPS * 2), "-movflags", "+faststart"]
-else:                              # VP9 webm for Steam's startup movie
-    cmd += ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "18", "-deadline", "good", "-cpu-used", "2",
-            "-row-mt", "1", "-g", str(FPS * 2)]
+else:                              # VP8 keeps software decoding inexpensive during Steam startup
+    cmd += ["-c:v", "libvpx", "-b:v", "2M", "-crf", "10", "-deadline", "good", "-cpu-used", "2",
+            "-g", str(FPS * 2)]
 cmd += COLOR + ([] if SOUND.exists() else ["-an"]) + [OUT]
 subprocess.run(cmd, check=True)
 if not os.environ.get("FRAMEDIR"):

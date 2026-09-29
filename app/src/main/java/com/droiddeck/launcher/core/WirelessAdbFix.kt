@@ -6,7 +6,9 @@ import android.net.nsd.NsdServiceInfo
 import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
 import java.io.File
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -19,6 +21,7 @@ object WirelessAdbFix {
     private const val KEY_FILE = "wireless-adb-key.pem"
     private const val HOST_FILE = "wireless-adb-host.txt"
     private const val CONNECTION_FILE = "wireless-adb-connection.txt"
+    const val LOOPBACK = "127.0.0.1"
 
     private data class SavedConnection(val host: String, val port: Int?)
 
@@ -76,9 +79,27 @@ object WirelessAdbFix {
     }
 
     /** Finds this paired device's separate TLS connection port from Android's ADB mDNS record. */
+    fun isLocalAddress(address: InetAddress): Boolean = runCatching {
+        if (address.isLoopbackAddress) return true
+        NetworkInterface.getNetworkInterfaces()?.toList().orEmpty().any { network ->
+            network.inetAddresses.toList().any { it.address.contentEquals(address.address) }
+        }
+    }.getOrDefault(address is Inet4Address)
+
+    fun localConnectPort(context: Context): Int? =
+        tlsPortProperty()
+            ?: findConnectPort(context, LOOPBACK)
+
+    private fun tlsPortProperty(): Int? = runCatching {
+        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java)
+            .invoke(null, "service.adb.tls.port") as? String
+    }.getOrNull()?.trim()?.toIntOrNull()?.takeIf { it in 1..65535 }
+
     fun findConnectPort(context: Context, pairedHost: String, timeoutSeconds: Long = 12): Int? {
         val manager = context.applicationContext.getSystemService(Context.NSD_SERVICE) as NsdManager
-        val expectedAddress = runCatching { InetAddress.getByName(pairedHost).address }.getOrNull() ?: return null
+        val paired = runCatching { InetAddress.getByName(pairedHost) }.getOrNull() ?: return null
+        val matches: (InetAddress) -> Boolean =
+            if (paired.isLoopbackAddress) ::isLocalAddress else { address -> address.address.contentEquals(paired.address) }
         val resolvedPort = AtomicInteger(-1)
         val finished = AtomicBoolean(false)
         val latch = CountDownLatch(1)
@@ -101,8 +122,8 @@ object WirelessAdbFix {
                     }
 
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                        val address = serviceInfo.host?.address
-                        if (address != null && address.contentEquals(expectedAddress) && finished.compareAndSet(false, true)) {
+                        val address = serviceInfo.host
+                        if (address != null && matches(address) && finished.compareAndSet(false, true)) {
                             resolvedPort.set(serviceInfo.port)
                             latch.countDown()
                         } else {
@@ -148,14 +169,16 @@ object WirelessAdbFix {
     fun setChildProcessLimit(context: Context, host: String, port: Int, enabled: Boolean) {
         loadOrCreateIdentity(context.applicationContext)
         Kadb.create(host, port).use { adb ->
-            val value = if (enabled) "true" else "false"
-            val change = adb.shell("settings put global settings_enable_monitor_phantom_procs $value")
-            check(change.exitCode == 0) { change.allOutput.ifBlank { "ADB command failed (${change.exitCode})" } }
-            val result = adb.shell("settings get global settings_enable_monitor_phantom_procs")
-            check(result.exitCode == 0 && result.output.trim() == value) {
+            PhantomProcessLimit.shellCommands(enabled).forEach { command ->
+                val change = adb.shell(command)
+                check(change.exitCode == 0) { change.allOutput.ifBlank { "ADB command failed (${change.exitCode})" } }
+            }
+            val result = adb.shell(PhantomProcessLimit.verifyCommand())
+            check(result.exitCode == 0 && PhantomProcessLimit.verified(result.output, enabled)) {
                 "Android did not confirm the child-process limit was changed: ${result.allOutput.trim()}"
             }
         }
+        if (PhantomProcessLimit.usesDeviceConfig()) PhantomProcessLimit.rememberAndroid12(context, !enabled)
         saveConnection(context, host, port)
     }
 
