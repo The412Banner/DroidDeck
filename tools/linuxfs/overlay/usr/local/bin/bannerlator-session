@@ -73,10 +73,21 @@ if [ -n "${BL_VK_DRIVER:-}" ]; then
   fi
   unset bl_icd_lib
 fi
-# The app's gamescope build (tools/gamescope) takes realtime-priority Vulkan queues on this
+# The app's gamescope build (tools/gamescope) asks for realtime-priority Vulkan queues on this
 # switch instead of on CAP_SYS_NICE, which proot never has; it falls back to normal priority
-# where the driver refuses, and the runtime's own build ignores it.
-export GAMESCOPE_FORCE_VULKAN_REALTIME=${BL_GAMESCOPE_REALTIME:-1}
+# where the driver refuses, and the runtime's own build ignores it. On KGSL Turnip (Mesa 26.2) it
+# changes nothing yet: the driver reports one submit-queue priority and creates every KGSL context
+# with the same flags, so no priority reaches the GPU. Kept for a driver that maps it, and off
+# unless the app's Performance page turns it on (BL_GAMESCOPE_REALTIME=1).
+export GAMESCOPE_FORCE_VULKAN_REALTIME=${BL_GAMESCOPE_REALTIME:-0}
+
+# A sleep that starts no process. Under proot every exec is a traced execve plus the loader's
+# opens and maps, and the watchers below poll for the whole session: `sleep 1` in a loop was 60
+# execs a minute each. read -t on a pipe nothing ever writes to waits in bash itself.
+nap() {
+  [ -n "${bl_nap_fd:-}" ] || exec {bl_nap_fd}<> <(:)
+  read -r -t "$1" -u "$bl_nap_fd" _ 2>/dev/null || :
+}
 export XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 export XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
@@ -266,7 +277,7 @@ case $mode in
           for _p in $(pgrep -f 'steamwebhelper|steamrtarm64/steam|gamescope' 2>/dev/null); do
             taskset -cp "$BL_CLIENT_CPUS" "$_p" >/dev/null 2>&1 || true
           done
-          sleep 5
+          nap 5
         done
       ) &
     fi
@@ -374,8 +385,9 @@ case $mode in
     [ -z "${BL_DESKTOP:-}" ] && (
       last=${BL_GAMESCOPE_FORCE_FULLSCREEN:-1}
       while :; do
-        sleep 1
-        want=$(cat "$HOME/.droiddeck-fill" 2>/dev/null) || continue
+        nap 1
+        want=
+        { read -r want || [ -n "$want" ]; } < "$HOME/.droiddeck-fill" 2>/dev/null || continue
         case $want in 0|1) ;; *) continue ;; esac
         [ "$want" = "$last" ] && continue
         if xprop -root -f GAMESCOPE_FORCE_WINDOWS_FULLSCREEN 32c -set GAMESCOPE_FORCE_WINDOWS_FULLSCREEN "$want" 2>/dev/null; then
@@ -384,10 +396,30 @@ case $mode in
         fi
       done
     ) &
+    # Resume from the Steam menu. The menu is an overlay that takes input, and a fullscreen game that
+    # loses input minimizes itself; gamescope only takes a window out of that state when the focused
+    # window changes, which the menu never does, so the game stayed minimized after Resume (a black
+    # screen with its small caption in the top-left corner). gamescope-3.16.29-p4 restores it itself;
+    # this asks it again a moment after input comes back from the client (app 769) to anything else,
+    # which covers a game that minimizes late. Harmless when nothing is minimized.
+    # BL_RESTORE_ON_RESUME=0 turns it off.
+    [ -z "${BL_DESKTOP:-}" ] && [ "${BL_RESTORE_ON_RESUME:-1}" = 1 ] && (
+      prev=
+      xprop -spy -root GAMESCOPE_FOCUSED_APP 2>/dev/null | while read -r line; do
+        app=${line##*= }
+        case $app in ''|*[!0-9]*) prev=; continue ;; esac
+        if [ "$prev" = 769 ] && [ "$app" != 769 ]; then
+          nap 1
+          xprop -root -f GAMESCOPE_RESTORE_FOCUS_WINDOW 32c -set GAMESCOPE_RESTORE_FOCUS_WINDOW 1 2>/dev/null \
+            && echo "== resume: asked gamescope to restore the game window (app $app)"
+        fi
+        prev=$app
+      done
+    ) &
     (
       beat=0
       for _ in $(seq 1 720); do
-        sleep 5
+        nap 5
         bannerlator-seed-redists "$steam_root" >/dev/null 2>&1 || true
         beat=$((beat + 1))
         if [ "$((beat % 3))" -eq 0 ]; then
@@ -558,7 +590,7 @@ BUSCONF
             "$steam_root/steamrtarm64/steam" -shutdown >/dev/null 2>&1 || true
             exit 0
           fi
-          sleep 0.5
+          nap 0.5
         done
       ) &
       stop_watcher=$!

@@ -8,6 +8,8 @@ object SessionPrefs {
     const val SUSPEND_MANUAL = "manual"
     const val SUSPEND_NEVER = "never"
 
+    const val CONTROLLER_DECK = "deck"
+    const val CONTROLLER_XBOX360 = "xbox360"
     const val OSC_AUTO = "auto"
     const val OSC_ALWAYS = "always"
     const val OSC_STEAM_QAM = "steam-qam"
@@ -143,8 +145,8 @@ object SessionPrefs {
         prefs(context).edit().putBoolean("directAudio", on).apply()
     }
 
-    /** The microphone for voice chat, on unless turned off; used only once RECORD_AUDIO is granted. */
-    fun micEnabled(context: Context): Boolean = prefs(context).getBoolean("mic", true)
+    /** The microphone for voice chat, off until the user turns it on (which asks for RECORD_AUDIO). */
+    fun micEnabled(context: Context): Boolean = prefs(context).getBoolean("mic", false)
 
     /** Whether the app has already asked for the microphone once at start-up. */
     fun micAsked(context: Context): Boolean = prefs(context).getBoolean("micAsked", false)
@@ -188,12 +190,26 @@ object SessionPrefs {
      * xalia is an x86 Windows program Proton launches to give Windows programs gamepad navigation.
      * Under FEX it cannot load the session's aarch64 preload shim, so its socket() and memfd calls
      * reach the vendor's seccomp filter raw; where that answers ENOSYS - a Galaxy Fold, measured -
-     * it storms, and the session dies seconds after Big Picture appears.
+     * it storms, and the session dies seconds after Big Picture appears. On by default: where it
+     * does run, it sits beside every game under FEX for nothing a controller-first session needs
+     * (about 10% of a core beside Once Upon a KATAMARI on an SD 8 Gen 2).
      */
-    fun noXalia(context: Context): Boolean = prefs(context).getBoolean("noXalia", false)
+    fun noXalia(context: Context): Boolean = prefs(context).getBoolean("noXalia", true)
 
     fun setNoXalia(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean("noXalia", on).apply()
+    }
+
+    /**
+     * Whether gamescope asks for realtime-priority Vulkan queues (GAMESCOPE_FORCE_VULKAN_REALTIME=1,
+     * which the app's gamescope build honours without CAP_SYS_NICE). Off by default, as in
+     * Bannerlator's session: the compositor's queue preempting the game's buys nothing on a device
+     * whose GPU is waiting on the CPU.
+     */
+    fun gamescopeRealtime(context: Context): Boolean = prefs(context).getBoolean("gamescopeRealtime", false)
+
+    fun setGamescopeRealtime(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean("gamescopeRealtime", on).apply()
     }
 
     /**
@@ -227,8 +243,13 @@ object SessionPrefs {
         return trimmed.takeIf { Regex("[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?").matches(it) }
     }
 
-    /** Turnip's sysmem rendering (TU_DEBUG=sysmem) for the runtime's driver: bypasses GMEM tiling. */
-    fun tuSysmem(context: Context): Boolean = prefs(context).getBoolean("tuSysmem", false)
+    /**
+     * Turnip's sysmem rendering (TU_DEBUG=sysmem) for the runtime's driver: bypasses GMEM tiling.
+     * On by default, as WinNative runs every Linux session: Chromium -> ANGLE -> Zink draws the
+     * client's interface as many small render passes, each paying GMEM's load/store and binning,
+     * and WinNative's A/B on an Adreno 840 put a game ahead with it too (Palworld 42.8 against 41.3).
+     */
+    fun tuSysmem(context: Context): Boolean = prefs(context).getBoolean("tuSysmem", true)
 
     fun setTuSysmem(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean("tuSysmem", on).apply()
@@ -248,11 +269,23 @@ object SessionPrefs {
     fun noGlError(context: Context): Boolean = prefs(context).getBoolean("noGlError", true)
     fun setNoGlError(context: Context, on: Boolean) { prefs(context).edit().putBoolean("noGlError", on).apply() }
 
+    /**
+     * What the pad is to the Steam client: [CONTROLLER_DECK], a Steam Deck controller (Quick Access
+     * button, gyro, Steam Input's full treatment - SteamDeckPad), or [CONTROLLER_XBOX360], the plain
+     * Xbox 360 pad of earlier versions (QAM by the Guide+A chord).
+     */
+    fun steamController(context: Context): String =
+        prefs(context).getString("steamController", CONTROLLER_DECK) ?: CONTROLLER_DECK
+    fun setSteamController(context: Context, id: String) { prefs(context).edit().putString("steamController", id).apply() }
+
     /** Runs the SteamOS gamepad client with its Quick Access performance controls. */
     fun steamDeckMode(context: Context): Boolean = prefs(context).getBoolean("steamDeckMode", false)
     fun setSteamDeckMode(context: Context, on: Boolean) { prefs(context).edit().putBoolean("steamDeckMode", on).apply() }
 
-    /** Zink's lazy descriptor mode (ZINK_DESCRIPTORS=lazy) for the client's GL-on-Vulkan UI. On by default. */
+    /**
+     * Zink's lazy descriptor mode (ZINK_DESCRIPTORS=lazy) with its compact set layout
+     * (ZINK_DEBUG=compact) for the client's GL-on-Vulkan UI, as WinNative runs it. On by default.
+     */
     fun zinkLazy(context: Context): Boolean = prefs(context).getBoolean("zinkLazy", true)
 
     fun setZinkLazy(context: Context, on: Boolean) {
@@ -309,8 +342,15 @@ object SessionPrefs {
     fun resolutionChosen(context: Context, mode: String): Boolean =
         prefs(context).contains("resolutionCap.$mode") || customResolution(context, mode) != null
 
-    /** The FEXCore preset for the games the client launches (core/FexPreset ids); "" = FEX's defaults. */
-    fun fexPreset(context: Context): String = prefs(context).getString("fexPreset", "") ?: ""
+    /**
+     * The FEXCore preset for the games the client launches (core/FexPreset ids); "" = FEX's defaults.
+     * Performance + TSO unless chosen, WinNative's default: FEX's own defaults keep half-barrier TSO
+     * and full-precision x87, which cost every x86 game time; a game that needs them can still be
+     * given another preset.
+     */
+    fun fexPreset(context: Context): String = prefs(context).getString("fexPreset", DEFAULT_FEX_PRESET) ?: DEFAULT_FEX_PRESET
+
+    private const val DEFAULT_FEX_PRESET = "PERFORMANCE_TSO"
 
     fun setFexPreset(context: Context, id: String) {
         prefs(context).edit().putString("fexPreset", id).apply()

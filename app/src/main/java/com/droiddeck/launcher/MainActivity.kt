@@ -38,6 +38,7 @@ import com.droiddeck.launcher.session.OfflineMode
 import com.droiddeck.launcher.session.ProtonExtras
 import com.droiddeck.launcher.session.ComponentsManager
 import com.droiddeck.launcher.ui.ComponentsPage
+import com.droiddeck.launcher.session.GameSaves
 import com.droiddeck.launcher.session.SessionLogShare
 import com.droiddeck.launcher.session.SessionPrefs
 import com.droiddeck.launcher.ui.ProtonPage
@@ -104,12 +105,16 @@ class MainActivity : ComponentActivity() {
     private var glThread by mutableStateOf(true)
     private var noGlError by mutableStateOf(true)
     private var steamDeckMode by mutableStateOf(false)
+    private var steamController by mutableStateOf(SessionPrefs.CONTROLLER_DECK)
     private var showCredits by mutableStateOf(false)
     private var showProtons by mutableStateOf(false)
     // Components page: FEX / DXVK / VKD3D-Proton per Proton (ComponentsManager).
     private var showComponents by mutableStateOf(false)
     private var focusComponentsContent by mutableStateOf(true)
     private var showMapping by mutableStateOf(false)
+    private var saveBusy: String? = null
+    /** What to do with the zip or folder the file picker hands back after a game page's Manage saves. */
+    private var onSavePicked: ((File) -> Unit)? = null
     private var controllerSettings by mutableStateOf<ControllerPrefs.Settings?>(null)
     private var catalog by mutableStateOf<List<DesktopCatalog.Entry>?>(null)
     private var catalogLoading by mutableStateOf(false)
@@ -126,7 +131,8 @@ class MainActivity : ComponentActivity() {
     private var gameCores by mutableStateOf<Set<Int>>(emptySet())
     private var tuSysmem by mutableStateOf(false)
     private var zinkLazy by mutableStateOf(false)
-    private var noXalia by mutableStateOf(false)
+    private var noXalia by mutableStateOf(true)
+    private var gamescopeRealtime by mutableStateOf(false)
     private var prootNoSeccomp by mutableStateOf(false)
     private var guestHostname by mutableStateOf(SessionPrefs.DEFAULT_GUEST_HOSTNAME)
     private var phantomWarning by mutableStateOf<String?>(null)
@@ -148,6 +154,42 @@ class MainActivity : ComponentActivity() {
     }
     private val pickAndroidDriver = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedUri(r.data)?.let { drivers.importDriver(it, linux = false) }
+    }
+    private val pickSaveZip = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val then = onSavePicked.also { onSavePicked = null } ?: return@registerForActivityResult
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let(then)
+    }
+    private val pickSaveDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val then = onSavePicked.also { onSavePicked = null } ?: return@registerForActivityResult
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let(then)
+    }
+
+    /** Import a save zip into [game]: pick it in the app's file picker, then back up and unzip off the main thread. */
+    private fun importSaves(name: String, game: () -> GameSaves.Game) {
+        if (SessionState.running) {
+            android.widget.Toast.makeText(this, "Close the Steam session first, so the game can't save over the import", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        onSavePicked = { zip ->
+            saveAction("Importing into $name") {
+                val (written, backup) = GameSaves.import(game(), zip)
+                val kind = GameSaves.layoutOf(zip)?.label ?: "zip"
+                "Imported $written files from the $kind into $name" + (backup?.let { ". Old saves backed up to Download/DroidDeck/Saves/backups" } ?: "")
+            }
+        }
+        pickSaveZip.launch(InAppFilePicker.buildIntent(this, listOf("zip"), "Choose a save zip for $name", GameSaves.savesDir().parentFile?.parentFile?.path))
+    }
+
+    /** Export [game]'s saves in [layout] to a folder picked in the app's file picker. */
+    private fun exportSaves(name: String, layout: GameSaves.Layout, game: () -> GameSaves.Game) {
+        onSavePicked = { dir ->
+            saveAction("Exporting $name") {
+                val (zip, count) = GameSaves.export(game(), layout, dir)
+                "Exported $count files as a ${layout.label}: ${zip.path.removePrefix("/storage/emulated/0/")}"
+            }
+        }
+        GameSaves.savesDir().mkdirs()
+        pickSaveDir.launch(InAppFilePicker.buildDirIntent(this, "Choose where to save $name (${layout.label})", GameSaves.savesDir().path))
     }
     private val pickAddedGamesDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
@@ -346,6 +388,9 @@ class MainActivity : ComponentActivity() {
                         },
                         onProtons = { openProtons() },
                         onComponents = { focusContent -> openComponents(focusContent) },
+                        // A game page's Manage saves: the game's Proton and saves are read when the work runs, off the main thread.
+                        onSaveImport = { sg -> importSaves(sg.name) { GameSaves.game(sg) } },
+                        onSaveExport = { sg, layout -> exportSaves(sg.name, layout) { GameSaves.game(sg) } },
                         onPerformance = { refreshCores(); showProtons = false; showComponents = false; showMapping = false; showPerformance = true },
                         onRoms = { showRoms = true },
                         onFiles = { startActivity(Intent(this, com.droiddeck.launcher.files.FileManagerActivity::class.java)) },
@@ -503,8 +548,9 @@ class MainActivity : ComponentActivity() {
         if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             wanted.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
-        // The microphone is on by default; ask once, with the storage prompt, so voice chat works
-        // without a trip to the settings. A refusal is not asked again - the toggle asks when used.
+        // The microphone is off by default. Someone who turned it on before the permission was
+        // granted is asked once here, with the storage prompt; a refusal is not asked again - the
+        // toggle asks when used.
         if (SessionPrefs.micEnabled(this) && !SessionPrefs.micAsked(this)
             && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             wanted.add(Manifest.permission.RECORD_AUDIO)
@@ -654,6 +700,19 @@ class MainActivity : ComponentActivity() {
                 refreshPackages()
             }
         }, "catalog-desktop").start()
+    }
+
+    /** Runs a save import or export off the main thread, one at a time, and says how it went. */
+    private fun saveAction(label: String, work: () -> String) {
+        if (saveBusy != null) return
+        saveBusy = label
+        Thread({
+            val message = runCatching(work).getOrElse { e -> "$label failed: ${e.message ?: e.javaClass.simpleName}" }
+            ui.post {
+                saveBusy = null
+                android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }, "game-saves-action").start()
     }
 
     private fun openProtons() {
@@ -806,6 +865,7 @@ class MainActivity : ComponentActivity() {
                 fexPreset = if (mode == SessionService.MODE_STEAM) fexPreset else null,
                 steamChannel = if (mode == SessionService.MODE_STEAM) steamChannel else null,
                 steamDeckMode = mode == SessionService.MODE_STEAM && steamDeckMode,
+                steamController = if (mode == SessionService.MODE_STEAM) steamController else null,
                 runSteamAtStartup = mode == SessionService.MODE_STEAM && runSteamAtStartup,
                 addedGamesDirs = if (mode == SessionService.MODE_STEAM) addedGamesDirs else null,
                 addedGames = if (mode == SessionService.MODE_STEAM) addedGames else emptyList(),
@@ -862,6 +922,7 @@ class MainActivity : ComponentActivity() {
                     steamDeckMode = on
                     steamChannel = SessionPrefs.steamChannel(this)
                 },
+                onSteamController = { id -> SessionPrefs.setSteamController(this, id); steamController = id },
                 onRunSteamAtStartup = { on ->
                     SessionPrefs.setRunSteamAtStartup(this, on)
                     runSteamAtStartup = on
@@ -893,6 +954,7 @@ class MainActivity : ComponentActivity() {
             cores = CpuCores.all.map { c -> CoreRow(c, "cpu$c" + (CpuCores.maxGhz(c)?.let { String.format(java.util.Locale.US, " · %.1f GHz", it) } ?: "")) },
             clientOverride = clientOverride, clientCores = clientCores, gameCores = gameCores,
             tuSysmem = tuSysmem, zinkLazy = zinkLazy, glThread = glThread, noGlError = noGlError, noXalia = noXalia,
+            gamescopeRealtime = gamescopeRealtime,
             prootNoSeccomp = prootNoSeccomp, guestHostname = guestHostname, phantomWarning = phantomWarning,
             onClientOverride = { on -> SessionPrefs.setClientCpusOverride(this, on); clientOverride = on },
             onTuSysmem = { on -> SessionPrefs.setTuSysmem(this, on); tuSysmem = on },
@@ -900,6 +962,7 @@ class MainActivity : ComponentActivity() {
             onGlThread = { on -> SessionPrefs.setGlThread(this, on); glThread = on },
             onNoGlError = { on -> SessionPrefs.setNoGlError(this, on); noGlError = on },
             onNoXalia = { on -> SessionPrefs.setNoXalia(this, on); noXalia = on },
+            onGamescopeRealtime = { on -> SessionPrefs.setGamescopeRealtime(this, on); gamescopeRealtime = on },
             onProotNoSeccomp = { on -> SessionPrefs.setProotNoSeccomp(this, on); prootNoSeccomp = on },
             onGuestHostname = { name -> SessionPrefs.setGuestHostname(this, name) },
             onClientCore = { core, on ->
@@ -944,6 +1007,8 @@ class MainActivity : ComponentActivity() {
         customResolution = SessionPrefs.customResolution(this, mode)
         fexPreset = SessionPrefs.fexPreset(this)
         steamChannel = SessionPrefs.steamChannel(this)
+        steamDeckMode = SessionPrefs.steamDeckMode(this)
+        steamController = SessionPrefs.steamController(this)
         runSteamAtStartup = SessionPrefs.runSteamAtStartup(this)
         addedGamesDirs = SessionPrefs.addedGamesDirs(this)
         refreshAddedGames()
@@ -993,6 +1058,7 @@ class MainActivity : ComponentActivity() {
         tuSysmem = SessionPrefs.tuSysmem(this)
         zinkLazy = SessionPrefs.zinkLazy(this)
         noXalia = SessionPrefs.noXalia(this)
+        gamescopeRealtime = SessionPrefs.gamescopeRealtime(this)
         prootNoSeccomp = SessionPrefs.prootNoSeccomp(this)
         guestHostname = SessionPrefs.guestHostname(this)
         refreshPhantomStatus()
@@ -1018,7 +1084,7 @@ class MainActivity : ComponentActivity() {
             val games = if (ready) Library.steamGames(this) + com.droiddeck.launcher.frontend.AddedGames.scan(this).map { g ->
                 com.droiddeck.launcher.frontend.AddedGameArt.resolve(this, g).let { art ->
                     Library.SteamGame(
-                        g.steamAppId ?: g.appId.toInt(), g.name, art.portrait ?: art.header, "added", g.gameId,
+                        g.steamAppId ?: g.appId.toInt(), g.name, art.portrait ?: art.header, Library.ADDED, g.gameId,
                         hero = art.hero ?: art.header, gameFiles = g.folder,
                         protonPrefix = Library.protonPrefix(this, g.steamAppId?.toLong() ?: g.appId),
                     )

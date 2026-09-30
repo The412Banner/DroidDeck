@@ -91,7 +91,6 @@ public final class WaylandCompositor {
             long smoothed = frameIntervalNanos;
             frameIntervalNanos = smoothed == 0 ? interval : (smoothed * 3 + interval) / 4;
         }
-        com.droiddeck.launcher.session.PerfHints.onFrame();
         GameListener l = gameListener;
         if (l != null) l.onGameFrame();
     }
@@ -218,7 +217,7 @@ public final class WaylandCompositor {
      *  once per tick, so games run unthrottled and the screen shows their latest frame. */
     public static native void nativeVsync(long frameTimeNanos);
 
-    /** The compositor thread's Linux tid, or 0 before it has started (see PerfHints). */
+    /** The compositor thread's Linux tid, or 0 before it has started. */
     public static native int nativeCompositorTid();
 
     /** Shortcut launches: don't draw explorer's windows (desktop, taskbar, Start menu), matching the

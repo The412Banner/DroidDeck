@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.GameManager
 import android.app.GameState
 import android.os.Build
-import android.os.PowerManager
 import android.util.Log
 
 /**
@@ -13,8 +12,10 @@ import android.util.Log
  * The manifest already makes the app a game (appCategory + game_mode_config); this is the
  * per-window half, applied when the session activity is created:
  *
- *  - sustained performance mode (Android 7+): a clock floor that does not throttle away after
- *    two minutes, which suits an hour in Big Picture better than a boost that fades;
+ *  - NOT sustained performance mode: on Pixel and Qualcomm power HALs it caps the CPU and GPU at
+ *    a level the device can hold indefinitely rather than holding a floor, which cost games and
+ *    Big Picture their peak clocks. WinNative never asks for it; the thermal budget is left to
+ *    the game;
  *  - the panel's fastest mode at its current size (Android 6+): a 120 Hz phone is switched to
  *    120 Hz for the menu, not only when a game votes for it;
  *  - GameManager's game state (Android 13+): "in gameplay", so an OEM framework that releases
@@ -27,15 +28,7 @@ object PerfMode {
     private const val TAG = "PerfMode"
 
     fun apply(a: Activity): String {
-        val parts = ArrayList<String>(3)
-
-        // Sustained performance mode.
-        parts += if (Build.VERSION.SDK_INT >= 24) {
-            val pm = a.getSystemService(PowerManager::class.java)
-            if (pm?.isSustainedPerformanceModeSupported == true) {
-                try { a.window.setSustainedPerformanceMode(true); "sustained mode on" } catch (t: Throwable) { Log.w(TAG, "sustained mode", t); "sustained mode refused" }
-            } else "sustained mode unsupported"
-        } else "sustained mode needs Android 7"
+        val parts = ArrayList<String>(2)
 
         // The fastest display mode at the panel's current size.
         parts += try {

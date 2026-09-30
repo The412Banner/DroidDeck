@@ -12,6 +12,7 @@ captures/
 # copies cannot drift.
 app/src/main/assets/linuxfs/
 app/src/main/jniLibs/arm64-v8a/libproot.so
+app/src/main/jniLibs/arm64-v8a/.proot-inputs
 app/src/main/jniLibs/arm64-v8a/libproot-loader.so
 
 # Kotlin compiler session files (build-tool state, never source).

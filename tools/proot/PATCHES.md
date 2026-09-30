@@ -44,3 +44,29 @@ Ported from WinNative (`main`, 53836ca9, "Fix/performance and vac"):
 - `0009-tracee-relatives-sweep.patch` - tracees count their children, so a terminating thread
   with no children or ptracees no longer walks every tracee; the per-stop memory collector is
   emptied instead of freed and reallocated.
+
+Added by DroidDeck:
+
+- `0011-kompat-utsname-only.patch` - `--kernel-release` (the guest's `DroidDeck` hostname) loads
+  kompat, whose filter traps `futex`, `fcntl`, `epoll_pwait`, `pselect6`, `pipe2`, `eventfd2`,
+  `socket` and more, and which strips `AT_SYSINFO_EHDR` on every `execve`, so glibc runs without
+  the vDSO. When the virtual release is not older than the real kernel and the hwcap is left
+  alone, every one of those handlers is a no-op: kompat now traces only `uname`, `sethostname`
+  and `setdomainname` and leaves the auxv as the kernel wrote it. On an SD 8 Gen 2 guest this
+  took a futex ping-pong from 467 to 97 us, `epoll_pwait` from 60 to 0.8 us and `fcntl` from
+  40-107 to 0.4 us, and `clock_gettime` back to the vDSO.
+- `0012-fake_id0-identity-only.patch` - `-i uid:gid` (for Xwayland's setgid/setuid before it runs
+  xkbcomp) loads fake_id0, whose filter traps every `fstat`/`newfstatat`/`stat` (entry and exit),
+  every `sendmsg` (all Wayland, X11, Chromium and PulseAudio traffic), `socket`, `getsockopt`, the
+  `get*id` family and the chown/chmod family. When the ids given are the ones proot really has and
+  are not 0, every one of those handlers is a no-op; fake_id0 now traces only the `set*id` family
+  and the xattr permission fixups, and leaves set-user-ID bits alone on `execve` (Android mounts the
+  app's data `nosuid`, so the kernel would not honour them either), which keeps the ids fixed. On an
+  x86_64 host build under the same options: `fstat` 41.7 -> 1.3 us, `sendmsg` 18.0 -> 2.5 us.
+- `0013-seccomp-ioctl-by-request-and-kernel-exit-stops.patch` - every `ioctl` stopped on entry and
+  exit, which is every GPU submit and wait. The filter now traces only the requests enter.c and
+  exit.c act on (`TCSETSF`, the four termios2 requests, `FICLONE`) and allows the rest at once, and
+  the ioctl block is emitted first (after WinNative 53836ca9, which traces only the termios2 ones).
+  The `faccessat2` exit stop (termux 5ba8b95, for glibc's ENOSYS fallback on kernels before 5.8) and
+  the `statx` one (emulation on kernels before 4.11) are dropped when the running kernel is newer.
+  Host build: `ioctl` 31.6 -> 0.5 us; `stat`/`statx`/`faccessat2` about 44 -> 28 us (one stop).

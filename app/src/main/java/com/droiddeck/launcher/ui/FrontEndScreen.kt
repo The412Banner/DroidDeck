@@ -133,6 +133,9 @@ class FrontEndActions(
     val onProtons: () -> Unit,
     /** The Components page: FEX / DXVK / VKD3D-Proton per Proton. */
     val onComponents: (focusContent: Boolean) -> Unit,
+    /** A game page's Manage saves: import a save zip into this game, or export its saves in a layout. */
+    val onSaveImport: (Library.SteamGame) -> Unit = {},
+    val onSaveExport: (Library.SteamGame, com.droiddeck.launcher.session.GameSaves.Layout) -> Unit = { _, _ -> },
     val onPerformance: () -> Unit,
     val onRoms: () -> Unit,
     val onFiles: () -> Unit,

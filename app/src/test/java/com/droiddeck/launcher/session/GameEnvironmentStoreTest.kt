@@ -49,6 +49,15 @@ class GameEnvironmentStoreTest {
         assertFalse(JSONObject(guest.readText()).getJSONObject("shared").has("FEX_SMCCHECKS"))
     }
 
+    @Test fun unchosenFexPresetPublishesPerformanceTso() {
+        GameEnvironmentStore.save(context, GameEnvironment.Config())
+        val shared = JSONObject(guest.readText()).getJSONObject("shared")
+        assertEquals("1", shared.getString("FEX_TSOENABLED"))
+        assertEquals("0", shared.getString("FEX_HALFBARRIERTSOENABLED"))
+        assertEquals("1", shared.getString("FEX_X87REDUCEDPRECISION"))
+        assertEquals("1", shared.getString("FEX_MULTIBLOCK"))
+    }
+
     @Test fun invalidDataCannotReplaceSavedConfiguration() {
         val original = GameEnvironment.Config(shared = mapOf("CUSTOM" to "ok"))
         GameEnvironmentStore.save(context, original)

@@ -37,6 +37,7 @@ fun PerformancePage(
     glThread: Boolean,
     noGlError: Boolean,
     noXalia: Boolean,
+    gamescopeRealtime: Boolean,
     prootNoSeccomp: Boolean,
     guestHostname: String,
     phantomWarning: String?,
@@ -46,6 +47,7 @@ fun PerformancePage(
     onGlThread: (Boolean) -> Unit,
     onNoGlError: (Boolean) -> Unit,
     onNoXalia: (Boolean) -> Unit,
+    onGamescopeRealtime: (Boolean) -> Unit,
     onProotNoSeccomp: (Boolean) -> Unit,
     onGuestHostname: (String) -> Unit,
     onClientCore: (Int, Boolean) -> Unit,
@@ -86,7 +88,7 @@ fun PerformancePage(
             )
             ToggleRow(
                 host, "zink", "Zink: lazy descriptors",
-                "Recommended for drivers without descriptor buffers.",
+                "Lazy, compact descriptors. Recommended for drivers without descriptor buffers.",
                 zinkLazy, onChange = onZinkLazy,
             )
             ToggleRow(
@@ -94,16 +96,21 @@ fun PerformancePage(
                 "Disables per-call GL validation.",
                 noGlError, onChange = onNoGlError,
             )
+            ToggleRow(
+                host, "gsrealtime", "gamescope: realtime GPU queue",
+                "Gives the compositor's GPU work priority over the game's. Can smooth frame pacing, but can cost games GPU time.",
+                gamescopeRealtime, onChange = onGamescopeRealtime,
+            )
         }
         SettingsGroup("Session fixes") {
             ToggleRow(
                 host, "sysmem", "Turnip: sysmem rendering",
-                "Required on Adreno 710/720/722. May fix corruption on other Adreno GPUs, but can reduce performance.",
+                "On by default: faster for the Steam interface and most games. Required on Adreno 710/720/722.",
                 tuSysmem, onChange = onTuSysmem,
             )
             ToggleRow(
                 host, "xalia", "Skip Steam's xalia helper",
-                "Disables Proton's gamepad navigation helper. Try if sessions crash at startup.",
+                "Disables Proton's gamepad navigation helper, which costs every game CPU time. Turn off only if a game needs it.",
                 noXalia, onChange = onNoXalia,
             )
             ToggleRow(
