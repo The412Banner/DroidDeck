@@ -57,6 +57,8 @@ import java.util.Locale
  */
 class SessionService : Service() {
     private val components = java.util.concurrent.CopyOnWriteArrayList<SessionPart>()
+    /** The Steam Deck controller's sysfs binds (SteamDeckPad), when this session has one. */
+    private var deckBinds: List<String> = emptyList()
     private val stopLock = Any()
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
@@ -292,6 +294,8 @@ class SessionService : Service() {
 
         val fakeInputDir = File(sessionRoot, "dev/input").apply { mkdirs() }
         val controllersOn = !File(Environment.getExternalStorageDirectory(), NO_PAD_SWITCH).exists()
+        SessionState.deckPad = false
+        deckBinds = emptyList()
         if (controllersOn) addControllerEnvironment(guest, fakeInputDir)
         // The desktop is wlroots (labwc). Stock wlroots allocates through gbm on a real DRM render
         // node, and ours is a KGSL stand-in - labwc died at "unable to create allocator" - so the
@@ -513,7 +517,11 @@ class SessionService : Service() {
         // Zink renders the client's UI (Chromium -> ANGLE -> Zink -> Turnip). Lazy descriptors is
         // the mode Zink recommends where the driver has no descriptor buffer, and what Ludashi ships
         // by default for its Zink path; a switch here because on one Fold the menus run at 14 fps.
-        if (SessionPrefs.zinkLazy(this)) guest.add("ZINK_DESCRIPTORS=lazy")
+        // compact packs Zink's descriptor sets into fewer, so a draw binds less (WinNative's default).
+        if (SessionPrefs.zinkLazy(this)) {
+            guest.add("ZINK_DESCRIPTORS=lazy")
+            guest.add("ZINK_DEBUG=compact")
+        }
         // The rest of the client-interface switches (SessionPrefs): GL marshalled off the calling
         // thread, no GL error checks, and the client run as SteamOS runs it (the script reads
         // BL_STEAMDECK; it is the one that builds the command line).
@@ -526,9 +534,12 @@ class SessionService : Service() {
             SessionPrefs.writeForceFullscreenFlag(this)
         }
         // Proton's own gate for its xalia helper (its `proton` script reads this, and sets
-        // XALIA_SUPPORTED_ONLY itself otherwise). Off by default: xalia is Valve's, and on a device
-        // whose seccomp answers its syscalls normally there is no reason to take it away.
+        // XALIA_SUPPORTED_ONLY itself otherwise). Skipped by default: under FEX it costs every game
+        // a slice of a core for gamepad navigation the session already has.
         if (SessionPrefs.noXalia(this)) guest.add("PROTON_USE_XALIA=0")
+        // gamescope's realtime Vulkan queues (the session script turns this into
+        // GAMESCOPE_FORCE_VULKAN_REALTIME); off unless the user turns it on.
+        guest.add("BL_GAMESCOPE_REALTIME=" + (if (SessionPrefs.gamescopeRealtime(this)) "1" else "0"))
         // Anything else, for a device that cannot be reached with a debugger: Downloads/droiddeck-env
         // holds KEY=VALUE lines that go into the session's environment as written, after ours, so a
         // line here wins. Zink and Turnip tunables (ZINK_DESCRIPTORS=lazy, MESA_*), gamescope's,
@@ -598,6 +609,12 @@ class SessionService : Service() {
     /** The fake evdev pads: the ring files the app writes and the identity SDL and Steam see. */
     private fun addControllerEnvironment(guest: MutableList<String>, fakeInputDir: File) {
         FakeInputWriter.prepareRingSlots(fakeInputDir, 4)
+        // Virtual pads a client made last session (event16 and up, and their hidden rings) are
+        // not there any more; a client that crashed never took its own down.
+        fakeInputDir.listFiles()?.forEach { file ->
+            val node = Regex("event(\\d+)").matchEntire(file.name)?.groupValues?.get(1)?.toIntOrNull()
+            if (file.name.startsWith(".uinput-") || (node != null && node >= FIRST_VIRTUAL_PAD)) file.delete()
+        }
         guest.add("FAKE_EVDEV_DIR=" + fakeInputDir.path)
         val rings = FakeInputWriter.getRingEnv(fakeInputDir)
         if (!rings.isNullOrEmpty()) guest.add("FAKE_EVDEV_MEMFD_PATHS=$rings")
@@ -605,14 +622,34 @@ class SessionService : Service() {
         // identity gets the standard layout without the user configuring the pad by hand.
         guest.add("FAKE_EVDEV_IDENTITY=xbox360")
         guest.add("FAKE_EVDEV_VIBRATION=1")
-        // Steam Input's virtual-gamepad identity is for games the client starts, which are
-        // meant to see that pad. Everywhere else (the desktop, a program from the rail) it
-        // hides the pad: SDL ignores a Steam virtual gamepad unless it runs under Steam, so
-        // every SDL emulator came up with no controller. There it is a plain Xbox 360 pad.
-        if (SessionState.mode == MODE_STEAM) guest.add("FAKE_EVDEV_STEAM_VIRTUAL=1")
+        val uinput = !File(Environment.getExternalStorageDirectory(), NO_UINPUT_SWITCH).exists()
+        // In Steam, the pad is what a Deck's is: a Steam Deck controller the client reads over
+        // hidraw (SteamDeckPad), which only works with Steam Input's virtual pad for games to read.
+        // Decided only once its sysfs is in place: without it the client would find no Deck, and
+        // with the Deck asked for the pad's own nodes are withdrawn - no controller at all.
+        val wantsDeck = uinput && SessionState.mode == MODE_STEAM &&
+            SessionPrefs.steamController(this) == SessionPrefs.CONTROLLER_DECK &&
+            !File(Environment.getExternalStorageDirectory(), NO_DECK_PAD_SWITCH).exists()
+        deckBinds = if (wantsDeck) SteamDeckPad.prepare(this, fakeInputDir.parentFile!!.parentFile!!) else emptyList()
+        SessionState.deckPad = deckBinds.isNotEmpty()
+        if (wantsDeck && !SessionState.deckPad) Log.w(TAG, "deck pad: not available this session; the pad stays an Xbox 360 controller")
+        if (uinput) {
+            // /dev/uinput, stood in for by libfakeinput: the virtual pad Steam Input makes for a
+            // game becomes a node the game reads, carrying the player's layout, as on a Deck.
+            guest.add("FAKE_EVDEV_UINPUT=1")
+            if (SessionState.deckPad) guest.add("FAKE_EVDEV_DECK=1")
+        } else if (SessionState.mode == MODE_STEAM) {
+            // Without it, games see the pad itself wearing Steam Input's virtual-gamepad identity -
+            // for games the client starts only. Everywhere else (the desktop, a program from the
+            // rail) that identity hides the pad: SDL ignores a Steam virtual gamepad unless it
+            // runs under Steam, so every SDL emulator came up with no controller.
+            guest.add("FAKE_EVDEV_STEAM_VIRTUAL=1")
+        }
         guest.add("SDL_JOYSTICK_DISABLE_UDEV=1")
         guest.add("SDL_HIDAPI_JOYSTICK_DISABLE_UDEV=1")
-        guest.add("SDL_JOYSTICK_HIDAPI=0")
+        // The client reads a Deck controller through SDL's HIDAPI; a hint in the environment
+        // outranks the client's own. Nothing else is shown the Deck (libfakeinput).
+        if (!SessionState.deckPad) guest.add("SDL_JOYSTICK_HIDAPI=0")
         if (File(Environment.getExternalStorageDirectory(), PAD_LOG_SWITCH).exists()) {
             guest.add("FAKE_EVDEV_LOG=1")
         }
@@ -623,6 +660,7 @@ class SessionService : Service() {
     private fun sessionBinds(controllersOn: Boolean, fakeInputDir: File): ArrayList<String> {
         val binds = ArrayList<String>()
         if (controllersOn) binds.add(fakeInputDir.path + ":/dev/input")
+        if (controllersOn) binds.addAll(deckBinds)
         // The client's battery readout (the Quick Access Menu, the top bar) reads
         // /sys/class/power_supply/BAT<n>/..., a laptop's or a Deck's naming; Android's supply is
         // called "battery" and its files differ, so the client sees no battery at all. A directory
@@ -1138,6 +1176,10 @@ class SessionService : Service() {
         private const val STEAM_EXIT_MS = 10_000L
         private const val NO_PAD_SWITCH = "Download/droiddeck-no-pad"
         private const val PAD_LOG_SWITCH = "Download/droiddeck-pad-log"
+        private const val NO_UINPUT_SWITCH = "Download/droiddeck-no-uinput"
+        private const val NO_DECK_PAD_SWITCH = "Download/droiddeck-no-deck-pad"
+        /** libfakeinput numbers the pads made through its /dev/uinput stand-in from here. */
+        private const val FIRST_VIRTUAL_PAD = 16
 
         const val EXTRA_MODE = "mode"
         const val MODE_STEAM = "steam"

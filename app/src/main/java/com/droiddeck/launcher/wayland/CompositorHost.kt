@@ -41,6 +41,10 @@ object CompositorHost {
         }
         WaylandCompositor.nativeSetOutputSize(outputWidth, outputHeight)
         WaylandCompositor.nativeSetOutputRefreshRate(refreshHz)
+        // The cadence the zero-copy layer votes for. Left at 0 the system infers it from the rate
+        // already being achieved, and on a phone whose vendor picks clocks from that a session
+        // that has been slowed reads as one that wants to be. (WinNative, WaylandSession.)
+        WaylandCompositor.nativeSetLayerFrameRate(refreshHz)
         WaylandCompositor.nativeStartWithSurface(
             surface, xdgRuntimeDir, driverPath, libraryName, nativeLibDir,
         )

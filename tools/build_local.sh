@@ -89,7 +89,17 @@ linuxfs_replaced=1
 rm -rf -- "${linuxfs_dir}"
 mkdir -p "${linuxfs_dir}"
 
-if ! docker image inspect "${image_name}" >/dev/null 2>&1; then
+# Docker Desktop's VM restarts now and then, and until its engine has loaded its image store it
+# answers "No such image" for images it has. The rebuild that follows hangs on the registry
+# (the base image's credentials go through docker-credential-desktop), so give a restarting daemon
+# up to a minute before deciding the image is really missing.
+image_present=0
+for _ in $(seq 1 30); do
+    if inspect_error=$(docker image inspect "${image_name}" 2>&1 >/dev/null); then image_present=1; break; fi
+    sleep 2
+done
+if [[ "${image_present}" = 0 ]]; then
+    echo "Build image ${image_name} not found (${inspect_error:-no error}); building it." >&2
     docker build --platform linux/amd64 -t "${image_name}" \
         -f "${repo_root}/tools/local-cross.Dockerfile" "${repo_root}"
 fi
@@ -164,20 +174,39 @@ if [[ -z "${github_repo}" ]]; then
     github_repo=${github_repo%.git}
 fi
 
+# Pinned downloads are kept between builds, named by their checksum, so a rebuild fetches nothing
+# it already has. A cached file is checked again before use; a bad one is fetched anew.
+cache_dir=${DROIDDECK_BUILD_CACHE:-"${HOME}/.cache/droiddeck-build"}
+mkdir -p "${cache_dir}"
+# cached <sha256> <name> <command...>: prints the cached path, running the command (which writes
+# to "$out") only when the cache has no file with that checksum.
+cached() {
+    local sha=$1 name=$2 out
+    shift 2
+    out="${cache_dir}/${sha}-${name}"
+    if [[ -f "${out}" ]] && printf '%s  %s\n' "${sha}" "${out}" | shasum -a 256 -c - >/dev/null 2>&1; then
+        echo "${out}"
+        return 0
+    fi
+    rm -f "${out}.part"
+    out="${out}.part" "$@" >&2
+    printf '%s  %s\n' "${sha}" "${out}.part" | shasum -a 256 -c - >&2
+    mv "${out}.part" "${out}"
+    echo "${out}"
+}
+
 if [[ -f "${repo_root}/tools/gamescope/release.env" ]]; then
     . "${repo_root}/tools/gamescope/release.env"
-    gamescope_archive="${staging_dir}/gamescope.tzst"
-    gh release download "${GAMESCOPE_TAG}" -R "${github_repo}" -p gamescope.tzst -O "${gamescope_archive}"
-    printf '%s  %s\n' "${GAMESCOPE_SHA256}" "${gamescope_archive}" | shasum -a 256 -c -
+    gamescope_archive=$(cached "${GAMESCOPE_SHA256}" gamescope.tzst \
+        bash -c 'gh release download "$0" -R "$1" -p gamescope.tzst -O "$out"' "${GAMESCOPE_TAG}" "${github_repo}")
     zstd -dc "${gamescope_archive}" | tar -xf - -C "${linuxfs_dir}"
     test -f "${linuxfs_dir}/usr/local/bin/gamescope"
 fi
 
 if [[ -f "${repo_root}/tools/wlroots/release.env" ]]; then
     . "${repo_root}/tools/wlroots/release.env"
-    wlroots_archive="${staging_dir}/wlroots.tzst"
-    gh release download "${WLROOTS_TAG}" -R "${github_repo}" -p wlroots.tzst -O "${wlroots_archive}"
-    printf '%s  %s\n' "${WLROOTS_SHA256}" "${wlroots_archive}" | shasum -a 256 -c -
+    wlroots_archive=$(cached "${WLROOTS_SHA256}" wlroots.tzst \
+        bash -c 'gh release download "$0" -R "$1" -p wlroots.tzst -O "$out"' "${WLROOTS_TAG}" "${github_repo}")
     zstd -dc "${wlroots_archive}" | tar -xf - -C "${linuxfs_dir}"
     test -f "${linuxfs_dir}/usr/local/lib/droiddeck-wlroots/libwlroots-0.20.so"
 fi
@@ -187,9 +216,8 @@ mango_pkgs="${staging_dir}/mango-pkgs"
 mkdir -p "${mango_dir}" "${mango_pkgs}"
 while read -r package_sha256 package_url; do
     [[ -n "${package_url}" ]] || continue
-    package_archive="${staging_dir}/$(basename "${package_url}")"
-    curl -fsSL --retry 3 -o "${package_archive}" "${package_url}"
-    printf '%s  %s\n' "${package_sha256}" "${package_archive}" | shasum -a 256 -c -
+    package_archive=$(cached "${package_sha256}" "$(basename "${package_url}")" \
+        bash -c 'curl -fsSL --retry 3 -o "$out" "$0"' "${package_url}")
     zstd -dc "${package_archive}" | tar -xf - -C "${mango_pkgs}"
 done < <(grep -v '^#' "${repo_root}/tools/mangoapp/packages.txt")
 install -m644 "${mango_pkgs}/usr/bin/mangoapp" "${mango_dir}/mangoapp"
@@ -201,11 +229,14 @@ install -m644 "${repo_root}/tools/mangoapp/mangoapp" "${linuxfs_dir}/usr/local/b
 
 pa_source=${DROIDDECK_PA13_SOURCE_DIR:-"${staging_dir}/pulseaudio-13.0"}
 if [[ -z "${DROIDDECK_PA13_SOURCE_DIR:-}" ]]; then
-    curl -fsSL -o "${staging_dir}/pulseaudio-13.0.tar.gz" \
-        https://github.com/pulseaudio/pulseaudio/archive/refs/tags/v13.0.tar.gz
+    pa_tarball="${cache_dir}/pulseaudio-13.0.tar.gz"
+    if [[ ! -s "${pa_tarball}" ]] || ! tar -tzf "${pa_tarball}" >/dev/null 2>&1; then
+        curl -fsSL -o "${pa_tarball}.part" \
+            https://github.com/pulseaudio/pulseaudio/archive/refs/tags/v13.0.tar.gz
+        mv "${pa_tarball}.part" "${pa_tarball}"
+    fi
     mkdir -p "${pa_source}"
-    tar -xzf "${staging_dir}/pulseaudio-13.0.tar.gz" \
-        -C "${pa_source}" --strip-components=1
+    tar -xzf "${pa_tarball}" -C "${pa_source}" --strip-components=1
 fi
 if [[ ! -f "${pa_source}/src/pulse/version.h.in" ]]; then
     echo "PulseAudio 13.0 source not found at ${pa_source}; set DROIDDECK_PA13_SOURCE_DIR." >&2
@@ -214,7 +245,17 @@ fi
 
 sink_output="${staging_dir}/sink-out"
 "${repo_root}/tools/aaudio-sink/build.sh" "${pa_source}" "${sink_output}"
-"${repo_root}/tools/proot/build.sh" "${repo_root}/app/src/main/jniLibs/arm64-v8a"
+# proot is rebuilt only when its sources (source.env, the patches, the build script) changed since
+# the libraries in jniLibs were built.
+proot_out="${repo_root}/app/src/main/jniLibs/arm64-v8a"
+proot_inputs=$(cd "${repo_root}/tools/proot" && find . -type f ! -name '*.pyc' | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1)
+if [[ -f "${proot_out}/libproot.so" && -f "${proot_out}/libproot-loader.so" \
+        && "$(cat "${proot_out}/.proot-inputs" 2>/dev/null)" = "${proot_inputs}" ]]; then
+    echo "proot: sources unchanged, keeping ${proot_out}/libproot.so"
+else
+    "${repo_root}/tools/proot/build.sh" "${proot_out}"
+    echo "${proot_inputs}" > "${proot_out}/.proot-inputs"
+fi
 
 cp -p "${bundle_asset}" "${bundle_backup}"
 bundle_dir="${staging_dir}/pulseaudio-bundle"
@@ -229,7 +270,7 @@ install -m755 "${sink_output}/module-aaudio-sink.so" \
     "${bundle_dir}/modules/arm64/module-aaudio-sink.so"
 install -m755 "${sink_output}/module-directaudio-sink.so" \
     "${bundle_dir}/modules/arm64/module-directaudio-sink.so"
-tar -cf - -C "${bundle_dir}" . | zstd -19 -c > "${staging_dir}/pulseaudio.tzst"
+tar -cf - -C "${bundle_dir}" . | zstd -19 -T0 -c > "${staging_dir}/pulseaudio.tzst"
 bundle_replaced=1
 mv "${staging_dir}/pulseaudio.tzst" "${bundle_asset}"
 

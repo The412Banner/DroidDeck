@@ -135,6 +135,10 @@ def watch(steam_root, listing):
     candidates, sources = {}, {}
     next_lookup = 0
     last_status = None
+    # The probe is a fresh python that loads steamclient.so, seconds of CPU under proot. Ownership
+    # only moves with a purchase or a new match, so it runs when the matches or their sources
+    # change, after a failed probe, and otherwise every five minutes - not on every 30 s beat.
+    probed, next_probe = None, 0
     while True:
         now = time.monotonic()
         for game in games:
@@ -150,13 +154,16 @@ def watch(steam_root, listing):
         if now >= next_lookup:
             next_lookup = now + 300
         status = "waiting for a matching Steam title"
-        if candidates:
+        key = (dict(candidates), dict(sources))
+        if candidates and (key != probed or now >= next_probe):
+            probed, next_probe = key, now + 300
             try:
                 result = subprocess.run([sys.executable, __file__, "probe", steam_root,
                                          *map(str, sorted(set(candidates.values())))],
                                         capture_output=True, text=True, timeout=15)
                 if result.returncode != 0:
                     status = "ownership probe failed: " + (result.stderr.strip()[-300:] or str(result.returncode))
+                    probed = None
                 else:
                     line = next(line for line in result.stdout.splitlines() if line.startswith("DROIDDECK_OWNERSHIP="))
                     snapshot = json.loads(line.removeprefix("DROIDDECK_OWNERSHIP="))
@@ -168,6 +175,9 @@ def watch(steam_root, listing):
                     status = "matched %d/%d games; %d owned" % (len(candidates), len(games), sum(snapshot["owned"].values()))
             except (OSError, ValueError, KeyError, StopIteration, subprocess.TimeoutExpired) as error:
                 status = "ownership check unavailable: " + str(error)
+                probed = None
+        elif candidates:
+            status = last_status
         if status != last_status:
             print("bannerlator-steam-games: " + status, flush=True)
             last_status = status
