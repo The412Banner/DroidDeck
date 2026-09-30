@@ -142,6 +142,8 @@ class MainActivity : ComponentActivity() {
     private var clientDirectAudio by mutableStateOf(false)
     private var forceFullscreen by mutableStateOf(true)
     private var launcherFullscreen by mutableStateOf(true)
+    private var storeEnabled by mutableStateOf(false)
+    private var appImagesEnabled by mutableStateOf(false)
     private var mic by mutableStateOf(false)
 
     // The app's own picker (files/), once per kind of pick: the two driver lists validate
@@ -214,6 +216,9 @@ class MainActivity : ComponentActivity() {
     private var addedGamesArt by mutableStateOf(true)
     @Volatile private var artFetchRunning = false
     private var addedGames by mutableStateOf<List<com.droiddeck.launcher.ui.AddedGameRow>>(emptyList())
+    private val pickAppImage = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) InAppFilePicker.pickedFile(r.data)?.let { com.droiddeck.launcher.store.AppImageState.import(this, it) }
+    }
     private val pickRomsDir = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == RESULT_OK) InAppFilePicker.pickedPath(r.data)?.let { path ->
             SessionPrefs.setRomsDir(this, path)
@@ -306,6 +311,8 @@ class MainActivity : ComponentActivity() {
         theme = SessionPrefs.theme(this)
         backActionsInverted = SessionPrefs.backActionsInverted(this)
         launcherFullscreen = SessionPrefs.launcherFullscreen(this)
+        storeEnabled = SessionPrefs.storeEnabled(this)
+        appImagesEnabled = SessionPrefs.appImagesEnabled(this)
         applyLauncherFullscreen()
         setContent {
             DroidDeckTheme(theme) {
@@ -349,6 +356,8 @@ class MainActivity : ComponentActivity() {
                         phantomProcessStatus = phantomProcessStatus,
                         showPhantomGate = showPhantomGate,
                         launcherFullscreen = launcherFullscreen,
+                        storeEnabled = storeEnabled,
+                        appImagesEnabled = appImagesEnabled,
                     ),
                     FrontEndActions(
                         onPlay = { startSteamSession() },
@@ -368,6 +377,25 @@ class MainActivity : ComponentActivity() {
                                 .putExtra(SessionService.EXTRA_MODE, SessionService.MODE_DESKTOP))
                         },
                         onEmulator = { e -> launchProgram(e.program) },
+                        // A Flatpak app from the store, full screen under gamescope like an emulator.
+                        onImportAppImage = {
+                            pickAppImage.launch(InAppFilePicker.buildIntent(this, listOf("appimage"), "Choose an AppImage"))
+                        },
+                        // An imported AppImage, full screen under gamescope like an emulator.
+                        onAppImage = { dir, name ->
+                            Library.flatpakNames[dir] = name
+                            startActivity(Intent(this, SessionActivity::class.java)
+                                .putExtra(SessionService.EXTRA_MODE, SessionService.MODE_RUN)
+                                .putExtra(SessionService.EXTRA_PROGRAM, com.droiddeck.launcher.runtime.AppImageManager.LAUNCHER)
+                                .putExtra(SessionService.EXTRA_PROGRAM_ARGS, arrayOf(dir)))
+                        },
+                        onFlatpakApp = { id, name ->
+                            Library.flatpakNames[id] = name
+                            startActivity(Intent(this, SessionActivity::class.java)
+                                .putExtra(SessionService.EXTRA_MODE, SessionService.MODE_RUN)
+                                .putExtra(SessionService.EXTRA_PROGRAM, com.droiddeck.launcher.runtime.FlatpakManager.LAUNCHER)
+                                .putExtra(SessionService.EXTRA_PROGRAM_ARGS, arrayOf(id)))
+                        },
                         onRom = { g ->
                             val e = emulatorList.first { it.id == g.emulatorId }
                             startActivity(Intent(this, SessionActivity::class.java)
@@ -423,6 +451,8 @@ class MainActivity : ComponentActivity() {
                             launcherFullscreen = on
                             applyLauncherFullscreen()
                         },
+                        onStoreEnabled = { on -> SessionPrefs.setStoreEnabled(this, on); storeEnabled = on },
+                        onAppImagesEnabled = { on -> SessionPrefs.setAppImagesEnabled(this, on); appImagesEnabled = on },
                         onHomeApp = { manageHomeApp() },
                         onHomeScreen = { on ->
                             HomeApp.setHomeScreenEnabled(this, on)
@@ -1076,7 +1106,8 @@ class MainActivity : ComponentActivity() {
         logsEnabled = SessionPrefs.logsEnabled(this)
         runningLabel = if (SessionState.running) when (SessionState.mode) {
             SessionService.MODE_DESKTOP -> "Desktop"
-            SessionService.MODE_RUN -> SessionState.program?.substringAfterLast('/')?.substringBefore('.') ?: "Program"
+            SessionService.MODE_RUN -> Library.nameForProgram(SessionState.program)
+                ?: SessionState.program?.substringAfterLast('/')?.substringBefore('.') ?: "Program"
             else -> "Steam"
         } else null
         // The libraries, off the main thread: manifests and a folder scan.

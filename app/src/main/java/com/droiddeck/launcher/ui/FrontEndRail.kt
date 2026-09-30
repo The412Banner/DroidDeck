@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.SportsEsports
+import androidx.compose.material.icons.outlined.Storefront
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -145,6 +146,7 @@ internal fun SideRail(
             // Always there, so the items below it never move; an empty library says how to fill it.
             RailItem("Games", Icons.Outlined.VideoLibrary, "games", selected == "games", compact, iconOnly, onFocus = { onFocusSelect("games") }) { onSelect("games") }
             RailItem("Desktop", Icons.Outlined.DesktopWindows, "desktop", selected == "desktop", compact, iconOnly, onFocus = { onFocusSelect("desktop") }) { onSelect("desktop") }
+            if (s.storeEnabled) RailItem("Store", Icons.Outlined.Storefront, "store", selected == "store", compact, iconOnly, onFocus = { onFocusSelect("store") }) { onSelect("store") }
             RailItem("Components", Icons.Outlined.Layers, "components", selected == "components", compact, iconOnly, onFocus = { onFocusSelect("components") }) { onSelect("components") }
             // Home mode's extra section goes last, so it shifts nothing above it.
             if (s.isHomeApp) RailItem("Apps", Icons.Outlined.Apps, "android-apps", selected == "android-apps", compact, iconOnly, onFocus = { onFocusSelect("android-apps") }) { onSelect("android-apps") }

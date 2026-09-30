@@ -949,8 +949,13 @@ class SessionActivity : ComponentActivity(), SurfaceHolder.Callback {
             return
         }
         // It stays until the user leaves: a failure read against a timer is a failure not read.
+        val what = when (SessionState.mode) {
+            SessionService.MODE_RUN -> com.droiddeck.launcher.frontend.Library.nameForProgram(SessionState.program) ?: "The program"
+            SessionService.MODE_DESKTOP -> "The desktop"
+            else -> "Steam"
+        }
         loading.showEnded(
-            hint ?: "Steam stopped unexpectedly. Share the logs with a bug report, or try again.",
+            hint ?: "$what stopped unexpectedly. Share the logs with a bug report, or try again.",
             "Exit status $status · ${SessionState.logFile?.path ?: "no log"}",
         )
         focusEndedScreen()

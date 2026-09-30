@@ -312,6 +312,20 @@ internal fun SetupPanel(
                                 ActionRow("Default Home app", s.defaultHomeLabel ?: "Choose a Home app", "Choose", a.onHomeApp)
                             }
                         }
+                        SettingsGroup("Linux apps (beta)") {
+                            ToggleRow(
+                                host, "store-enabled", "Flathub Store",
+                                if (s.storeEnabled) "The Store is in the menu. Some apps may not start; logs are in Download/DroidDeck"
+                                else "Off: install Linux apps and games from Flathub with Flatpak",
+                                s.storeEnabled,
+                            ) { a.onStoreEnabled(it) }
+                            ToggleRow(
+                                host, "appimages-enabled", "AppImages",
+                                if (s.appImagesEnabled) "Add AppImage is on the Desktop page. ARM64 (aarch64) AppImages only"
+                                else "Off: import ARM64 AppImages from your storage",
+                                s.appImagesEnabled,
+                            ) { a.onAppImagesEnabled(it) }
+                        }
                     }
                     else -> {
                         SettingsGroup("About") {

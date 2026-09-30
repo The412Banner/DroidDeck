@@ -344,7 +344,7 @@ private fun WirelessStepForm(
 }
 
 @Composable
-private fun AdbTextField(
+internal fun AdbTextField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,

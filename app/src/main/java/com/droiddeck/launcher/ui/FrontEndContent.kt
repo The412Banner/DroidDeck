@@ -154,6 +154,11 @@ private fun Content(
         SteamHome(s, a, modifier)
         return
     }
+    // The Store scrolls and navigates inside itself (its tabs and an app's page).
+    if (selected == "store" && s.storeEnabled) {
+        StorePage(s, a, modifier)
+        return
+    }
     // The Games tab lays out its own list and detail.
     if (selected == "games" || selected.startsWith("app:")) {
         GamesPage(s, a, selected, onSelect, modifier)
@@ -192,6 +197,8 @@ private fun Content(
                     Rise(3) { SectionTitle("Emulators", "${installed.size} installed") }
                     Rise(4) { EmulatorGrid(installed, first = true, onSelect = onSelect) }
                 }
+                if (s.storeEnabled) Rise(5) { InstalledAppsGrid(a) }
+                if (s.appImagesEnabled) Rise(5) { AppImagesSection(a, s.ready) }
                 if (available.isNotEmpty()) {
                     Rise(5) { SectionTitle("Available to install", available.size.toString()) }
                     Rise(6) { EmulatorGrid(available, first = installed.isEmpty(), onSelect = onSelect) }
