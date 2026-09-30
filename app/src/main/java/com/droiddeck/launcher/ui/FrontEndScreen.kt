@@ -114,6 +114,9 @@ class FrontEndState(
     val phantomProcessStatus: PhantomProcessStatus = PhantomProcessStatus.NOT_APPLICABLE,
     val showPhantomGate: Boolean = false,
     val launcherFullscreen: Boolean = true,
+    /** Beta features the user turns on in Setup: the Flathub Store and AppImage import. */
+    val storeEnabled: Boolean = false,
+    val appImagesEnabled: Boolean = false,
 )
 
 class FrontEndActions(
@@ -122,6 +125,11 @@ class FrontEndActions(
     val onSteamGame: (Library.SteamGame) -> Unit,
     val onDesktop: () -> Unit,
     val onEmulator: (Library.Emulator) -> Unit,
+    /** A Flatpak app by id and name, from the Store. */
+    val onFlatpakApp: (String, String) -> Unit = { _, _ -> },
+    /** Pick an AppImage to import; open an imported one by its directory and name. */
+    val onImportAppImage: () -> Unit = {},
+    val onAppImage: (String, String) -> Unit = { _, _ -> },
     val onRom: (Library.Rom) -> Unit,
     val onResume: () -> Unit,
     val onSteamSettings: () -> Unit,
@@ -147,6 +155,8 @@ class FrontEndActions(
     val onPageBack: () -> Unit = {},
     val onTheme: (String) -> Unit = {},
     val onLauncherFullscreen: (Boolean) -> Unit = {},
+    val onStoreEnabled: (Boolean) -> Unit = {},
+    val onAppImagesEnabled: (Boolean) -> Unit = {},
     val onHomeApp: () -> Unit = {},
     val onHomeScreen: (Boolean) -> Unit = {},
     val onAndroidApp: (HomeApp.LaunchableApp, Int?) -> Unit = { _, _ -> },
@@ -353,6 +363,8 @@ private fun FrontEndScreenBody(s: FrontEndState, a: FrontEndActions, page: (@Com
         selected = if (selected.startsWith("emu:")) "desktop" else "emu:" + selected.removePrefix("rom:").substringBefore(':')
     }
     LaunchedEffect(s.isHomeApp) { if (!s.isHomeApp && selected == "android-apps") selected = "steam" }
+    // The Store turned off in Setup takes its page with it.
+    LaunchedEffect(s.storeEnabled) { if (!s.storeEnabled && selected == "store") selected = "steam" }
     // The last game uninstalled leaves the Games tab on its empty state.
     LaunchedEffect(s.steamGames.isEmpty()) {
         if (s.steamGames.isEmpty() && selected.startsWith("app:")) selected = "games"
