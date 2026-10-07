@@ -452,6 +452,12 @@ object SessionPrefs {
         prefs(context).edit().putBoolean("storageDiagnostics", on).apply()
     }
 
+    fun vacDiagnostics(context: Context): Boolean =
+        prefs(context).getBoolean("vac_diagnostics", false)
+
+    fun setVacDiagnostics(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean("vac_diagnostics", on).apply()
+    }
 
     private fun resolutionCap(context: Context, mode: String): Int = prefs(context).getInt("resolutionCap.$mode", 720)
 
@@ -497,6 +503,12 @@ object SessionPrefs {
         prefs(context).edit().putString("fexPreset", id).apply()
         runCatching { GameEnvironmentStore.publish(context) }
             .onFailure { android.util.Log.e("GameEnvironment", "Could not update game environment", it) }
+    }
+
+    fun steamClientArch(context: Context): String = prefs(context).getString("steamClientArch", null) ?: "arm64"
+
+    fun setSteamClientArch(context: Context, id: String) {
+        prefs(context).edit().putString("steamClientArch", id).apply()
     }
 
     fun bootMovie(context: Context): String =
