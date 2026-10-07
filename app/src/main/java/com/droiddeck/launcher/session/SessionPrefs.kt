@@ -511,6 +511,11 @@ object SessionPrefs {
         prefs(context).edit().putString("steamClientArch", id).apply()
     }
 
+    fun activeSteamRoot(context: Context): java.io.File = java.io.File(
+        com.droiddeck.launcher.runtime.LinuxRuntime.rootDir(context),
+        if (steamClientArch(context) == "x86_64") "root/.droiddeck-x64/.local/share/Steam" else "root/.local/share/Steam",
+    )
+
     fun bootMovie(context: Context): String =
         prefs(context).getString("bootMovie", BootMovie.DROIDDECK_30) ?: BootMovie.DROIDDECK_30
     fun setBootMovie(context: Context, id: String) { prefs(context).edit().putString("bootMovie", id).apply() }

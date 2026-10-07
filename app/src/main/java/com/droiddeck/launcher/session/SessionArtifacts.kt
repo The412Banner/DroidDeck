@@ -151,7 +151,7 @@ object SessionArtifacts {
     }
 
     private fun copySteamLogs(context: Context, dir: File, record: Record) {
-        val logs = File(LinuxRuntime.rootDir(context), "root/.local/share/Steam/logs")
+        val logs = File(SessionPrefs.activeSteamRoot(context), "logs")
         if (!logs.isDirectory) return
         val out = File(dir, "steam").apply { mkdirs() }
         logs.listFiles { f -> f.isFile && f.length() < 8L * 1024 * 1024 }?.forEach { src ->
