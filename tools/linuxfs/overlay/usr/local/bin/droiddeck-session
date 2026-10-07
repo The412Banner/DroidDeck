@@ -365,6 +365,9 @@ case $mode in
       droiddeck-steam-install || exit $?
       step "Steam client ready"
       steam_root=$XDG_DATA_HOME/Steam
+      if [ -f "${BL_X64_HOME:-$HOME/.droiddeck-x64}/.local/share/Steam/local.vdf" ]; then
+        droiddeck-steam-x64 --sync-login || true
+      fi
       steam_client=("$steam_root/steamrtarm64/steam")
     fi
     _bl_proton_root=$steam_root
@@ -486,7 +489,6 @@ case $mode in
         BL_COMPAT_TOOL=$_bl_x64_tool droiddeck-steam-shortcuts "$steam_root" "$BL_ADDED_GAMES" || true
       fi
     fi
-    droiddeck-seed-redists "$XDG_DATA_HOME/Steam" || true
     droiddeck-seed-redists "$steam_root" || true
     fi
     if [ "$steam_x64" = 0 ] && [ ! -f "$steam_root/steamapps/appmanifest_4427310.acf" ]; then
