@@ -51,6 +51,54 @@ x64_default_tool() {
     grep -v -x -e compatibilitytools -e compat_tools | head -n 1
 }
 
+x64_client_parts() {
+  awk -F'"' '
+    /^\t"/ && NF >= 3 && $4 == "" { block = $2 }
+    $2 == "file" { file[block] = $4 }
+    $2 == "sha2" { sha[block] = $4 }
+    END { for (b in file) if (b ~ /_all$/ || b ~ /_ubuntu12$/) print b, file[b], sha[b] }
+  ' "$1" | sort
+}
+
+x64_sync_client() {
+  local chan cur version work total i block file sum old
+  chan=$(cat "$STEAM_X64/package/beta" 2>/dev/null || echo steamdeck_publicbeta)
+  old=$STEAM_X64/package/steam_client_${chan}_ubuntu12.manifest
+  cur=$(awk -F'"' '$2 == "version" { print $4; exit }' "$old" 2>/dev/null || true)
+  work=$(mktemp -d)
+  if ! curl -fsSL "$CDN/steam_client_${chan}_ubuntu12" -o "$work/manifest"; then
+    rm -rf "$work"; return 0
+  fi
+  version=$(awk -F'"' '$2 == "version" { print $4; exit }' "$work/manifest")
+  if [ -z "$version" ] || [ "$version" = "$cur" ]; then
+    rm -rf "$work"; return 0
+  fi
+  x64_client_parts "$work/manifest" > "$work/parts"
+  if [ -f "$old" ]; then
+    x64_client_parts "$old" | awk '{ print $3 }' > "$work/have"
+    grep -vwF -f "$work/have" "$work/parts" > "$work/todo" || true
+  else
+    cp "$work/parts" "$work/todo"
+  fi
+  total=$(grep -c . "$work/todo" || true)
+  step "updating the x86-64 Steam client to $version (was ${cur:-none}, $total part(s))"
+  i=0
+  while read -r block file sum; do
+    i=$((i + 1))
+    step "downloading Steam: $block ($i/$total)"
+    if ! curl -fsSL "$CDN/$file" -o "$work/$file" || ! echo "$sum  $work/$file" | sha256sum -c --quiet; then
+      step "could not update the x86-64 client; it updates itself"
+      rm -rf "$work"; return 0
+    fi
+    unzip -qo "$work/$file" -d "$STEAM_X64"
+    rm -f "$work/$file"
+  done < "$work/todo"
+  cp -f "$work/manifest" "$old"
+  echo "$version" > "$STEAM_X64/package/droiddeck-installed"
+  chmod +x "$STEAM_X64/steam.sh" "$STEAM_X64/steamrt64/steam" "$STEAM_X64/ubuntu12_32/steam" 2>/dev/null || true
+  rm -rf "$work"
+}
+
 x64_prepare() {
 # --- FEX -------------------------------------------------------------------------------------
 if [ ! -x /usr/local/bin/FEX ] || [ "$(cat /usr/local/share/fex-emu/.droiddeck-tag 2>/dev/null)" != "$FEX_TAG" ]; then
@@ -147,6 +195,7 @@ if [ ! -x "$STEAM_X64/steamrt64/steam" ] || [ ! -f "$STEAM_X64/package/droiddeck
   echo "$version" > "$STEAM_X64/package/droiddeck-installed"
   chmod +x "$STEAM_X64/steam.sh" "$STEAM_X64/steamrt64/steam" "$STEAM_X64/ubuntu12_32/steam" 2>/dev/null || true
 fi
+x64_sync_client
 # Its own library (see the library folders below): the arm64 client's installs are not this one's.
 [ -L "$STEAM_X64/steamapps" ] && rm -f "$STEAM_X64/steamapps"
 mkdir -p "$STEAM_X64/steamapps"
