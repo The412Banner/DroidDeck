@@ -54,6 +54,8 @@ stay as they were (`afa479ee`).
     on the build that marks them itself it went straight into the game.
   - **Windows components** detection follows the chosen client (in-session install watch and
     `appinfo.vdf`).
+- **Next:** Counter-Strike: Source, the first game on the newer (sniper) runtime path, where DroidDeck
+  direct runs it on the rootfs instead of the scout runtime.
 - **Open:** newer-runtime Linux games (sniper) untested; the arm64 client untested on this build; the
   Steam import watcher untested; an SD-card library for the x86 client deferred.
 
