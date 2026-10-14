@@ -38,9 +38,23 @@ stay as they were (`afa479ee`).
   at its title screen at 144 fps.
 - **Parity with the arm64 client:** Steam UI scale and the Steam import watcher run for the x86 client
   too (the import is untested). An SD-card library stays arm64-only: FEX cannot run Linux games from it.
-- **Open:** DiRT Showdown on x86 exits after ~7 s (`wine client error: sendmsg: Socket operation on
-  non-socket`); Linux games through DroidDeck direct (TF2, CS2, L4D2) untested on this build; the arm64
-  client untested on this build.
+- **Later the same day:**
+  - DiRT Showdown's ~7 s exit was the same `DISPLAY=:0` problem; it runs now.
+  - **Tools adopted as arm64 Protons:** main's `droiddeck-steam-shortcuts` calls `adopt_extras` on the
+    client's `compatibilitytools.d`; in the x86 client that rewrote DroidDeck direct as a Windows tool,
+    so Steam installed Half-Life's Windows files. The x86 client no longer adopts its tools, and its
+    preparation removes what an adoption left. The arm64 Proton is adopted on demand at an x86 launch.
+  - **Scout runtime:** shipped as `steam-runtime.tar.xz`; `steam.sh` unpacks it, and the x86 client
+    is started without it. Its preparation unpacks it now. Device: Half-Life's native Linux build at
+    101 fps on the GPU under FEX (32-bit), and a VAC-secured multiplayer server.
+  - **Install scripts:** the evaluator script is looked up in the x86 client's folder. A game's own
+    installers without a `HasRunKey` (Borderlands 2: VC++ 2005/2008/2010, DirectX, .NET 4.0) are now
+    marked under `Software\Valve\Steam\Apps\<appid>` (and the Wow6432Node view); Steam skips them.
+    This applies to the arm64 client too. Device: Borderlands 2 started past its install script.
+  - **Windows components** detection follows the chosen client (in-session install watch and
+    `appinfo.vdf`).
+- **Open:** newer-runtime Linux games (sniper) untested; the arm64 client untested on this build; the
+  Steam import watcher untested; an SD-card library for the x86 client deferred.
 
 ## 2026-10-10 - `feat/wincomp-auto-sources`: Windows components picked by the game's source
 
