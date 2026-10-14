@@ -50,7 +50,8 @@ stay as they were (`afa479ee`).
   - **Install scripts:** the evaluator script is looked up in the x86 client's folder. A game's own
     installers without a `HasRunKey` (Borderlands 2: VC++ 2005/2008/2010, DirectX, .NET 4.0) are now
     marked under `Software\Valve\Steam\Apps\<appid>` (and the Wow6432Node view); Steam skips them.
-    This applies to the arm64 client too. Device: Borderlands 2 started past its install script.
+    This applies to the arm64 client too. Device: Borderlands 2 started past its install script, and
+    on the build that marks them itself it went straight into the game.
   - **Windows components** detection follows the chosen client (in-session install watch and
     `appinfo.vdf`).
 - **Open:** newer-runtime Linux games (sniper) untested; the arm64 client untested on this build; the
