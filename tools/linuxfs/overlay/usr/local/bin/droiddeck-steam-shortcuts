@@ -344,8 +344,14 @@ def main():
         spec.loader.exec_module(compat)
         cfg = os.path.join(steam_root, "config", "config.vdf")
         if os.path.isfile(cfg) and (ours or routes):
+            tools = os.path.join(steam_root, "compatibilitytools.d")
+            if os.environ.get("BL_COMPAT_TOOL"):
+                protect = {compat.first_key(os.path.join(tools, e, "compatibilitytool.vdf"), ["compatibilitytools", "compat_tools"]) or e: e
+                           for e in (os.listdir(tools) if os.path.isdir(tools) else [])}
+            else:
+                protect = compat.adopt_extras(tools)
             compat.register_default(cfg, apps=[str(int(g["appid"]) & 0xFFFFFFFF) for g in games if g.get("exe") and not g.get("native")] + [str(appid) for appid in set(routes.values())],
-                                    protect=compat.adopt_extras(os.path.join(steam_root, "compatibilitytools.d")))
+                                    protect=protect)
             print("droiddeck-steam-shortcuts: mapped them to %s" % compat.TOOL)
     except Exception as e:
         print("droiddeck-steam-shortcuts: compat mapping skipped (%s)" % e)
