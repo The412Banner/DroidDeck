@@ -2266,4 +2266,5 @@
     <string name="mode_client_arch_x64">x86-64 (FEX, experimental)</string>
     <string name="setup_vac_diag">VAC diagnostics</string>
     <string name="setup_vac_diag_hint">Source games log their console (-condebug); vac.txt in the session logs says secure or insecure</string>
+    <string name="load_starting_steam_x64">Starting Steam x86-64</string>
 </resources>

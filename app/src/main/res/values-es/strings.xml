@@ -2271,4 +2271,5 @@
     <string name="mode_client_arch_x64">x86-64 (FEX, experimental)</string>
     <string name="setup_vac_diag">Diagnóstico de VAC</string>
     <string name="setup_vac_diag_hint">Los juegos Source registran su consola (-condebug); vac.txt en los registros dice si es seguro o no</string>
+    <string name="load_starting_steam_x64">Iniciando Steam x86-64</string>
 </resources>
