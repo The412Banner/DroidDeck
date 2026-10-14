@@ -275,6 +275,7 @@ done
   # Valve's scout library runtime instead, directly under FEX; the titles below are mapped to it.
   tool=$STEAM_X64/compatibilitytools.d/droiddeck-direct
   mkdir -p "$tool"
+  rm -f "$tool/droiddeck-proton-wrap" "$tool/toolmanifest.vdf.droiddeck-orig"
   cat > "$tool/compatibilitytool.vdf" <<'VDF'
 "compatibilitytools"
 {
@@ -516,6 +517,7 @@ PY
     case $name in droiddeck-direct|droiddeck-fex) continue ;; esac
     dst=$STEAM_X64/compatibilitytools.d/$name
     mkdir -p "$dst"
+    rm -f "$dst/droiddeck-proton-wrap" "$dst/toolmanifest.vdf.droiddeck-orig"
     : > "$dst/.droiddeck-arm64-proton"
     # The tool's own name and display name, as the arm64 client shows it.
     python3 - "$src/compatibilitytool.vdf" "$dst/compatibilitytool.vdf" <<'PY' || { rm -rf "$dst"; continue; }
