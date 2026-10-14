@@ -739,6 +739,10 @@ x64_exec() {
     done
     [ "$soft" = 1 ] && set -- "${args[@]}" -cef-disable-gpu
   fi
+  mkdir -p "$STEAM_X64/logs"
+  touch "$STEAM_X64/logs/bootstrap_log.txt"
+  ( tail -n0 -F --pid=$$ "$STEAM_X64/logs/bootstrap_log.txt" 2>/dev/null |
+      grep --line-buffered -oE 'Downloading update \([0-9,]+ of [0-9,]+ KB\)' | sed -u 's/,//g' >&2 ) &
   exec "${BL_FEX:-/usr/local/bin/FEX}" "$STEAM_X64/steamrt64/steam" "$@"
 }
 
