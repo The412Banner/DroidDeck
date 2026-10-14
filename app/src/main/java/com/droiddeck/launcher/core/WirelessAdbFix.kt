@@ -3,6 +3,7 @@ package com.droiddeck.launcher.core
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import com.droiddeck.launcher.R
 import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
 import java.io.File
@@ -15,7 +16,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.ArrayDeque
 
-/** A narrowly scoped Wireless debugging client for the child-process setting repair. */
 object WirelessAdbFix {
     private const val CERT_FILE = "wireless-adb-cert.pem"
     private const val KEY_FILE = "wireless-adb-key.pem"
@@ -37,21 +37,21 @@ object WirelessAdbFix {
 
         val identity = KadbCert.get(notAfter = System.currentTimeMillis() + TimeUnit.DAYS.toMillis(3650))
         KadbCert.set(identity.first, identity.second)
-        writeAtomically(cert, identity.first)
-        writeAtomically(key, identity.second)
+        writeAtomically(context, cert, identity.first)
+        writeAtomically(context, key, identity.second)
     }
 
-    private fun writeAtomically(destination: File, contents: ByteArray) {
+    private fun writeAtomically(context: Context, destination: File, contents: ByteArray) {
         val temporary = File(destination.parentFile, "${destination.name}.tmp")
         temporary.writeBytes(contents)
-        check(temporary.renameTo(destination)) { "Could not save Wireless debugging identity" }
+        check(temporary.renameTo(destination)) { context.getString(R.string.adbfix_save_failed) }
     }
 
     suspend fun pair(context: Context, host: String, port: Int, pairingCode: String) {
         loadOrCreateIdentity(context.applicationContext)
         Kadb.pair(host, port, pairingCode, "DroidDeck")
-        writeAtomically(File(context.noBackupFilesDir, HOST_FILE), host.toByteArray())
-        writeAtomically(File(context.noBackupFilesDir, CONNECTION_FILE), ByteArray(0))
+        writeAtomically(context, File(context.noBackupFilesDir, HOST_FILE), host.toByteArray())
+        writeAtomically(context, File(context.noBackupFilesDir, CONNECTION_FILE), ByteArray(0))
     }
 
     private fun savedConnection(context: Context): SavedConnection? {
@@ -65,7 +65,6 @@ object WirelessAdbFix {
         return SavedConnection(host, port)
     }
 
-    /** A saved pairing skips the PIN; an unknown connection port can be filled in from Settings. */
     fun savedConnectionAddress(context: Context): String? = savedConnection(context)?.let { saved ->
         val host = if (':' in saved.host) "[${saved.host}]" else saved.host
         "$host:${saved.port ?: ""}"
@@ -73,12 +72,12 @@ object WirelessAdbFix {
 
     private fun saveConnection(context: Context, host: String, port: Int) {
         writeAtomically(
+            context,
             File(context.applicationContext.noBackupFilesDir, CONNECTION_FILE),
             "$host\n$port".toByteArray(),
         )
     }
 
-    /** Finds this paired device's separate TLS connection port from Android's ADB mDNS record. */
     fun isLocalAddress(address: InetAddress): Boolean = runCatching {
         if (address.isLoopbackAddress) return true
         NetworkInterface.getNetworkInterfaces()?.toList().orEmpty().any { network ->
@@ -171,22 +170,21 @@ object WirelessAdbFix {
         Kadb.create(host, port).use { adb ->
             PhantomProcessLimit.shellCommands(enabled).forEach { command ->
                 val change = adb.shell(command)
-                check(change.exitCode == 0) { change.allOutput.ifBlank { "ADB command failed (${change.exitCode})" } }
+                check(change.exitCode == 0) { change.allOutput.ifBlank { context.getString(R.string.adbfix_command_failed, change.exitCode) } }
             }
             val result = adb.shell(PhantomProcessLimit.verifyCommand())
             check(result.exitCode == 0 && PhantomProcessLimit.verified(result.output, enabled)) {
-                "Android did not confirm the child-process limit was changed: ${result.allOutput.trim()}"
+                context.getString(R.string.adbfix_not_confirmed, result.allOutput.trim())
             }
         }
         if (PhantomProcessLimit.usesDeviceConfig()) PhantomProcessLimit.rememberAndroid12(context, !enabled)
         saveConnection(context, host, port)
     }
 
-    /** Tries the app's saved pairing without asking for a new pairing code. */
     fun setUsingSavedPairing(context: Context, enabled: Boolean) {
         val appContext = context.applicationContext
         val saved = savedConnection(appContext)
-            ?: error("No Wireless debugging pairing is saved")
+            ?: error(appContext.getString(R.string.adbfix_no_pairing))
         val cachedPort = saved.port
         if (cachedPort != null) {
             val cachedResult = runCatching {
@@ -201,7 +199,7 @@ object WirelessAdbFix {
             }
         } else {
             val discoveredPort = findConnectPort(appContext, saved.host)
-                ?: error("Enter the current Wireless debugging IP address & Port")
+                ?: error(appContext.getString(R.string.adbfix_enter_address))
             setChildProcessLimit(appContext, saved.host, discoveredPort, enabled)
         }
     }

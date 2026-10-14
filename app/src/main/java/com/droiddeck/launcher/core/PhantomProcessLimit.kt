@@ -3,8 +3,8 @@ package com.droiddeck.launcher.core
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
+import com.droiddeck.launcher.R
 
-/** Android's phantom process monitor can kill the many child processes used by a Steam session. */
 enum class PhantomProcessStatus {
     NOT_APPLICABLE,
     DISABLED,
@@ -67,12 +67,6 @@ object PhantomProcessLimit {
         return status(global, systemProperty(OVERRIDE_PROPERTY))
     }
 
-    /**
-     * The value Android itself acts on, in FeatureFlagUtils.isEnabled's order: the global setting
-     * when it is set, otherwise the feature-flag override property. Developer options' "Disable
-     * child process restrictions" writes only the property, so a device switched off there has no
-     * global setting at all and must not be reported as unset.
-     */
     fun status(global: String?, override: String?): PhantomProcessStatus {
         val value = global?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
             ?: override?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
@@ -98,28 +92,28 @@ object PhantomProcessLimit {
     fun blocksSteam(status: PhantomProcessStatus): Boolean =
         status != PhantomProcessStatus.NOT_APPLICABLE && status != PhantomProcessStatus.DISABLED
 
-    fun title(status: PhantomProcessStatus): String = when (status) {
-        PhantomProcessStatus.ENABLED -> "Child-process limit is on"
-        PhantomProcessStatus.UNSET -> "Child-process limit is unset"
-        PhantomProcessStatus.UNREADABLE -> "Child-process limit could not be checked"
-        PhantomProcessStatus.DISABLED -> "Child-process limit is off"
-        PhantomProcessStatus.NOT_APPLICABLE -> "Child-process limit not required"
+    fun title(context: Context, status: PhantomProcessStatus): String = context.getString(when (status) {
+        PhantomProcessStatus.ENABLED -> R.string.phantom_title_on
+        PhantomProcessStatus.UNSET -> R.string.phantom_title_unset
+        PhantomProcessStatus.UNREADABLE -> R.string.phantom_title_unreadable
+        PhantomProcessStatus.DISABLED -> R.string.phantom_title_off
+        PhantomProcessStatus.NOT_APPLICABLE -> R.string.phantom_title_not_required
+    })
+
+    fun instructions(context: Context, status: PhantomProcessStatus): String = when (status) {
+        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE ->
+            context.getString(R.string.phantom_instructions_fix, fixSentence(context))
+        PhantomProcessStatus.DISABLED -> context.getString(R.string.phantom_instructions_off)
+        PhantomProcessStatus.NOT_APPLICABLE -> context.getString(R.string.phantom_instructions_not_applicable)
     }
 
-    fun instructions(status: PhantomProcessStatus): String = when (status) {
-        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE -> fixSentence() + " If that is not possible, connect this device to a computer with ADB and run the command below. Return here and check again."
-        PhantomProcessStatus.DISABLED -> "Steam sessions can start."
-        PhantomProcessStatus.NOT_APPLICABLE -> "This Android version does not use this limit."
+    fun gateInstructions(context: Context, status: PhantomProcessStatus): String = when (status) {
+        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE -> fixSentence(context)
+        else -> instructions(context, status)
     }
 
-    fun gateInstructions(status: PhantomProcessStatus): String = when (status) {
-        PhantomProcessStatus.ENABLED, PhantomProcessStatus.UNSET, PhantomProcessStatus.UNREADABLE -> fixSentence()
-        else -> instructions(status)
-    }
-
-    fun fixSentence(sdk: Int = Build.VERSION.SDK_INT): String =
-        if (hasDeveloperToggle(sdk)) "Turn on “Disable child process restrictions” in Developer options, and keep Developer options on afterwards."
-        else "This Android version has no switch for it. Use Wireless debugging to change it from this device."
+    fun fixSentence(context: Context, sdk: Int = Build.VERSION.SDK_INT): String =
+        context.getString(if (hasDeveloperToggle(sdk)) R.string.phantom_fix_toggle else R.string.phantom_fix_no_toggle)
 
     fun reportValue(status: PhantomProcessStatus): String = when (status) {
         PhantomProcessStatus.DISABLED -> "disabled (good - the OS will not kill the session's children)"

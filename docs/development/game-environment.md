@@ -3,16 +3,52 @@
 Open **Games → Game environment**, directly below **FEX preset**, in Steam
 settings or the in-session drawer. Choose all Proton games, an installed game, or enter a Steam app ID. For a
 non-Steam shortcut, use its numeric `compatdata` directory ID (unsigned 32-bit).
+The drawer opens the editor on its selected game profile. That editing scope stays
+fixed if Steam's selected game changes in the background; use the editor's own
+profile picker to switch deliberately.
 Changes apply on the next game launch, including when Steam is already running.
 A running game must be restarted. Native Linux games and Steam itself are outside
 this editor's scope.
 
+The Components page also has a **Configuration** dropdown. **Default profile** owns the
+default Proton and FEX preset. An installed game can inherit those defaults or
+choose its own Proton and FEX preset. Proton choices are applied through Steam's
+per-app compatibility mapping, including while Steam is running when its live
+compatibility helper is attached. A newly installed Proton that the running
+client has not discovered yet applies when Steam next starts.
+
+Each game can also override the stored FEX, DXVK and VKD3D-Proton package used
+by its selected Proton. The launch wrapper applies that game’s component files
+immediately before Proton starts, removes managed files that are absent from the
+selection, and restores Default component choices for the next game. **Use
+Default** removes the game override. Component packages must first be downloaded
+or imported on the Default Components page.
+
+Before publishing game component choices, DroidDeck preserves each Proton build's
+original components, including an explicitly empty bundle when a component is not
+shipped. Those restore choices remain after the last override is cleared. A missing
+or unreadable original is an error, not permission to delete the component's files.
+If an original is missing after a build may already have used a game override,
+DroidDeck refuses to capture those potentially modified files as originals.
+
+Component selections and the launch table are saved with a recovery record.
+Publishing the launch table commits the selection: if the app stops before its
+settings file is updated, the next component read recovers the matching settings.
+An interruption before publication leaves the previous selections in place.
+Unused staged packages are removed only after both files have been saved.
+
+**Reset game profile** removes all overrides owned by the selected game: Proton,
+FEX preset, component packages, environment variables, texture filtering and
+Windows components. The game then inherits the Default profile again.
+
 The order is inherited process environment, selected FEX preset and built-in
 settings, shared edits, then game-specific edits. Editor entries therefore win
 over matching Steam launch-option variables. **Remove** explicitly unsets a
-variable. **Restore inherited settings** removes the override. **Reset this
-profile** clears only that profile's overrides. Values are literal strings, with
-no shell expansion; quotes are only needed when the consuming program expects them.
+variable. **Restore inherited settings** removes the override. The environment
+editor's **Clear environment overrides** action clears only the selected
+environment entries and is intentionally narrower than **Reset game profile**.
+Values are literal strings, with no shell expansion; quotes are only needed when
+the consuming program expects them.
 
 ## Defaults and available suggestions
 
@@ -22,6 +58,11 @@ The initial configuration enables Mesa shader caching with
 and explicit removals take precedence over these defaults. FEX's own default
 remains the default preset. Shader caching in VKD3D/DXVK, synchronization, ray
 tracing and diagnostic logging otherwise retain the runtime's defaults.
+
+On an Adreno 6xx, Turnip does not expose `storageBuffer8BitAccess`, which DXVK 3
+requires. A Steam or desktop session installs DXVK 2.7.1 into any Proton whose
+DXVK is still the copy that Proton shipped, including after a Proton update put
+that copy back. A DXVK package chosen in Components stays for that Proton build.
 
 The variable-name picker offers 24 predefined variables and a Custom entry. Like
 WinNative, known variables use toggles, value dropdowns, multi-select lists, or
@@ -62,11 +103,22 @@ Windows/Wine graphics helper also maps the selected feature level to
 
 DroidDeck instead publishes an atomic JSON snapshot at
 `/root/.config/droiddeck/game-environment.json`. Both its Valve ARM64 Proton
-wrapper and adopted third-party Proton wrappers execute `bannerlator-game-env`,
+wrapper and adopted third-party Proton wrappers execute `droiddeck-game-env`,
 which reads that snapshot for each real game launch and uses `execvpe` to start
 Proton. Probe prefix `compatdata/0` and non-launch verbs are unchanged. Malformed
 configuration falls back to the inherited environment without evaluating its
-contents. Signed non-Steam prefix IDs are normalized to unsigned IDs.
+contents. Both component and environment selection normalize signed non-Steam
+prefix IDs to unsigned IDs.
+
+The published file also carries generated `dxvkConfig` and `dxvkConfigGames`
+values the app's own file never has. The session menu's texture filtering
+(`core/TextureFiltering`) becomes `d3d9/d3d11.samplerAnisotropy` and
+`samplerLodBias` options. Default choices apply to games without overrides; each
+game can save either choice independently or return it to **Use Default**. The
+launcher appends the selected options to `DXVK_CONFIG` after the environment
+profile, so a user's own `DXVK_CONFIG` entry keeps its options. "Auto" texture
+sharpness is `-log2(panel / session)`, derived when the session is sized, and
+applies from the next launch.
 
 Upstream references: [VKD3D capability parsing](https://github.com/HansKristian-Work/vkd3d-proton/blob/master/libs/vkd3d/device.c),
 [VKD3D options](https://github.com/HansKristian-Work/vkd3d-proton#environment-variables),

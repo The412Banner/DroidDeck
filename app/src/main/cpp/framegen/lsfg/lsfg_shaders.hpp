@@ -1,10 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
-//
-// Ported into Bannerlator's compositor from WinNative (GPL-3.0-or-later),
-// whose LSFG port is credited to Camille LaVey / the Eden Emulator Project and
-// follows upstream lsfg-vk. Only the Vulkan dispatch differs: Bannerlator
-// resolves entry points through the renderer's own table (see lsfg_vkd.h).
 
 #pragma once
 
@@ -21,8 +16,6 @@ class Device;
 class LsfgShaders {
 public:
     LsfgShaders() = default;
-    // `spirv_target` is the highest SPIR-V version the device accepts (see
-    // lsfg_probe.h); cached modules above it are lowered before creation.
     LsfgShaders(const Device& device, const std::string& cache_path,
                 uint32_t spirv_target = kSpirv16);
     ~LsfgShaders();

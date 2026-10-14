@@ -1,5 +1,8 @@
 package com.droiddeck.launcher.ui
 
+import com.droiddeck.launcher.R
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.stringResource
 import android.view.KeyEvent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -51,50 +54,42 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * A PC keyboard on screen: every key is a physical key (a Linux evdev code) pressed and released
- * on the session's wl_keyboard, as a USB keyboard would - Esc, the function row, Ctrl, Alt, Super,
- * the arrows and the editing block included, none of which the Android keyboard can send.
- *
- * A key goes down when a finger lands on it and up when it lifts, so holding one repeats it the way
- * the program's own key repeat does. Ctrl, Shift, Alt and Super are sticky: one tap holds the
- * modifier for the next key, a second tap locks it, a third lets it go. A controller moves over the
- * keys with the d-pad and presses with A.
- */
-private data class PcKey(val label: String, val code: Int, val weight: Float = 1f, val shifted: String? = null)
+private data class PcKey(val label: String, val code: Int, val weight: Float = 1f, val shifted: String? = null, @StringRes val labelRes: Int = 0)
 
 private fun k(label: String, code: Int, weight: Float = 1f, shifted: String? = null) = PcKey(label, code, weight, shifted)
 
+private fun k(@StringRes labelRes: Int, code: Int, weight: Float = 1f) = PcKey("", code, weight, null, labelRes)
+
 private val ROWS: List<List<PcKey>> = listOf(
     listOf(
-        k("Esc", 1), k("F1", 59), k("F2", 60), k("F3", 61), k("F4", 62), k("F5", 63), k("F6", 64),
+        k(R.string.pckb_key_esc, 1), k("F1", 59), k("F2", 60), k("F3", 61), k("F4", 62), k("F5", 63), k("F6", 64),
         k("F7", 65), k("F8", 66), k("F9", 67), k("F10", 68), k("F11", 87), k("F12", 88),
-        k("Ins", 110), k("Del", 111), k("Home", 102), k("End", 107), k("PgUp", 104), k("PgDn", 109),
+        k(R.string.pckb_key_ins, 110), k(R.string.pckb_key_del, 111), k(R.string.pckb_key_home, 102), k(R.string.pckb_key_end, 107), k(R.string.pckb_key_pgup, 104), k(R.string.pckb_key_pgdn, 109),
     ),
     listOf(
         k("`", 41, shifted = "~"), k("1", 2, shifted = "!"), k("2", 3, shifted = "@"), k("3", 4, shifted = "#"),
         k("4", 5, shifted = "$"), k("5", 6, shifted = "%"), k("6", 7, shifted = "^"), k("7", 8, shifted = "&"),
         k("8", 9, shifted = "*"), k("9", 10, shifted = "("), k("0", 11, shifted = ")"), k("-", 12, shifted = "_"),
-        k("=", 13, shifted = "+"), k("⌫ Backspace", 14, 2f),
+        k("=", 13, shifted = "+"), k(R.string.pckb_key_backspace, 14, 2f),
     ),
     listOf(
-        k("Tab ⇥", 15, 1.5f), k("q", 16), k("w", 17), k("e", 18), k("r", 19), k("t", 20), k("y", 21),
+        k(R.string.pckb_key_tab, 15, 1.5f), k("q", 16), k("w", 17), k("e", 18), k("r", 19), k("t", 20), k("y", 21),
         k("u", 22), k("i", 23), k("o", 24), k("p", 25), k("[", 26, shifted = "{"), k("]", 27, shifted = "}"),
         k("\\", 43, 1.5f, shifted = "|"),
     ),
     listOf(
-        k("Caps", 58, 1.75f), k("a", 30), k("s", 31), k("d", 32), k("f", 33), k("g", 34), k("h", 35),
+        k(R.string.pckb_key_caps, 58, 1.75f), k("a", 30), k("s", 31), k("d", 32), k("f", 33), k("g", 34), k("h", 35),
         k("j", 36), k("k", 37), k("l", 38), k(";", 39, shifted = ":"), k("'", 40, shifted = "\""),
-        k("Enter ⏎", 28, 2.25f),
+        k(R.string.pckb_key_enter, 28, 2.25f),
     ),
     listOf(
-        k("⇧ Shift", 42, 2.25f), k("z", 44), k("x", 45), k("c", 46), k("v", 47), k("b", 48), k("n", 49),
+        k(R.string.pckb_key_shift, 42, 2.25f), k("z", 44), k("x", 45), k("c", 46), k("v", 47), k("b", 48), k("n", 49),
         k("m", 50), k(",", 51, shifted = "<"), k(".", 52, shifted = ">"), k("/", 53, shifted = "?"),
-        k("⇧ Shift", 54, 1.75f), k("↑", 103),
+        k(R.string.pckb_key_shift, 54, 1.75f), k("↑", 103),
     ),
     listOf(
-        k("Ctrl", 29, 1.5f), k("Super", 125, 1.25f), k("Alt", 56, 1.25f), k("Space", 57, 6.25f),
-        k("AltGr", 100, 1.25f), k("Ctrl", 97, 1.25f), k("←", 105), k("↓", 108), k("→", 106),
+        k(R.string.pckb_key_ctrl, 29, 1.5f), k(R.string.pckb_key_super, 125, 1.25f), k(R.string.pckb_key_alt, 56, 1.25f), k(R.string.pckb_key_space, 57, 6.25f),
+        k(R.string.pckb_key_altgr, 100, 1.25f), k(R.string.pckb_key_ctrl, 97, 1.25f), k("←", 105), k("↓", 108), k("→", 106),
     ),
 )
 
@@ -105,7 +100,6 @@ private const val MOD_LOCKED = 2
 
 @Composable
 fun PcKeyboard(
-    /** evdev code, pressed. */
     sendKey: (Int, Boolean) -> Unit,
     onAndroidKeyboard: () -> Unit,
     onClose: () -> Unit,
@@ -137,31 +131,27 @@ fun PcKeyboard(
         if (key.code == 58) capsOn = !capsOn
         releaseOnceModifiers()
     }
-    // Nothing is left held when the keyboard goes away.
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose { for ((code, state) in mods.toMap()) if (state != MOD_OFF) sendKey(code, false) }
     }
     LaunchedEffect(Unit) { runCatching { firstKey.requestFocus() } }
 
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-        // Slightly under half the screen, header included, so the program stays in view above it:
-        // six rows share what is left of 47% after the header, the gaps and the padding.
         val rowHeight = ((maxHeight * 0.47f - 24.dp - 3.dp * 6 - 10.dp) / 6).coerceIn(24.dp, 44.dp)
         Box(
             Modifier.fillMaxWidth()
                 .background(Color(0xE6101418), RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
                 .border(1.dp, pal.line2, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
-                // Touches on the keyboard stop here; the program underneath never sees them.
                 .pointerInput(Unit) { awaitEachGesture { awaitFirstDown().consume(); waitForUpOrCancellation()?.consume() } }
                 .padding(horizontal = 8.dp, vertical = 5.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(24.dp)) {
-                    Text("PC keyboard", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurfaceVariant)
+                    Text(stringResource(R.string.drawer_pc_keyboard), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurfaceVariant)
                     Spacer(Modifier.weight(1f))
-                    HeaderButton("Android keyboard", onAndroidKeyboard)
+                    HeaderButton(stringResource(R.string.pckb_android), onAndroidKeyboard)
                     Spacer(Modifier.width(8.dp))
-                    HeaderButton("Hide  ✕", onClose)
+                    HeaderButton(stringResource(R.string.pckb_hide), onClose)
                 }
                 ROWS.forEachIndexed { r, row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(3.dp), modifier = Modifier.fillMaxWidth().height(rowHeight)) {
@@ -169,6 +159,7 @@ fun PcKeyboard(
                             val state = mods[key.code] ?: MOD_OFF
                             val lit = state != MOD_OFF || (key.code == 58 && capsOn)
                             val label = when {
+                                key.labelRes != 0 -> stringResource(key.labelRes)
                                 shifted && key.shifted != null -> key.shifted
                                 key.label.length == 1 && key.label[0].isLetter() && (shifted xor capsOn) -> key.label.uppercase()
                                 else -> key.label
@@ -200,14 +191,13 @@ private fun RowScope.KeyCap(
             down -> pal.signal.copy(alpha = 0.55f)
             lit -> pal.signal.copy(alpha = if (locked) 0.45f else 0.28f)
             else -> Color.White.copy(alpha = 0.07f)
-        }, label = "keyFill",
+        }, Motion.tw(160), label = "keyFill",
     )
-    val edge = if (focused) pal.signal else if (lit) pal.signal.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.12f)
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier.weight(weight).fillMaxHeight()
             .background(fill, RoundedCornerShape(7.dp))
-            .border(if (focused) 2.dp else 1.dp, edge, RoundedCornerShape(7.dp))
+            .glideBorder(focused, RoundedCornerShape(7.dp), pal.signal, if (lit) pal.signal.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.12f))
             .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown().consume()
@@ -216,7 +206,6 @@ private fun RowScope.KeyCap(
                     down = false; onUp()
                 }
             }
-            // A controller: A (or the d-pad's centre) is the finger.
             .onPreviewKeyEvent { e ->
                 val kc = e.key.nativeKeyCode
                 if (kc != KeyEvent.KEYCODE_BUTTON_A && kc != KeyEvent.KEYCODE_DPAD_CENTER && kc != KeyEvent.KEYCODE_ENTER) return@onPreviewKeyEvent false
@@ -244,7 +233,7 @@ private fun HeaderButton(text: String, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
         modifier = Modifier.fillMaxHeight()
             .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(7.dp))
-            .border(if (focused) 2.dp else 1.dp, if (focused) pal.signal else Color.White.copy(alpha = 0.14f), RoundedCornerShape(7.dp))
+            .glideBorder(focused, RoundedCornerShape(7.dp), pal.signal, Color.White.copy(alpha = 0.14f))
             .clickable(interactionSource = src, indication = LocalIndication.current, onClick = onClick)
             .padding(horizontal = 12.dp),
     ) { Text(text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White) }

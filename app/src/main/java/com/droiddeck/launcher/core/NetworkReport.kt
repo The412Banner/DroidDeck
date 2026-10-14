@@ -10,26 +10,11 @@ import java.io.File
 import java.net.Inet4Address
 import java.net.Inet6Address
 
-/**
- * `network.txt`: what the session was given to work with, for the reports that say "the client
- * thinks WiFi is off" or "Firefox cannot resolve anything".
- *
- * The runtime has no NetworkManager, so the client's own network panel is blind by design and says
- * so in ways that read like a fault. What actually matters is further down: whether the phone had
- * a validated link, which DNS servers the app wrote into the runtime's `resolv.conf`, and whether
- * the session can reach a name and an address at all.
- *
- * **No network names.** The SSID is identifying and is deliberately not collected; the transport
- * type, the addresses' families and the DNS servers are what a diagnosis needs.
- */
 object NetworkReport {
     private const val TAG = "NetworkReport"
 
     fun write(context: Context, target: File) {
         try {
-            // Addresses as their kind ("<public IPv6>"), never the numbers: a public address is the
-            // user's, and this file goes into shared session logs. The session's made-up hardware
-            // address is stable per device (seeded from ANDROID_ID), so it is masked too.
             val text = LogRedactor.describeAddresses(build(context))
                 .replace(Regex("(?m)^(\\s*mac )\\S+"), "$1<masked>")
             target.writeText(text)
@@ -84,8 +69,6 @@ object NetworkReport {
 
         append("\nWhat the runtime was given\n")
         append("--------------------------\n")
-        // The app writes this file from the live link at every change; it is what everything inside
-        // the session resolves with, so a mismatch with the system's list above is the bug itself.
         val resolv = File(LinuxRuntime.rootDir(context), "etc/resolv.conf")
         if (resolv.isFile) {
             append("etc/resolv.conf:\n")
@@ -93,14 +76,14 @@ object NetworkReport {
         } else {
             append("etc/resolv.conf does not exist yet - written when the session's link is published.\n")
         }
-        val netdev = File(LinuxRuntime.rootDir(context), "etc/bannerlator-net")
+        val netdev = File(LinuxRuntime.rootDir(context), "etc/droiddeck-net")
         if (netdev.isFile) {
-            append("\netc/bannerlator-net (the link as the session sees it):\n")
+            append("\netc/droiddeck-net (the link as the session sees it):\n")
             FileUtils.readString(netdev)?.lines()?.forEach { append("    ").append(it).append('\n') }
         }
         append("\nproot makes no network namespace, so the session uses the phone's connection\n")
         append("directly: IPv4 and IPv6 both pass through, and there is nothing to forward.\n")
-        append("The Steam client's own network panel drives NetworkManager over D-Bus, which this\n")
-        append("runtime does not have - \"wifi is off\" there is cosmetic and not evidence.\n")
+        append("Steam reads Android's transport, connectivity and metering through the runtime's\n")
+        append("NetworkManager D-Bus bridge. Android settings manage Wi-Fi and cellular connections.\n")
     }
 }

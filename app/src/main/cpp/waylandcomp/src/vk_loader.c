@@ -1,4 +1,3 @@
-/* See vk_loader.h. */
 #define _GNU_SOURCE
 #include "vk_loader.h"
 #include "../../adrenotools/include/adrenotools/driver.h"
@@ -8,7 +7,7 @@
 #include <sys/stat.h>
 #include <android/log.h>
 
-#define TAG "BannerWayland"
+#define TAG "DroidDeckWayland"
 
 struct vk_api g_vk;
 static void *g_handle;

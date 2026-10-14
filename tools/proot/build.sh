@@ -30,6 +30,7 @@ fetch() {
 }
 fetch proot.tar.gz "https://github.com/termux/proot/archive/${PROOT_COMMIT}.tar.gz" "$PROOT_SHA256"
 fetch talloc.tar.gz "https://www.samba.org/ftp/talloc/talloc-${TALLOC_VERSION}.tar.gz" "$TALLOC_SHA256"
+cp "$HERE/statx_mnt_id.h" "$WORK/proot/src/tracee/statx_mnt_id.h"
 for patch in "$HERE"/patches/*.patch; do
   patch -d "$WORK/proot" -p1 --forward --quiet < "$patch"
 done
@@ -49,6 +50,7 @@ PATH="$WORK/bin:$PATH" make -C "$WORK/proot/src" -j"$(getconf _NPROCESSORS_ONLN)
 install -m755 "$WORK/proot/src/proot" "$OUTDIR/libproot.so"
 install -m755 "$WORK/proot/src/loader/loader" "$OUTDIR/libproot-loader.so"
 "$TOOLCHAIN/llvm-strip" --strip-unneeded "$OUTDIR/libproot.so"
+"$TOOLCHAIN/llvm-strip" --strip-unneeded "$OUTDIR/libproot-loader.so"
 grep -q '^#define HAVE_SECCOMP_FILTER' "$WORK/proot/src/build.h" || { echo "ERROR: proot was built without seccomp acceleration"; exit 1; }
 grep -q '^#define HAVE_PROCESS_VM' "$WORK/proot/src/build.h" || { echo "ERROR: proot was built without process_vm"; exit 1; }
 NEEDED=$("$TOOLCHAIN/llvm-readelf" -d "$OUTDIR/libproot.so" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p' | tr '\n' ' ')

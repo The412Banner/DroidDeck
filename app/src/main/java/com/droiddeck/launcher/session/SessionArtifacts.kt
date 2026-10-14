@@ -11,30 +11,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * Finishes a session's folder: the compositor's log, the Steam client's logs scrubbed line by
- * line, Android's crash buffer, and a marker that says the folder is complete.
- *
- * Three callers, because a session ends three ways. [collect] runs at an ordinary stop. The
- * app's uncaught-exception handler ([CrashHandler]) runs it as the process dies, so a crash in
- * our own code leaves a full folder and not a half one. And [finishAbandoned] runs at the next
- * app start for a folder that has no marker: the process was killed outright (Android's phantom
- * process killer, a native crash in the compositor, the battery) and nothing of ours got to run.
- * Everything written *during* the session - session.log, app.log, wayland.log, audio.log, the
- * device report - is already on disk at that point; only the pieces gathered at the end were
- * missing, and the crash buffer keeps its entries after the process is gone, which is the whole
- * reason it is worth coming back for.
- */
 object SessionArtifacts {
     private const val TAG = "SessionArtifacts"
 
-    /** Written last; a folder without it did not get its ending. */
     const val COMPLETE_MARKER = ".complete"
 
-    /** Every file in the folder has been through the redactor, own addresses and accounts included (-2: accounts added). */
-    private const val SCRUBBED_MARKER = ".scrubbed-2"
+    private val SCRUBBED_MARKER = ".scrubbed-r${LogRedactor.RULES_VERSION}"
+    private val OLD_SCRUBBED_MARKER = Regex("""\.scrubbed-(r?\d+)""")
 
-    /** Everything the end of a session gathers, into [dir]. Safe to call for a dead session. */
+    const val SCRUBBED_TREE_MARKER = ".scrubbed-tree"
+
     fun collect(context: Context, dir: File, reason: String) {
         try {
             val wayland = File(dir, "wayland.log")
@@ -44,11 +30,10 @@ object SessionArtifacts {
                 }
             }
             LogRedactor.learnFromRuntime(LinuxRuntime.rootDir(context))
-            copySteamLogs(context, dir)
-            // A session the system killed leaves its trace here and nowhere else.
+            val record = Record(dir)
+            copySteamLogs(context, dir, record)
             SessionLogCapture.dumpCrashBuffer(File(dir, "crash.log"))
-            scrubFolder(dir)
-            try { File(dir, SCRUBBED_MARKER).writeText("scrubbed ${now()}\n") } catch (e: Exception) {}
+            markScrubbed(scrubTree(record))
             SessionEvents.record("session.artifacts_collected", mapOf("reason" to reason), dir)
             File(dir, COMPLETE_MARKER).writeText("collected: $reason at ${now()}\n")
         } catch (e: Exception) {
@@ -56,57 +41,125 @@ object SessionArtifacts {
         }
     }
 
-    /**
-     * Once, for session folders written before every file was scrubbed and before the device's own
-     * addresses were (network.txt listed them; the client's IPv6 check logs "external address"
-     * into steam/connection_log.txt): the whole folder, steam/ included, through the redactor.
-     * A marker records it. Runs at app start with [finishAbandoned].
-     */
     @Synchronized
     fun scrubOlder(context: Context) {
         val current = SessionPaths.current()
-        val dirs = LinuxRuntime.debugLogDir().listFiles { f ->
-            f.isDirectory && f.name.startsWith("session-") && f != current && !File(f, SCRUBBED_MARKER).exists()
-        } ?: return
+        val dirs = LinuxRuntime.logDir(context).listFiles { f ->
+            SessionPaths.isSessionFolder(f) && f != current && !File(f, SCRUBBED_MARKER).exists()
+        }?.toList() ?: return
         if (dirs.isEmpty()) return
         LogRedactor.learnFromRuntime(LinuxRuntime.rootDir(context))
-        dirs.forEach { dir ->
-            scrubFolder(dir)
-            File(dir, "steam").takeIf { it.isDirectory }?.let { scrubFolder(it) }
-            try { File(dir, SCRUBBED_MARKER).writeText("scrubbed ${now()}\n") } catch (e: Exception) {}
+        val workers = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 4)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(workers) { r ->
+            Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "scrub-logs")
         }
-        Log.i(TAG, "scrubbed ${dirs.size} older session folder(s)")
+        val done = try {
+            pool.invokeAll(dirs.map { dir -> java.util.concurrent.Callable { scrubAndMark(dir) } })
+                .count { f -> try { f.get() } catch (e: Exception) { false } }
+        } finally {
+            pool.shutdown()
+        }
+        val failed = dirs.size - done
+        Log.i(TAG, "logs: scrubbed $done folders under r${LogRedactor.RULES_VERSION}" +
+            if (failed > 0) ", $failed not fully (again at the next start)" else "")
     }
 
-    /**
-     * The session's own files (session.log, app.log, desktop.log, the Steam desktop client's
-     * steam-desktop.log, ...) were written as they happened, unscrubbed; this pass puts every one
-     * through the redactor before the folder can be shared. A file is rewritten only if a line
-     * changed. steam/ was scrubbed on the way in.
-     */
-    private fun scrubFolder(dir: File) {
-        dir.listFiles { f -> f.isFile && !f.name.startsWith(".") }?.forEach { f ->
+    fun unmarkMoved(dirs: List<File>) {
+        dirs.filter { SessionPaths.isSessionFolder(it) }.forEach { dir ->
+            dir.listFiles { f -> OLD_SCRUBBED_MARKER.matches(f.name) || f.name == SCRUBBED_TREE_MARKER }?.forEach { it.delete() }
+        }
+    }
+
+    private class Scrubbed(val length: Long, val modified: Long)
+
+    private class Record(val dir: File) {
+        val files = HashMap<File, Scrubbed>()
+        var failed = false
+    }
+
+    private fun scrubFolder(dir: File, record: Record) {
+        dir.listFiles { f -> f.isFile && !f.name.startsWith(".") && f !in record.files }?.forEach { f ->
             if (!LogRedactor.isText(f)) return@forEach
-            try {
-                val tmp = File(dir, ".${f.name}.scrub")
-                tmp.bufferedWriter().use { w -> LogRedactor.scrubTo(f, w) }
-                if (tmp.length() != f.length() || tmp.readBytes().contentEquals(f.readBytes()).not()) tmp.renameTo(f) else tmp.delete()
-            } catch (e: Exception) {
-                Log.w(TAG, "could not scrub ${f.name}", e)
-            }
+            val done = scrubFile(dir, f)
+            if (done == null) record.failed = true else record.files[f] = done
         }
     }
 
-    /** Steam's logs: redacted into steam/, never copied verbatim. */
-    private fun copySteamLogs(context: Context, dir: File) {
+    private fun scrubFile(dir: File, f: File): Scrubbed? {
+        val tmp = File(dir, ".${f.name}.scrub")
+        return try {
+            val before = Scrubbed(f.length(), f.lastModified())
+            tmp.bufferedWriter().use { w -> LogRedactor.scrubTo(f, w) }
+            val scrubbed = tmp.readBytes()
+            if (scrubbed.contentEquals(f.readBytes())) {
+                tmp.delete()
+                before.takeIf { f.length() == it.length && f.lastModified() == it.modified }
+            } else {
+                if (!tmp.renameTo(f)) { f.writeBytes(scrubbed); tmp.delete() }
+                Scrubbed(scrubbed.size.toLong(), f.lastModified()).takeIf { f.length() == it.length }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "could not scrub ${f.name}", e)
+            tmp.delete()
+            null
+        }
+    }
+
+    private fun markScrubbed(record: Record): Boolean {
+        val dir = record.dir
+        val tree = File(dir, SCRUBBED_TREE_MARKER)
+        dir.listFiles { f -> OLD_SCRUBBED_MARKER.matches(f.name) }?.forEach { it.delete() }
+        if (record.failed) {
+            tree.delete()
+            Log.w(TAG, "$dir is not fully scrubbed; it is scrubbed again when shared")
+            return false
+        }
+        return try {
+            File(dir, SCRUBBED_MARKER).writeText("scrubbed ${now()}\n")
+            val lines = StringBuilder("rules ${LogRedactor.RULES_VERSION}\n")
+            record.files.forEach { (f, s) ->
+                lines.append(s.length).append('\t').append(s.modified).append('\t')
+                    .append(f.relativeTo(dir).path).append('\n')
+            }
+            tree.writeText(lines.toString())
+            true
+        } catch (e: Exception) {
+            tree.delete()
+            File(dir, SCRUBBED_MARKER).delete()
+            false
+        }
+    }
+
+    fun scrubbedFiles(dir: File): Set<String> {
+        val lines = try { File(dir, SCRUBBED_TREE_MARKER).takeIf { it.isFile }?.readLines() } catch (e: Exception) { null }
+            ?: return emptySet()
+        if (lines.firstOrNull() != "rules ${LogRedactor.RULES_VERSION}") return emptySet()
+        return lines.drop(1).mapNotNull { line ->
+            val parts = line.split('\t', limit = 3)
+            if (parts.size != 3) return@mapNotNull null
+            val f = File(dir, parts[2])
+            parts[2].takeIf { f.isFile && f.length().toString() == parts[0] && f.lastModified().toString() == parts[1] }
+        }.toSet()
+    }
+
+    internal fun scrubAndMark(dir: File): Boolean = markScrubbed(scrubTree(Record(dir)))
+
+    private fun scrubTree(record: Record): Record {
+        record.dir.walkTopDown().filter { it.isDirectory }.forEach { scrubFolder(it, record) }
+        return record
+    }
+
+    private fun copySteamLogs(context: Context, dir: File, record: Record) {
         val logs = File(LinuxRuntime.rootDir(context), "root/.local/share/Steam/logs")
         if (!logs.isDirectory) return
         val out = File(dir, "steam").apply { mkdirs() }
         logs.listFiles { f -> f.isFile && f.length() < 8L * 1024 * 1024 }?.forEach { src ->
             try {
-                File(out, src.name).bufferedWriter().use { w ->
+                val dst = File(out, src.name)
+                dst.bufferedWriter().use { w ->
                     src.forEachLine { line -> w.write(LogRedactor.redact(line)); w.newLine() }
                 }
+                record.files[dst] = Scrubbed(dst.length(), dst.lastModified())
             } catch (e: Exception) {
                 Log.w(TAG, "could not scrub ${src.name}", e)
             }
@@ -114,18 +167,12 @@ object SessionArtifacts {
         Log.i(TAG, "collected ${out.listFiles()?.size ?: 0} Steam log(s), scrubbed, into $out")
     }
 
-    /**
-     * Every session folder without a marker gets its ending now. Only the newest of them gets the
-     * Steam logs - the runtime holds one set, and it belongs to the last session that ran; an
-     * older folder would be handed logs that are not its own. Runs on a worker thread at app
-     * start; nothing here touches the session that is about to begin.
-     */
     @Synchronized
     fun finishAbandoned(context: Context) {
-        val parent = LinuxRuntime.debugLogDir()
+        val parent = LinuxRuntime.logDir(context)
         val abandoned = parent.listFiles { f ->
-            f.isDirectory && f.name.startsWith("session-") && !File(f, COMPLETE_MARKER).exists()
-        }?.sortedBy { it.name } ?: return
+            SessionPaths.isSessionFolder(f) && !File(f, COMPLETE_MARKER).exists()
+        }?.sortedWith(SessionPaths.chronological) ?: return
         if (abandoned.isEmpty()) return
         val current = SessionPaths.current()
         LogRedactor.learnFromRuntime(LinuxRuntime.rootDir(context))
@@ -143,18 +190,36 @@ object SessionArtifacts {
                         "crash.log holds Android's crash buffer as of the next app start - if this\n" +
                         "session died of a crash, the entry is in there unless the device rebooted.\n"
                 )
-                if (newest) {
-                    copySteamLogs(context, dir)
-                }
+                val record = Record(dir)
+                if (newest) copySteamLogs(context, dir, record)
                 SessionLogCapture.dumpCrashBuffer(File(dir, "crash.log"))
                 SessionEvents.record("session.artifacts_recovered", mapOf("newest" to newest), dir)
-                scrubFolder(dir)
+                markScrubbed(scrubTree(record))
                 File(dir, COMPLETE_MARKER).writeText("collected: late, at next app start, ${now()}\n")
                 Log.i(TAG, "finished the abandoned session folder $dir")
             } catch (e: Exception) {
                 Log.w(TAG, "could not finish $dir", e)
             }
         }
+    }
+
+    @Synchronized
+    fun prune(context: Context) {
+        val current = SessionPaths.current()
+        val finished = SessionPaths.sessionFolders(context).filter { it != current && File(it, COMPLETE_MARKER).exists() }
+        val old = finished.dropLast(SessionPaths.KEEP_SESSIONS)
+        old.forEach { com.droiddeck.launcher.core.FileUtils.delete(it) }
+        if (old.isNotEmpty()) Log.i(TAG, "deleted ${old.size} session folder(s) past the newest ${SessionPaths.KEEP_SESSIONS}")
+    }
+
+    @Synchronized
+    fun clearAll(context: Context): Int {
+        val current = SessionPaths.current()
+        val gone = SessionPaths.sessionFolders(context).filter { it != current }
+        gone.forEach { com.droiddeck.launcher.core.FileUtils.delete(it) }
+        com.droiddeck.launcher.core.FileUtils.delete(File(LinuxRuntime.logDir(context), SessionPaths.TOOLS_DIR))
+        Log.i(TAG, "cleared ${gone.size} session folder(s)")
+        return gone.size
     }
 
     private fun now(): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())

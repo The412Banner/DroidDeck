@@ -1,5 +1,7 @@
 package com.droiddeck.launcher.ui
 
+import com.droiddeck.launcher.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -15,6 +17,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import com.droiddeck.launcher.frontend.Library
+import com.droiddeck.launcher.session.LoadingState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -68,9 +71,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 
-// The session's loading screen, its paused screen and the HUD text style.
 
 @Composable
 fun HudText(text: String) {
@@ -88,53 +93,37 @@ fun HudText(text: String) {
     }
 }
 
-/** One line of the loading screen's checklist; [detail] is what it says while it is the one running. */
-private class LoadStage(val label: String, val detail: String)
+private class LoadStage(@androidx.annotation.StringRes val label: Int, @androidx.annotation.StringRes val detail: Int)
 
 private fun loadStages(steam: Boolean): List<LoadStage> = if (steam) listOf(
-    LoadStage("Linux runtime", "Getting the Linux runtime ready"),
-    LoadStage("Session", "Starting the display and audio"),
-    LoadStage("Steam client", "Checking the Steam client and its compatibility tools"),
-    LoadStage("Opening Steam", "Waiting for Steam's first frame"),
+    LoadStage(R.string.load_runtime, R.string.load_runtime_detail),
+    LoadStage(R.string.load_session, R.string.load_session_detail),
+    LoadStage(R.string.load_steam, R.string.load_steam_detail),
+    LoadStage(R.string.load_opening_steam, R.string.load_opening_steam_detail),
 ) else listOf(
-    LoadStage("Linux runtime", "Getting the Linux runtime ready"),
-    LoadStage("Desktop", "Getting the desktop ready"),
-    LoadStage("Opening", "Waiting for the first frame"),
+    LoadStage(R.string.load_runtime, R.string.load_runtime_detail),
+    LoadStage(R.string.load_desktop, R.string.load_desktop_detail),
+    LoadStage(R.string.load_opening, R.string.load_opening_detail),
 )
 
-/**
- * The checklist stage a loading line belongs to, -1 when it says nothing about the stage. The lines
- * are the session script's "== STEP" milestones and the installer's own progress; they arrive in
- * order, and the screen never steps back.
- */
-private fun stageOf(step: String, steam: Boolean): Int {
-    val t = step.lowercase()
-    return when {
-        "linux runtime" in t -> 0
-        "starting the session" in t -> 1
-        !steam && "desktop" in t -> 1
-        steam && "starting the steam client" in t -> 3
-        steam && ("steam" in t || "client" in t || "proton" in t || "library" in t || "compatibility" in t) -> 2
-        else -> -1
-    }
-}
-
-/** Download and install lines are worth reading as they are; the script's own notes are not. */
-private fun readableStep(step: String): Boolean {
-    val t = step.lowercase()
-    return t.startsWith("download") || t.startsWith("checking the linux") || t.startsWith("unpacking") || t.startsWith("installing")
+private fun stageOf(topic: LoadingState.Topic, steam: Boolean): Int = when (topic) {
+    LoadingState.Topic.RUNTIME -> 0
+    LoadingState.Topic.SESSION -> 1
+    LoadingState.Topic.DESKTOP -> if (steam) -1 else 1
+    LoadingState.Topic.STEAM_STARTING -> if (steam) 3 else -1
+    LoadingState.Topic.STEAM -> if (steam) 2 else -1
+    LoadingState.Topic.OTHER -> -1
 }
 
 @Composable
 fun LoadingOverlay(
     step: String, percent: Int, elapsed: String, hint: String, ended: Boolean,
-    title: String = "Starting Steam", steam: Boolean = true, onCancel: (() -> Unit)? = null,
-    /** An ended session's exit status and log path, shown small under the advice. */
+    topic: LoadingState.Topic, readable: Boolean,
+    title: String = stringResource(R.string.load_starting_steam), steam: Boolean = true, onCancel: (() -> Unit)? = null,
     endedDetail: String? = null,
     onRetry: (() -> Unit)? = null,
     onShareLogs: (() -> Unit)? = null,
     onClose: (() -> Unit)? = null,
-    /** The blue the page opens on when a button flooded to it, gathered into the throbber's ball. */
     flood: Color? = null,
     onFlooded: () -> Unit = {},
 ) {
@@ -142,14 +131,13 @@ fun LoadingOverlay(
     var ball by remember { mutableStateOf<Pair<Offset, Float>?>(null) }
     val stages = remember(steam) { loadStages(steam) }
     var reached by remember { mutableStateOf(0) }
-    LaunchedEffect(step, steam) {
-        val at = stageOf(step, steam)
+    LaunchedEffect(step, topic, steam) {
+        val at = stageOf(topic, steam)
         if (at > reached) reached = at
     }
     val active = reached.coerceAtMost(stages.lastIndex)
-    val detail = if (percent >= 0 || readableStep(step)) step.replaceFirstChar { it.uppercase() } else stages[active].detail
+    val detail = if (percent >= 0 || readable) step.replaceFirstChar { it.uppercase() } else stringResource(stages[active].detail)
     val context = LocalContext.current
-    // The Steam tab's wall behind it, dimmed and slowed: starting Steam reads as the same place settling in.
     val games by produceState(emptyList<Library.SteamGame>()) {
         value = withContext(Dispatchers.IO) { runCatching { Library.steamGames(context).sortedByDescending { it.lastPlayed } }.getOrDefault(emptyList()) }
     }
@@ -177,16 +165,15 @@ fun LoadingOverlay(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.align(Alignment.Center).verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 24.dp),
         ) {
-            // Held on the plain D while the flood gathers, and started fresh when it lands.
             key(flood == null) {
                 LogoThrobber(
-                    Modifier.width(if (ended) 88.dp else 110.dp).onGloballyPositioned { ball = throbberBall(it.boundsInRoot()) },
+                    Modifier.width(if (ended) 88.dp else 110.dp).onGloballyPositioned { ball = throbberBall(it.boundsInRoot()).also { b -> ThrobberSpot.ball = b } },
                     running = !ended && flood == null,
                 )
             }
             Spacer(Modifier.height(30.dp))
             Text(
-                if (ended) "The session ended" else title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+                if (ended) stringResource(R.string.load_ended) else title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
                 color = colors.onBackground, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             Text(
@@ -212,7 +199,6 @@ fun LoadingOverlay(
     }
 }
 
-/** What to do about an ended session: nothing leaves on a timer, and the pad starts on Try again. */
 @Composable
 private fun EndedActions(onRetry: (() -> Unit)?, onShareLogs: (() -> Unit)?, onClose: (() -> Unit)?) {
     val first = remember { FocusRequester() }
@@ -223,23 +209,24 @@ private fun EndedActions(onRetry: (() -> Unit)?, onShareLogs: (() -> Unit)?, onC
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 22.dp)) {
         var firstUsed = false
         fun claim(): Modifier = if (firstUsed) Modifier else { firstUsed = true; Modifier.focusRequester(first) }
-        if (onRetry != null) PrimaryButton("Try again", modifier = claim(), onClick = onRetry)
-        if (onShareLogs != null) SecondaryButton("Share logs", modifier = claim(), onClick = onShareLogs)
-        if (onClose != null) SecondaryButton("Back", modifier = claim(), onClick = onClose)
+        if (onRetry != null) PrimaryButton(stringResource(R.string.store_try_again), modifier = claim(), onClick = onRetry)
+        if (onShareLogs != null) SecondaryButton(stringResource(R.string.drawer_share_logs), modifier = claim(),
+            progress = com.droiddeck.launcher.session.SessionLogShare.progress, onClick = onShareLogs)
+        if (onClose != null) SecondaryButton(stringResource(R.string.mode_back), modifier = claim(), onClick = onClose)
     }
 }
 
-/** One segment per stage: done ones filled, the current one filling (or running, with no percent). */
 @Composable
 private fun LoadSegments(count: Int, active: Int, percent: Int, modifier: Modifier = Modifier) {
     val pal = LocalPalette.current
     val track = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.12f)
     val run = rememberInfiniteTransition(label = "segment")
-        .animateFloat(-0.4f, 1f, infiniteRepeatable(tween(Motion.ms(1300).coerceAtLeast(1), easing = FastOutSlowInEasing)), label = "run")
+        .animateFloat(-0.4f, 1f, infiniteRepeatable(tween(1300, easing = FastOutSlowInEasing)), label = "run")
     val still = Motion.scale == 0f
+    val stepDescription = stringResource(R.string.load_step, active + 1, count)
     Row(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = modifier.semantics { contentDescription = "Step ${active + 1} of $count" },
+        modifier = modifier.semantics { contentDescription = stepDescription },
     ) {
         repeat(count) { i ->
             Box(
@@ -256,7 +243,6 @@ private fun LoadSegments(count: Int, active: Int, percent: Int, modifier: Modifi
     }
 }
 
-/** Cancel as the pad's B, in the corner; a tap works too. */
 @Composable
 private fun CancelHint(onCancel: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
@@ -270,15 +256,18 @@ private fun CancelHint(onCancel: () -> Unit, modifier: Modifier = Modifier) {
             .padding(horizontal = 12.dp),
     ) {
         Box(contentAlignment = Alignment.Center, modifier = Modifier.size(20.dp).clip(CircleShape).background(colors.onBackground)) {
-            Text("B", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.background)
+            Text("B", color = colors.background, style = TextStyle(
+                fontSize = 12.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both),
+            ))
         }
-        Text("Cancel", fontSize = 13.sp, color = colors.onSurfaceVariant)
+        Text(stringResource(R.string.common_cancel), fontSize = 13.sp, color = colors.onSurfaceVariant)
     }
 }
 
-/** A session paused in the background, ready to pick up where it left off. */
 @Composable
-fun SessionPausedOverlay(title: String = "Steam is paused", onResume: () -> Unit) {
+fun SessionPausedOverlay(title: String = stringResource(R.string.load_steam_paused), onResume: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -304,7 +293,7 @@ fun SessionPausedOverlay(title: String = "Steam is paused", onResume: () -> Unit
             }
             Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = colors.onBackground, textAlign = TextAlign.Center)
             PrimaryButton(
-                "Resume",
+                stringResource(R.string.resume_session),
                 modifier = Modifier.padding(top = 14.dp).focusRequester(resumeFocus).controllerConfirm(onClick = onResume),
                 onClick = onResume,
             )

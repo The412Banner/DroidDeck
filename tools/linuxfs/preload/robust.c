@@ -1,14 +1,7 @@
-/*
- * get_robust_list(2) for the session's own threads.
- *
- * Android's app policy refuses the call, and Steam's cross-process mutex insists on seeing the
- * head glibc registered. The kernel's list protocol gives it away: a robust mutex this thread
- * holds is linked directly behind the registered head, so locking a private one and following
- * the link back finds the head without depending on libc's layout.
- */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <linux/futex.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -18,7 +11,23 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#ifndef SYS_openat2
+#define SYS_openat2 437
+#endif
+
+#define BL_RESOLVE_BENEATH 0x08
+#define BL_RESOLVE_IN_ROOT 0x10
+
+struct bl_open_how {
+  uint64_t flags;
+  uint64_t mode;
+  uint64_t resolve;
+};
+
 static long (*real_syscall)(long, ...);
+static int openat2_missing;
+
+int bl_fsync_syscall(long number, const long *args, long *ret) __attribute__((visibility("hidden")));
 
 static struct robust_list_head *thread_robust_head(void) {
   pthread_mutexattr_t attr;
@@ -31,8 +40,6 @@ static struct robust_list_head *thread_robust_head(void) {
   if (pthread_mutex_lock(&mutex) != 0) {
     return NULL;
   }
-  /* The mutex holds tids and lock words beside the link, so a word is only followed
-   * through a read that fails instead of faulting on a non-pointer. */
   uintptr_t lo = (uintptr_t)&mutex, hi = lo + sizeof(mutex);
   for (uintptr_t p = lo; p + sizeof(void *) <= hi && !head; p += sizeof(void *)) {
     struct robust_list_head *candidate = *(struct robust_list_head **)p;
@@ -54,6 +61,35 @@ static struct robust_list_head *thread_robust_head(void) {
   return head;
 }
 
+static long openat2_via_openat(const long *args) {
+  const char *path = (const char *)args[1];
+  const struct bl_open_how *how = (const struct bl_open_how *)args[2];
+  if (!path || !how || (size_t)args[3] < sizeof(*how)) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (how->resolve & BL_RESOLVE_IN_ROOT) {
+    while (*path == '/') {
+      path++;
+    }
+    if (!*path) {
+      path = ".";
+    }
+  } else if ((how->resolve & BL_RESOLVE_BENEATH) && *path == '/') {
+    errno = EXDEV;
+    return -1;
+  }
+  return real_syscall(SYS_openat, args[0], (long)path, (long)(int)how->flags, (long)how->mode);
+}
+
+static int execveat_is_execve(const long *args) {
+  const char *path = (const char *)args[1];
+  if (!path || (args[4] & (AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW))) {
+    return 0;
+  }
+  return path[0] == '/' || (int)args[0] == AT_FDCWD;
+}
+
 long syscall(long number, ...) {
   va_list ap;
   long args[6];
@@ -72,8 +108,25 @@ long syscall(long number, ...) {
     *(size_t *)args[2] = sizeof(*head);
     return 0;
   }
+  long handled;
+  if (bl_fsync_syscall(number, args, &handled)) {
+    return handled;
+  }
   if (!real_syscall) {
     real_syscall = (long (*)(long, ...)) dlsym(RTLD_NEXT, "syscall");
+  }
+  if (number == SYS_openat2) {
+    if (!__atomic_load_n(&openat2_missing, __ATOMIC_RELAXED)) {
+      long fd = real_syscall(number, args[0], args[1], args[2], args[3]);
+      if (fd != -1 || errno != ENOSYS) {
+        return fd;
+      }
+      __atomic_store_n(&openat2_missing, 1, __ATOMIC_RELAXED);
+    }
+    return openat2_via_openat(args);
+  }
+  if (number == SYS_execveat && execveat_is_execve(args)) {
+    return real_syscall(SYS_execve, args[1], args[2], args[3]);
   }
   return real_syscall(number, args[0], args[1], args[2], args[3], args[4], args[5]);
 }

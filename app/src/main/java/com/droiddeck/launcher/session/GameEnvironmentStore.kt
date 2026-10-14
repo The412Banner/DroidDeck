@@ -3,6 +3,7 @@ package com.droiddeck.launcher.session
 import android.content.Context
 import android.util.AtomicFile
 import com.droiddeck.launcher.core.GameEnvironment
+import com.droiddeck.launcher.core.TextureFiltering
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import org.json.JSONObject
 import java.io.File
@@ -10,6 +11,8 @@ import java.io.File
 object GameEnvironmentStore {
     private const val SETTINGS = "game-environment.json"
     private const val GUEST_FILE = "root/.config/droiddeck/game-environment.json"
+    const val DXVK_CONFIG = "dxvkConfig"
+    const val DXVK_CONFIG_GAMES = "dxvkConfigGames"
 
     @Synchronized
     fun read(context: Context): GameEnvironment.Config {
@@ -55,9 +58,44 @@ object GameEnvironmentStore {
     }
 
     @Synchronized
+    fun setGameFexPreset(context: Context, scope: String, preset: String?): GameEnvironment.Config {
+        val config = GameEnvironment.withGameFexPreset(read(context), scope, preset)
+        save(context, config)
+        return config
+    }
+
+    @Synchronized
+    fun setGameNoSteam(context: Context, scope: String, on: Boolean): GameEnvironment.Config {
+        val config = GameEnvironment.withGameNoSteam(read(context), scope, on)
+        save(context, config)
+        return config
+    }
+
+    @Synchronized
     fun publish(context: Context, config: GameEnvironment.Config = read(context)) {
-        val resolved = config.copy(shared = GameEnvironment.defaults(SessionPrefs.fexPreset(context)) + config.shared)
-        write(File(LinuxRuntime.rootDir(context), GUEST_FILE), encode(resolved).toString())
+        val resolved = config.copy(shared = GameEnvironment.defaults(SessionPrefs.fexPreset(context), SessionPrefs.forceSsbs(context)) + config.shared)
+        val json = encode(resolved)
+        val dxvk = TextureFiltering.dxvkOptions(
+            SessionPrefs.textureAnisotropy(context), SessionPrefs.textureLodBias(context),
+            TextureFiltering.autoLodBias(SessionState.upscaleRatio),
+        )
+        if (dxvk.isNotEmpty()) json.put(DXVK_CONFIG, dxvk)
+        val autoBias = TextureFiltering.autoLodBias(SessionState.upscaleRatio)
+        val generalAnisotropy = SessionPrefs.textureAnisotropy(context)
+        val generalLodBias = SessionPrefs.textureLodBias(context)
+        val gameDxvk = JSONObject()
+        SessionPrefs.gameTextureFiltering(context).forEach { (scope, choice) ->
+            gameDxvk.put(
+                scope,
+                TextureFiltering.dxvkOptions(
+                    choice.anisotropy ?: generalAnisotropy,
+                    choice.lodBias ?: generalLodBias,
+                    autoBias,
+                ),
+            )
+        }
+        if (gameDxvk.length() > 0) json.put(DXVK_CONFIG_GAMES, gameDxvk)
+        write(File(LinuxRuntime.rootDir(context), GUEST_FILE), json.toString())
     }
 
     private fun write(file: File, text: String) {

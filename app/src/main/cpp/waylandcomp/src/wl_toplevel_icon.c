@@ -1,10 +1,5 @@
-/*
- * xdg_toplevel_icon_manager_v1 (version 1): window icons are accepted and dropped. The scene
- * has no title bars to draw them in; winewayland only stops complaining that the global is
- * missing. We send no icon_size (any size is fine) and `done` at bind, as the protocol asks.
- */
 #include <stdlib.h>
-#include "banner_ext.h"
+#include "droiddeck_ext.h"
 #include "xdg-toplevel-icon-v1-server-protocol.h"
 
 static void icon_destroy(struct wl_client *c, struct wl_resource *r) { wl_resource_destroy(r); }

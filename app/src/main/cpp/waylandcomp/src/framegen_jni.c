@@ -1,8 +1,3 @@
-/* JNI for frame generation on the Wayland backend (WaylandCompositor.nativeFrameGen* /
- * nativeSet*FrameGen* / nativeSetLsfgCachePath / nativeSetWinFgTuning). Every call only stores
- * a value in framegen_bridge.c; the compositor thread picks it up on its next frame, so these
- * are safe from any thread and before the compositor is up (the app arms the engine from its
- * launch code while the SurfaceView is still coming). */
 #include <jni.h>
 #include "framegen_bridge.h"
 
@@ -14,9 +9,9 @@ Java_com_droiddeck_launcher_wayland_WaylandCompositor_nativeSetFrameGenEngine(JN
 
 JNIEXPORT void JNICALL
 Java_com_droiddeck_launcher_wayland_WaylandCompositor_nativeSetFrameGenArmed(JNIEnv *env, jclass clazz,
-                                                                        jboolean armed, jint multiplier) {
+                                                                        jboolean armed, jint multiplier, jint targetFps) {
     (void)env; (void)clazz;
-    vkp_framegen_set_armed(armed ? 1 : 0, (int)multiplier);
+    vkp_framegen_set_armed(armed ? 1 : 0, (int)multiplier, (int)targetFps);
 }
 
 JNIEXPORT void JNICALL

@@ -12,6 +12,7 @@ import com.droiddeck.launcher.gpu.TurnipDriver
 import com.droiddeck.launcher.runtime.DesktopCatalog
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import com.droiddeck.launcher.runtime.LinuxRuntimeInstaller
+import com.droiddeck.launcher.session.EsyncPacks
 import com.droiddeck.launcher.session.SessionPrefs
 import com.droiddeck.launcher.session.SessionService
 import com.droiddeck.launcher.session.SessionState
@@ -20,15 +21,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * `device.txt`: what this device is and what the session was told to do, written the moment a
- * session starts so a log can be read months later without asking the reporter a single question.
- *
- * **Nothing identifying goes in here.** No serial number, no Android ID, no IMEI, no account name,
- * no network names - only what the hardware is, what the ROM is, and which of our own settings
- * were in effect. The one thing that comes close is the build fingerprint, which names the ROM and
- * its build date and is the same string on every unit of that model.
- */
 object DeviceReport {
     private const val TAG = "DeviceReport"
 
@@ -52,7 +44,7 @@ object DeviceReport {
         b.append("DroidDeck session report\n")
         b.append("========================\n")
         k("Written", SimpleDateFormat("yyyy-MM-dd HH:mm:ss zzz", Locale.US).format(Date()))
-        k("Session mode", when (mode) { SessionService.MODE_DESKTOP -> "desktop (labwc/LXQt)"; SessionService.MODE_RUN -> "a program under gamescope"; else -> "Steam client (gamescope)" })
+        k("Session mode", when (mode) { SessionService.MODE_DESKTOP -> "desktop (KDE Plasma)"; SessionService.MODE_RUN -> "a program under gamescope"; else -> "Steam client (gamescope)" })
 
         h("App")
         runCatching {
@@ -107,25 +99,33 @@ object DeviceReport {
         h("Display")
         k("Session output", SessionState.outputSize?.let { "${it.first}x${it.second}" })
         k("Session refresh", String.format(Locale.US, "%.2f Hz", SessionState.refreshHz))
-        k("Shape setting", SessionPrefs.shapeMode(context))
-        k("Custom resolution (Steam)", SessionPrefs.customResolution(context, SessionService.MODE_STEAM)?.let { "${it.first}x${it.second}" } ?: "off")
-        k("Custom resolution (Desktop)", SessionPrefs.customResolution(context, SessionService.MODE_DESKTOP)?.let { "${it.first}x${it.second}" } ?: "off")
+        val panelSize = com.droiddeck.launcher.session.SessionDisplay.panelSize(context)
+        for ((label, mode) in listOf("Resolution (Steam)" to SessionService.MODE_STEAM, "Resolution (Desktop)" to SessionService.MODE_DESKTOP)) {
+            val choice = SessionPrefs.resolutionChoice(context, mode, panelSize)
+            val size = com.droiddeck.launcher.session.SessionDisplay.resolveChoice(panelSize, choice)
+            k(label, "$choice (${size.first}x${size.second})")
+        }
         k("Foldable", context.packageManager.hasSystemFeature("android.hardware.sensor.hinge_angle"))
 
         h("Drivers")
+        val gpu = com.droiddeck.launcher.gpu.GpuInfo.detect()
+        k("GPU", "${gpu.name} · ${gpu.family.label} · ${gpu.supportText}" + if (gpu.oneUi8Gen2) " · One UI 8 Gen 2" else "")
+        k("Driver mode", SessionPrefs.gpuDriverMode(context) +
+            (com.droiddeck.launcher.gpu.DriverPairs.recommendedKey(gpu, com.droiddeck.launcher.gpu.DriverPairs.from(
+                com.droiddeck.launcher.gpu.TurnipReleases.cached(context)))?.let { " (recommended pair: $it)" } ?: ""))
         val turnip = TurnipDriver(context)
         val androidChoice = SessionPrefs.androidDriver(context)
         k("Display driver (chosen)", if (androidChoice.isEmpty()) "Auto -> ${turnip.autoId()}" else androidChoice)
         k("  name / version", "${turnip.displayName(if (androidChoice.isEmpty()) turnip.autoId() else androidChoice)} ${turnip.driverVersion(if (androidChoice.isEmpty()) turnip.autoId() else androidChoice)}".trim())
         k("  imported available", turnip.enumerateImported().ifEmpty { listOf("none") }.joinToString(", "))
         val lm = LinuxVulkanDriverManager(context)
-        for (m in listOf(SessionService.MODE_STEAM, SessionService.MODE_DESKTOP)) {
-            val id = SessionPrefs.linuxDriver(context, m)
+        run {
+            val id = SessionPrefs.linuxDriver(context)
             val label = if (id.isEmpty()) "runtime default (the Turnip built into the runtime)"
             else "${lm.getDriverName(id)} ${lm.getDriverVersion(id)}".trim() +
                 lm.getMinGlibc(id).let { if (it.isEmpty()) "" else " (glibc $it+)" } +
                 if (lm.isInstalled(id)) "" else "  [MISSING - falls back to the runtime's own]"
-            k("Linux driver ($m)", label)
+            k("Linux driver", label)
         }
         k("Runtime's own ICD", LinuxRuntime.vulkanIcd(context)?.path)
 
@@ -138,21 +138,25 @@ object DeviceReport {
         h("Settings in effect")
         k("Client core override", SessionPrefs.clientCpusOverride(context))
         k("  client cores", CpuCores.listOrAll(SessionPrefs.clientCpus(context)))
-        k("  game cores", CpuCores.restrictionOrEmpty(SessionPrefs.gameCpus(context)).ifEmpty { "every core (nothing sent)" })
+        k("  game cores", CpuCores.restrictionOrEmpty(SessionPrefs.gameCpus(context)).ifEmpty { "every core" })
         k("Turnip sysmem", SessionPrefs.tuSysmem(context))
         k("Zink lazy descriptors", SessionPrefs.zinkLazy(context))
         k("Threaded GL (glthread)", SessionPrefs.glThread(context))
         k("No GL error checks", SessionPrefs.noGlError(context))
-        k("Steam Deck mode", SessionPrefs.steamDeckMode(context))
         k("Steam controller", SessionPrefs.steamController(context))
+        k("Upscaler", (SessionPrefs.upscalerChoices.firstOrNull { it.first == SessionPrefs.upscaler(context) }?.second ?: "Off") +
+            " (sharpness ${SessionPrefs.upscaleSharpness(context)}%)")
         k("FEX preset", SessionPrefs.fexPreset(context).ifEmpty { "FEX defaults" })
         k("Skip xalia", SessionPrefs.noXalia(context))
+        k("Wine sync", SessionPrefs.syncBackend(context))
+        EsyncPacks.status(LinuxRuntime.rootDir(context)).let { k("droiddeck-esync packs", "${it.installed} installed, ${it.wanted} wanted") }
+        k("Linux x86 (FEX)", if (com.droiddeck.launcher.runtime.LinuxFex.ready(context)) "ready" else "not set up")
         k("gamescope realtime", SessionPrefs.gamescopeRealtime(context))
         k("proot without seccomp", SessionPrefs.prootNoSeccomp(context))
+        k("proot fast path", SessionPrefs.prootFastPath(context))
         k("Guest host name", SessionPrefs.guestHostname(context))
         k("DirectAudio for games", SessionPrefs.directAudio(context))
-        k("Stretch games to fill", SessionPrefs.forceFullscreen(context))
-        k("Client audio", if (SessionPrefs.clientDirectAudio(context)) "DirectAudio" else "classic")
+        k("Stretch 16:9 to panel", SessionPrefs.stretch16x9(context))
         k("Microphone", SessionPrefs.micEnabled(context))
         k("On-screen controls", SessionPrefs.oscMode(context))
         k("Touch mode", SessionPrefs.touchMode(context))
@@ -166,10 +170,16 @@ object DeviceReport {
         h("Android process limits")
         k("Phantom proc monitor", PhantomProcessLimit.reportValue(PhantomProcessLimit.read(context)))
 
-        h("Device switch files in Download")
-        for (name in listOf("droiddeck-env", "droiddeck-tu-debug", "droiddeck-driver",
-                            "droiddeck-osc", "droiddeck-no-pad", "droiddeck-pad-log",
-                            "droiddeck-no-hud", "droiddeck-wlr-renderer")) {
+        h("Device switch files")
+        SessionService.envSwitchFile(context)?.takeIf { it.isFile }?.let { f ->
+            k("droiddeck-env", FileUtils.readString(f)?.trim()?.replace('\n', ' ')?.ifEmpty { "(present, empty)" } ?: "(present)")
+        }
+        if (File(Environment.getExternalStorageDirectory(), "Download/droiddeck-env").isFile) {
+            k("Download/droiddeck-env", "(ignored - it moved to Android/data/${context.packageName}/files)")
+        }
+        for (name in listOf("droiddeck-tu-debug", "droiddeck-driver",
+                            "droiddeck-osc", "droiddeck-no-pad",
+                            "droiddeck-no-hud")) {
             val f = File(Environment.getExternalStorageDirectory(), "Download/$name")
             if (f.isFile) k(name, FileUtils.readString(f)?.trim()?.replace('\n', ' ')?.ifEmpty { "(present, empty)" } ?: "(present)")
         }

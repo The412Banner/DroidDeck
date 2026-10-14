@@ -1,8 +1,21 @@
 package com.droiddeck.launcher.ui
 
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.runtime.CompositionLocalProvider
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -26,6 +39,7 @@ import androidx.compose.runtime.key
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,6 +53,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DesktopWindows
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +76,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -68,11 +93,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.droiddeck.launcher.HomeApp
+import com.droiddeck.launcher.R
 import com.droiddeck.launcher.frontend.Library
+import com.droiddeck.launcher.runtime.UserApps
+import com.droiddeck.launcher.store.UserAppsState
 import java.io.File
 
-// The front end's right-hand pane and the page it shows: backdrop, desktop card and emulators.
 
+@OptIn(androidx.compose.animation.ExperimentalAnimationApi::class)
 @Composable
 internal fun Pane(
     s: FrontEndState, selected: String, a: FrontEndActions, page: (@Composable () -> Unit)?, modifier: Modifier,
@@ -89,30 +117,90 @@ internal fun Pane(
             else -> null
         }
         Backdrop(backdropArt)
+        val pal = LocalPalette.current
+        val pages = remember { HashMap<String, @Composable () -> Unit>() }
+        val origins = remember { HashMap<String, Origin>() }
+        val paneAt = remember { arrayOf(Offset.Zero) }
+        val livePage by rememberUpdatedState(s.pageKey)
+        val railContent = if (selected.startsWith("app:")) "games" else selected
+        val target = if (page != null && s.pageKey != null) s.pageKey else railContent
+        val gameShown = remember { arrayOf("games") }
+        if (selected == "games" || selected.startsWith("app:")) gameShown[0] = selected
+        val before = remember { arrayOf(target) }
+        if (page != null && s.pageKey != null) {
+            pages[s.pageKey] = page
+            if (s.pageKey !in origins) PageOrigin.take()?.let { o ->
+                origins[s.pageKey] = inPane(o.translate(-paneAt[0])).let { if (it.owner == null) it.ownedBy(railContent) else it }
+            }
+        } else if (target != before[0] && target !in origins) {
+            PageOrigin.take()?.let { o -> origins[target] = inPane(o.translate(-paneAt[0])).let { if (it.owner == null) it.ownedBy(before[0]) else it } }
+        }
+        before[0] = target
+        val targetNow by rememberUpdatedState(target)
+        val leave = if (Hops.linking) PageLeave.Link else PageLeave.Ordinary
+        LaunchedEffect(target) { Hops.linking = false }
         AnimatedContent(
-            // Picking another game changes the detail beside the list, not the whole page.
-            targetState = if (page != null && s.pageKey != null) s.pageKey else if (selected.startsWith("app:")) "games" else selected,
+            targetState = target,
+            modifier = Modifier.onGloballyPositioned { paneAt[0] = it.positionInRoot() },
             transitionSpec = {
-                (fadeIn(Motion.tw(300, 80)) + slideInVertically(Motion.tw(420, 80)) { it / 24 })
-                    .togetherWith(fadeOut(Motion.tw(170)) + slideOutVertically(Motion.tw(170)) { -it / 40 })
-                    .apply { targetContentZIndex = 1f }
+                when {
+                    targetState in origins -> (fadeIn(Motion.tw(120)))
+                        .togetherWith(fadeOut(Motion.tw(320, 80)) + scaleOut(Motion.tw(480), targetScale = 0.95f))
+                        .apply { targetContentZIndex = 1f }
+                    initialState in origins && pageExit(origins[initialState]?.owner, targetState, leave) == PageExit.Drain ->
+                        (fadeIn(Motion.tw(300, 100)) + scaleIn(Motion.tw(460, 40), initialScale = 0.95f))
+                            .togetherWith(ExitTransition.None)
+                            .apply { targetContentZIndex = -1f }
+                    initialState in origins -> (fadeIn(Motion.tw(300, 80)) + slideInVertically(Motion.tw(420, 80)) { it / 24 })
+                        .togetherWith(fadeOut(Motion.tw(170)) + scaleOut(Motion.tw(170), targetScale = 0.95f))
+                        .apply { targetContentZIndex = 1f }
+                    else -> (fadeIn(Motion.tw(300, 80)) + slideInVertically(Motion.tw(420, 80)) { it / 24 })
+                        .togetherWith(fadeOut(Motion.tw(170)) + slideOutVertically(Motion.tw(170)) { -it / 40 })
+                        .apply { targetContentZIndex = 1f }
+                }
             },
             label = "pane",
         ) { key ->
-            if (page != null && key == s.pageKey) page()
-            else Content(s, if (key == "games") selected else key, a, Modifier.fillMaxSize(), onSelect, onAndroidAppClick, onOpenDeveloperOptions, onRequestWirelessAdb)
+            val drawn = (if (page != null && key == s.pageKey) page else pages[key])
+                ?: { Content(s, if (key == "games") gameShown[0] else key, a, Modifier.fillMaxSize(), onSelect, onAndroidAppClick, onOpenDeveloperOptions, onRequestWirelessAdb) }
+            val hopSink by androidx.compose.animation.core.animateFloatAsState(
+                if (Hops.sinking == key) 1f else 0f, Motion.tw(260), label = "hopSink",
+            )
+            val shown: @Composable () -> Unit = {
+                Box(Modifier.fillMaxSize().graphicsLayer { val k = 1f - 0.05f * hopSink; scaleX = k; scaleY = k; alpha = 1f - 0.35f * hopSink }) { drawn() }
+            }
+            run {
+                DisposableEffect(key) { onDispose { if (key != livePage && key != targetNow) { pages.remove(key); origins.remove(key) } } }
+                val from = origins[key]
+                if (from == null) shown()
+                else {
+                    val art = when (val m = from.art) {
+                        null -> null
+                        is Int -> androidx.compose.ui.res.painterResource(m)
+                        else -> coil.compose.rememberAsyncImagePainter(m)
+                    }
+                    val leaving = transition.targetState == EnterExitState.PostExit
+                    val drains = remember(leaving) { !leaving || pageExit(from.owner, target, leave) == PageExit.Drain }
+                    transition.animateFloat(
+                        transitionSpec = { if (targetState == EnterExitState.PostExit && drains) Motion.tw(PAGE_RETURN_MS) else snap() },
+                        label = "pageReturn",
+                    ) { if (it == EnterExitState.PostExit) 1f else 0f }
+                    PageFlood(from, leaving = leaving, art = art, sinks = !drains) { shown() }
+                }
+            }
         }
       }
     }
 }
+
+internal fun inPane(o: Origin): Origin =
+    if (o.bounds.right > 0f) o else o.translate(Offset(-o.bounds.right + o.bounds.width / 2f, 0f))
 
 @Composable
 private fun Backdrop(art: File?) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     Crossfade(targetState = art, animationSpec = Motion.tw(700), label = "backdrop") { a ->
-        // A game's own art, blurred, where it has some; otherwise the plain ground with one quiet
-        // glow of the theme's signal colour - a colour per title hash read as noise.
         if (a != null && Build.VERSION.SDK_INT >= 31) {
             Box(modifier = Modifier.fillMaxSize().alpha(0.26f).blur(70.dp)) {
                 AsyncImage(model = a, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.5f; scaleY = 1.5f })
@@ -140,37 +228,44 @@ private fun Content(
     val colors = MaterialTheme.colorScheme
     val detailPosterWidth = if (LocalConfiguration.current.screenHeightDp < 600) 72.dp else 120.dp
     val narrow = LocalNarrowPane.current
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
     val padH = if (narrow) 16.dp else 22.dp
     val padV = if (narrow) 12.dp else 18.dp
-    // Setup scrolls inside itself, under its tabs.
     if (selected == "setup") {
         Column(modifier = modifier.padding(horizontal = padH, vertical = padV)) {
             SetupPanel(s, a, onOpenDeveloperOptions, onRequestWirelessAdb)
         }
         return
     }
-    // Steam is a full-bleed wall of the library with Play over it.
+    if (selected == "updates") {
+        UpdatesPage(s, a, modifier.padding(horizontal = padH, vertical = padV))
+        return
+    }
     if (selected == "steam") {
         SteamHome(s, a, modifier)
         return
     }
-    // The Store scrolls and navigates inside itself (its tabs and an app's page).
-    if (selected == "store" && s.storeEnabled) {
+    if (selected == "store") {
         StorePage(s, a, modifier)
         return
     }
-    // The Games tab lays out its own list and detail.
+    if (selected == "stores") {
+        StoresPage(s, a, modifier)
+        return
+    }
     if (selected == "games" || selected.startsWith("app:")) {
         GamesPage(s, a, selected, onSelect, modifier)
         return
     }
-    // Every other page scrolls as one - header, hero and grid - so a short screen reaches the grid
-    // instead of showing a sliver of it under a fixed hero. A focused tile scrolls itself into view.
+    if (selected == "desktop") {
+        DesktopPage(s, a, modifier, onSelect)
+        return
+    }
     Column(modifier = modifier.verticalScroll(rememberScrollState()).padding(horizontal = padH, vertical = padV)) {
         when {
             selected == "android-apps" && s.isHomeApp -> {
-                Rise(0) { PageHeader("Android apps") { Chip("${s.androidApps.size} apps", ok = false) } }
-                if (s.androidApps.isEmpty()) Rise(3) { Note("No launchable Android apps found.") }
+                Rise(0) { PageHeader(stringResource(R.string.content_android_apps)) { Chip(stringResource(R.string.content_apps_count, s.androidApps.size), ok = false) } }
+                if (s.androidApps.isEmpty()) Rise(3) { Note(stringResource(R.string.content_no_android_apps)) }
                 else Rise(3, Modifier.fillMaxWidth()) {
                     ArtGrid(s.androidApps.map { app ->
                         Tile(
@@ -184,45 +279,33 @@ private fun Content(
                     })
                 }
             }
-            selected == "desktop" -> {
-                val installed = s.emulators.filter { it.installed }
-                val available = s.emulators.filter { !it.installed }
-                Rise(0) {
-                    PageHeader("Desktop") {
-                        if (s.desktopInstalled) Chip("● Desktop installed", ok = true) else Chip("Installs on first open", ok = false)
-                    }
-                }
-                Rise(2) { DesktopCard(s, a) }
-                if (installed.isNotEmpty()) {
-                    Rise(3) { SectionTitle("Emulators", "${installed.size} installed") }
-                    Rise(4) { EmulatorGrid(installed, first = true, onSelect = onSelect) }
-                }
-                if (s.storeEnabled) Rise(5) { InstalledAppsGrid(a) }
-                if (s.appImagesEnabled) Rise(5) { AppImagesSection(a, s.ready) }
-                if (available.isNotEmpty()) {
-                    Rise(5) { SectionTitle("Available to install", available.size.toString()) }
-                    Rise(6) { EmulatorGrid(available, first = installed.isEmpty(), onSelect = onSelect) }
-                }
+            selected.startsWith("user:") -> {
+                val app = UserAppsState.items.firstOrNull { "user:${it.key}" == selected }
+                if (app == null) Note(stringResource(R.string.user_apps_gone)) else UserAppPage(app, s, a, onSelect)
             }
             selected.startsWith("emu:") -> {
                 val e = s.emulators.firstOrNull { "emu:${it.id}" == selected }
-                if (e == null) Note("Not installed.") else {
+                if (e == null) Note(stringResource(R.string.content_not_installed)) else {
                     val pkgId = Library.packageId(e.id)
                     val pkg = pkgId?.let { id -> s.packages?.firstOrNull { it.id == id } }
-                    Rise(0) {
-                        BackLink("Desktop") { onSelect("desktop") }
-                    }
                     Rise(1) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                         ) {
-                            Image(painterResource(e.iconRes), null, modifier = Modifier.size(52.dp))
+                            Image(painterResource(e.iconRes), null, modifier = Modifier.size(64.dp))
                             Column {
-                                Text(e.name, fontSize = if (narrow) 22.sp else 26.sp, fontWeight = FontWeight.Bold, color = colors.onBackground)
+                                Text(e.name, fontSize = if (narrow) 24.sp else 30.sp, fontWeight = FontWeight.Black, color = colors.onBackground)
                                 Text(
-                                    e.system.replaceFirstChar { it.uppercase() } + if (e.installed) "" else " · not installed",
+                                    systemLabel(e).let { if (e.installed) it else stringResource(R.string.content_not_installed_suffix, it) },
                                     fontSize = 14.sp, color = colors.onSurfaceVariant,
+                                )
+                                if (e.installed) Text(
+                                    listOfNotNull(
+                                        pluralStringResource(R.plurals.mode_added_count, e.games.size, e.games.size).takeIf { e.id != "retroarch" || e.games.isNotEmpty() },
+                                        s.romsDir,
+                                    ).joinToString(" · "),
+                                    fontSize = 13.sp, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -230,72 +313,82 @@ private fun Content(
                     if (e.installed) {
                         Rise(3) {
                             Actions {
-                                PrimaryButton("Open ${e.name}", enabled = !s.busy, main = true) { a.onEmulator(e) }
+                                PrimaryButton(stringResource(R.string.content_open_named, e.name), enabled = !s.busy, main = true) { a.onEmulator(e) }
                                 BusyChip(s)
-                                SecondaryButton("ROMs folder", onClick = a.onRoms)
+                                SecondaryButton(stringResource(R.string.setup_tool_roms), onClick = a.onRoms)
                                 if (pkg != null) SecondaryButton(
-                                    if (pkg.kind == "appimage") "Remove" else "Hide",
-                                    enabled = s.packageBusyId == null && !s.sessionRunning,
+                                    if (pkg.kind == "appimage") stringResource(R.string.store_remove) else stringResource(R.string.common_hide),
+                                    enabled = !s.busy && s.packageBusyId == null && !s.sessionRunning,
                                 ) { a.onRemovePackage(pkg.id) }
                             }
                         }
-                        Rise(4) { SectionTitle("Games", e.games.size.toString()) }
+                        Rise(4) { SectionTitle(stringResource(R.string.content_games), e.games.size.toString()) }
                         if (e.games.isEmpty()) Rise(5) {
                             Note(
-                                if (s.romsDir == null) "Choose a ROMs folder."
-                                else if (e.id == "retroarch") "Browse to /root/ROMs in RetroArch."
-                                else "Add ${e.system} games to ROMs/${e.system.substringBefore(' ')}.",
+                                if (s.romsDir == null) stringResource(R.string.content_choose_roms)
+                                else if (e.id == "retroarch") stringResource(R.string.content_retroarch_roms)
+                                else stringResource(R.string.content_add_roms, e.system, e.system.substringBefore(' ')),
                             )
                         }
                         else Rise(5, Modifier.fillMaxWidth()) {
-                            ArtGrid(e.games.mapIndexed { index, g -> Tile(g.name, if (g.art != null) "installed" else g.hostPath.extension.uppercase().ifEmpty { "folder" }, g.art, "rom:${e.id}:$index", e.iconRes) { onSelect("rom:${e.id}:$index") } }, wide = e.games.none { it.art != null })
+                            Column {
+                                val systems = remember(e.games) { e.games.map { romSystem(it) }.distinct() }
+                                var system by rememberSaveable(e.id) { mutableStateOf<String?>(null) }
+                                if (systems.size > 1) Box(Modifier.padding(top = 10.dp)) {
+                                    val labels = listOf(stringResource(R.string.desktop_all_systems)) + systems
+                                    SheetChips(labels, if (system == null) 0 else systems.indexOf(system) + 1) { i -> system = if (i == 0) null else systems[i - 1] }
+                                }
+                                val shown = e.games.withIndex().filter { system == null || romSystem(it.value) == system }
+                                ArtGrid(shown.map { (index, g) ->
+                                    val key = "rom:${e.id}:$index"
+                                    Tile(g.name, if (g.art != null) stringResource(R.string.content_rom_installed) else g.hostPath.extension.uppercase().ifEmpty { stringResource(R.string.content_rom_folder) }, g.art, key, e.iconRes) {
+                                        TileBounds.mark(key, g.art ?: e.iconRes, 12f * density)
+                                        onSelect(key)
+                                    }
+                                }, wide = e.games.none { it.art != null })
+                            }
                         }
                     } else {
                         if (pkg != null) Rise(2) {
                             Actions {
                                 PrimaryButton(
-                                    if (s.packageBusyId == pkg.id) "Installing…" else "Install ${e.name}",
-                                    enabled = s.packageBusyId == null && s.ready && !s.packageCatalogLoading && !s.sessionRunning,
+                                    if (s.packageBusyId == pkg.id) stringResource(R.string.store_installing) else stringResource(R.string.content_install_named, e.name),
+                                    enabled = !s.busy && s.packageBusyId == null && s.ready && !s.packageCatalogLoading && !s.sessionRunning,
                                 ) { a.onInstallPackage(pkg.id) }
-                                if (s.sessionRunning) ActionChip("Stop session to install", ok = false)
-                                else if (!s.ready) ActionChip("Runtime required", ok = false)
+                                if (s.sessionRunning) ActionChip(stringResource(R.string.content_stop_to_install), ok = false)
+                                else if (!s.ready) ActionChip(stringResource(R.string.content_runtime_required), ok = false)
                             }
                         }
                         Rise(3) {
                             Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
                                 Note(when {
-                                    s.packageCatalogLoading -> "Loading install details…"
-                                    pkg == null -> "Install details are unavailable right now. Try again when the package catalog is reachable."
-                                    !s.ready -> "Install the Linux runtime from Setup before installing desktop apps."
-                                    s.sessionRunning -> "Stop the active session before installing desktop apps."
+                                    s.packageCatalogLoading -> stringResource(R.string.content_loading_details)
+                                    pkg == null -> stringResource(R.string.content_details_unavailable)
+                                    !s.ready -> stringResource(R.string.content_needs_runtime)
+                                    s.sessionRunning -> stringResource(R.string.content_stop_first)
                                     pkg.notes.isNotBlank() -> pkg.notes
-                                    else -> "Install ${e.name} into the Linux desktop runtime."
+                                    else -> stringResource(R.string.content_install_into, e.name)
                                 })
                             }
                         }
                         if (s.packageBusyId == pkg?.id) Rise(4) {
                             val stage = s.packageStage
                             Text(
-                                if (stage != null && s.packagePercent >= 0) "$stage · ${s.packagePercent}%" else stage ?: "Starting…",
+                                if (stage != null && s.packagePercent >= 0) stringResource(R.string.store_busy_percent_short, stage, s.packagePercent) else stage ?: stringResource(R.string.store_starting),
                                 fontSize = 12.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp),
                             )
                             if (s.packagePercent >= 0) LinearProgressIndicator(progress = { s.packagePercent / 100f }, modifier = Modifier.fillMaxWidth().height(4.dp))
                             else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
                         }
-                        if (pkg?.kind == "tar") Rise(5) { Note("Hiding this package takes it off Desktop; its files stay in the Linux runtime.") }
+                        if (pkg?.kind == "tar") Rise(5) { Note(stringResource(R.string.content_hide_note)) }
                     }
                 }
             }
             selected.startsWith("rom:") -> {
                 val pair = romFor(s, selected)
-                if (pair == null) Note("That game is gone from the ROMs folder.") else {
+                if (pair == null) Note(stringResource(R.string.content_rom_gone)) else {
                     val (e, g) = pair
-                    Rise(0) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            BackLink(e.name) { onSelect("emu:${e.id}") }
-                            Eyebrow("Desktop · ${e.system}")
-                        }
-                    }
+                    Rise(0) { Eyebrow(stringResource(R.string.content_desktop_system, systemLabel(e))) }
                     Rise(1) { Title(g.name) }
                     Rise(2) {
                         Row {
@@ -304,8 +397,8 @@ private fun Content(
                                 Spacer(Modifier.height(14.dp))
                                 Actions {
                                     Image(painterResource(e.iconRes), null, modifier = Modifier.size(40.dp))
-                                    PrimaryButton("Launch in ${e.name}", enabled = !s.busy, main = true) { a.onRom(g) }
-                                    if (s.busy) BusyChip(s) else ActionChip(g.hostPath.extension.uppercase().ifEmpty { "folder" }, ok = false)
+                                    PrimaryButton(stringResource(R.string.content_launch_in, e.name), enabled = !s.busy, main = true) { a.onRom(g) }
+                                    if (s.busy) BusyChip(s) else ActionChip(g.hostPath.extension.uppercase().ifEmpty { stringResource(R.string.content_rom_folder) }, ok = false)
                                 }
                             }
                             if (g.art != null && !narrow) Poster(g.art, g.name, Modifier.width(detailPosterWidth))
@@ -313,104 +406,164 @@ private fun Content(
                     }
                     val others = e.games.filter { it !== g }
                     if (others.isNotEmpty()) {
-                        Rise(3) { SectionTitle("Also in ${e.name}", null) }
+                        Rise(3) { SectionTitle(stringResource(R.string.content_also_in, e.name), null) }
                         Rise(4, Modifier.fillMaxWidth()) {
                             ArtGrid(others.map { x ->
                                 val index = e.games.indexOf(x)
-                                Tile(x.name, if (x.art != null) "installed" else x.hostPath.extension.uppercase().ifEmpty { "folder" }, x.art, "rom:${e.id}:$index", e.iconRes) { onSelect("rom:${e.id}:$index") }
+                                Tile(x.name, if (x.art != null) stringResource(R.string.content_rom_installed) else x.hostPath.extension.uppercase().ifEmpty { stringResource(R.string.content_rom_folder) }, x.art, "rom:${e.id}:$index", e.iconRes) {
+                                    TileBounds.mark("rom:${e.id}:$index", x.art ?: e.iconRes, 12f * density)
+                                    onSelect("rom:${e.id}:$index")
+                                }
                             }, wide = others.none { it.art != null })
                         }
                     }
                 }
             }
-            else -> Note("That page is gone. Pick a section on the left.")
+            else -> Note(stringResource(R.string.content_page_gone))
         }
     }
 }
 
-/** The Linux desktop itself, above the emulators that run in it. */
+internal fun UserApps.Kind.label() = when (this) {
+    UserApps.Kind.SCRIPT -> R.string.user_apps_kind_script
+    UserApps.Kind.APPIMAGE -> R.string.user_apps_kind_appimage
+    UserApps.Kind.FLATPAK -> R.string.user_apps_kind_flatpak
+}
+
 @Composable
-private fun DesktopCard(s: FrontEndState, a: FrontEndActions) {
-    val colors = MaterialTheme.colorScheme
-    val pal = LocalPalette.current
-    val narrow = LocalNarrowPane.current
-    val actions: @Composable () -> Unit = {
-        Actions {
-            // Enabled without a runtime or the desktop: the session's loading screen installs them first.
-            PrimaryButton(if (s.desktopInstalled) "Open desktop" else "Install & open desktop", enabled = !s.busy, main = true, onClick = a.onDesktop)
-            Cog(onClick = a.onDesktopSettings)
-            BusyChip(s)
-        }
-    }
-    Column(
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxWidth().clip(Shape16).background(colors.surface).border(1.dp, pal.line, Shape16).padding(16.dp),
+private fun UserAppIcon(app: UserApps.App, size: Int) {
+    if (app.icon != null) AppIcon(app.icon, app.name, size)
+    else Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(size.dp).clip(RoundedCornerShape((size / 5).dp)).background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(52.dp).clip(Shape14).background(colors.surfaceVariant).border(1.dp, pal.line2, Shape14),
-            ) { Icon(Icons.Outlined.DesktopWindows, contentDescription = null, tint = colors.onBackground, modifier = Modifier.size(26.dp)) }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Linux desktop", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground)
-                Text("LXQt, Firefox and your emulators", fontSize = 14.sp, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            if (!narrow) actions()
-        }
-        if (narrow) actions()
-    }
-}
-
-/** Emulators as wide tiles - three across, or a list on a narrow page. */
-@Composable
-private fun EmulatorGrid(emulators: List<Library.Emulator>, first: Boolean, onSelect: (String) -> Unit) {
-    val columns = if (LocalNarrowPane.current) 1 else 3
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
-        emulators.chunked(columns).forEachIndexed { r, row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-                row.forEachIndexed { i, e ->
-                    key(e.id) {
-                        EmulatorTile(e, Modifier.weight(1f).fillMaxHeight(), isFirst = first && r == 0 && i == 0) { onSelect("emu:${e.id}") }
-                    }
-                }
-                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
-            }
-        }
-    }
-}
-
-/**
- * One emulator: its icon, system and games. One not yet installed says so in words and keeps full
- * contrast - dimming it read as disabled rather than one press from installing.
- */
-@Composable
-private fun EmulatorTile(e: Library.Emulator, modifier: Modifier, isFirst: Boolean, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    val pal = LocalPalette.current
-    val src = remember { MutableInteractionSource() }
-    val hot = rememberHot(src)
-    val pressed by src.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, Motion.sp(0.5f, Spring.StiffnessMedium), label = "emuScale")
-    val system = e.system.replaceFirstChar { it.uppercase() }
-    val detail = if (e.installed && e.id != "retroarch") "$system · ${e.games.size} game${if (e.games.size == 1) "" else "s"}" else system
-    Row(
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier.paneItem("tile:emu:${e.id}").then(if (isFirst) Modifier.firstTile() else Modifier)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(Shape14)
-            .background(if (hot) pal.signal.copy(alpha = 0.10f) else if (e.installed) colors.surface else Color.Transparent)
-            .border(if (hot) 2.dp else 1.dp, if (hot) pal.signal else pal.line, Shape14)
-            .hoverable(src).clickable(interactionSource = src, indication = LocalIndication.current, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-    ) {
-        Image(painterResource(e.iconRes), contentDescription = null, modifier = Modifier.size(if (e.installed) 44.dp else 36.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(e.name, fontSize = if (e.installed) 15.sp else 14.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(detail, fontSize = if (e.installed) 13.sp else 12.sp, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        if (!e.installed) Text(
-            "Install", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = pal.signal,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).border(1.dp, pal.line2, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+        Icon(
+            if (app.kind == UserApps.Kind.SCRIPT) Icons.Outlined.Terminal else Icons.Outlined.Apps, null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size((size / 2).dp),
         )
     }
 }
+
+@Composable
+private fun UserAppsProgress() {
+    val colors = MaterialTheme.colorScheme
+    val working = UserAppsState.working
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+        if (working != null) {
+            val stage = UserAppsState.stage ?: stringResource(R.string.user_apps_starting)
+            val percent = UserAppsState.percent
+            Text(
+                if (percent >= 0) stringResource(R.string.user_apps_progress_percent, working, stage, percent) else stringResource(R.string.user_apps_progress, working, stage),
+                fontSize = 12.sp, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            if (percent >= 0) LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth().height(4.dp))
+            else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
+        } else UserAppsState.lastError?.let { Note(it) }
+    }
+}
+
+@Composable
+private fun UserAppPage(app: UserApps.App, s: FrontEndState, a: FrontEndActions, onSelect: (String) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val ctx = LocalContext.current
+    val narrow = LocalNarrowPane.current
+    var editing by rememberSaveable(app.key) { mutableStateOf(false) }
+    val x86 = (app.arch == "x86_64" || app.arch == "i386") && app.fex != com.droiddeck.launcher.runtime.LinuxFex.OFF
+    val fexReady by produceState<Boolean?>(null, app.key, x86, s.sessionRunning) {
+        value = if (x86) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.droiddeck.launcher.runtime.LinuxFex.ready(ctx) } else true
+    }
+    Rise(1) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
+        ) {
+            UserAppIcon(app, 52)
+            Column {
+                Text(app.name, fontSize = if (narrow) 22.sp else 26.sp, fontWeight = FontWeight.Bold, color = colors.onBackground)
+                Text(
+                    (app.repo?.let { stringResource(R.string.user_apps_github_version, it, app.version.orEmpty()) } ?: stringResource(app.kind.label())) +
+                        (if (app.arch == "x86_64" || app.arch == "i386") " · " + stringResource(R.string.app_fex_x86, app.arch) else ""),
+                    fontSize = 14.sp, color = colors.onSurfaceVariant,
+                )
+            }
+        }
+    }
+    Rise(3) {
+        Actions {
+            PrimaryButton(stringResource(R.string.user_apps_open, app.name), enabled = !s.busy, main = true) { a.onUserApp(app) }
+            BusyChip(s)
+            SecondaryButton(stringResource(R.string.user_apps_edit), enabled = UserAppsState.working == null) { editing = true }
+            if (app.repo != null) UpdateButton(app, s)
+            RemoveAppButton(app, enabled = !s.busy && !s.sessionRunning && UserAppsState.working == null) {
+                UserAppsState.remove(ctx, app); onSelect("desktop")
+            }
+            if (s.sessionRunning) ActionChip(stringResource(R.string.user_apps_stop_session), ok = false)
+        }
+    }
+    if (UserAppsState.working != null || UserAppsState.lastError != null) Rise(4) { UserAppsProgress() }
+    if (fexReady == false) Rise(4) {
+        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) { Note(stringResource(R.string.app_fex_not_ready, app.arch.orEmpty())) }
+    }
+    if (editing) EditAppDialog(app, onDismiss = { editing = false }) { name, icon, fex -> UserAppsState.edit(ctx, app, name, icon, fex) }
+    val detail = app.detail
+    if (detail != null) Rise(4) {
+        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Note(
+                if (app.kind != UserApps.Kind.SCRIPT) detail
+                else stringResource(if (app.copied) R.string.user_apps_script_copied else R.string.user_apps_script_linked, detail),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RemoveAppButton(app: UserApps.App, enabled: Boolean, onRemove: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val label = stringResource(R.string.user_apps_remove)
+    val title = stringResource(R.string.flathub_remove_title, app.name)
+    val keep = stringResource(R.string.flathub_keep)
+    var at by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    Box(Modifier.onGloballyPositioned { at = it.boundsInRoot() }) {
+        SecondaryButton(label, enabled = enabled) {
+            val from = at ?: return@SecondaryButton
+            Steps.ask(StepAsk(
+                anchor = from, side = StepSide.Right, accent = colors.error, pillCorner = 12.dp, items = 2,
+                handle = { Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = colors.error, maxLines = 1) },
+            ) {
+                StepTitle(title)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.stepItem(1)) {
+                    StepChoice(keep, enabled = open, modifier = Modifier.focusRequester(first)) { Steps.fold() }
+                    StepChoice(label, danger = true, enabled = open) { Steps.fold(); onRemove() }
+                }
+            })
+        }
+    }
+}
+
+@Composable
+private fun UpdateButton(app: UserApps.App, s: FrontEndState) {
+    val ctx = LocalContext.current
+    val idle = UserAppsState.working == null && UserAppsState.checking == null
+    when (val found = UserAppsState.updates[app.key]) {
+        is UserApps.UpdateCheck.Available -> SecondaryButton(
+            stringResource(R.string.user_apps_update_to, found.release.tag), enabled = !s.busy && idle && !s.sessionRunning,
+        ) { UserAppsState.update(ctx, app, found.release) }
+        else -> {
+            SecondaryButton(
+                stringResource(if (UserAppsState.checking == app.key) R.string.user_apps_checking_updates else R.string.user_apps_check_updates),
+                enabled = idle,
+            ) { UserAppsState.checkUpdate(ctx, app) }
+            when (found) {
+                is UserApps.UpdateCheck.Current -> ActionChip(stringResource(R.string.user_apps_up_to_date, found.tag), ok = true)
+                is UserApps.UpdateCheck.Failed -> ActionChip(found.message, ok = false)
+                else -> {}
+            }
+        }
+    }
+}
+
+@Composable
+private fun systemLabel(e: Library.Emulator): String =
+    if (e.systemRes != 0) stringResource(e.systemRes) else e.system.replaceFirstChar { it.uppercase() }
+
+private fun romSystem(rom: Library.Rom): String = rom.hostPath.parentFile?.name.orEmpty()

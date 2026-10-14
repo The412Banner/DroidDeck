@@ -1,10 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
-//
-// Ported into Bannerlator's compositor from WinNative (GPL-3.0-or-later),
-// whose LSFG port is credited to Camille LaVey / the Eden Emulator Project and
-// follows upstream lsfg-vk. Only the Vulkan dispatch differs: Bannerlator
-// resolves entry points through the renderer's own table (see lsfg_vkd.h).
 
 #include "lsfg_pacer.hpp"
 
@@ -22,6 +17,7 @@ constexpr float SOURCE_SMOOTHING = 0.15f;
 constexpr float SOURCE_STALE_SECONDS = 0.5f;
 constexpr float DISCONTINUITY_SECONDS = 0.25f;
 constexpr float HEADROOM_EPSILON = 0.02f;
+constexpr float TARGET_MARGIN = 0.1f;
 constexpr float CREDIT_EPSILON = 1.0e-4f;
 constexpr float SOURCE_ACCUM_FLOOR = 0.01f;
 constexpr uint32_t MIN_RATE_SAMPLES = 12;
@@ -117,19 +113,9 @@ LsfgPlan LsfgPacer::Plan(size_t capacity, uint64_t source_frames) {
     if (target_rate > 0.0f && config.refresh_rate > 0.0f) {
         target_rate = std::min(target_rate, config.refresh_rate);
     }
+    if (target_rate > 0.0f) target_rate -= TARGET_MARGIN;
 
     if (target_rate == 0.0f) {
-        // No explicit target rate: the multiplier is the multiplier, full stop.
-        // The panel-headroom clamp was here briefly and was removed at the
-        // user's decision; this is also upstream's behaviour on this branch.
-        //
-        // What that means above the panel's refresh rate, for the record: the
-        // display cannot show more frames than it refreshes, so under FIFO the
-        // surplus presents queue and the render thread waits on acquire. Nothing
-        // is displayed faster, and the compositor falls behind on guest
-        // deliveries instead. Below the refresh rate - every source at or under
-        // panel/4 - this branch behaves identically with or without the clamp.
-        // To restore it: limit = std::min(ceiling, HeadroomLimit()).
         output_credit = 0.0f;
         limit = ceiling;
         return LsfgPlan{limit, true};

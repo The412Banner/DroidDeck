@@ -11,6 +11,14 @@ class GameEnvironmentTest {
         assertEquals("6_9", values["VKD3D_SHADER_MODEL"])
     }
 
+    @Test fun forceSsbsIsADefaultAGameCanTurnOff() {
+        assertFalse(GameEnvironment.defaults("").containsKey(GameEnvironment.FORCE_SSBS))
+        assertEquals("1", GameEnvironment.defaults("", forceSsbs = true)[GameEnvironment.FORCE_SSBS])
+        val config = GameEnvironment.Config().withEntries("42", mapOf(GameEnvironment.FORCE_SSBS to "0"))
+        assertEquals("0", GameEnvironment.effective(config, "", "42", forceSsbs = true)[GameEnvironment.FORCE_SSBS])
+        assertEquals("1", GameEnvironment.effective(config, "", "43", forceSsbs = true)[GameEnvironment.FORCE_SSBS])
+    }
+
     @Test fun gameOverridesSharedAndPresetWithoutLeakingToOtherGames() {
         val config = GameEnvironment.Config(
             shared = mapOf("FEX_MULTIBLOCK" to "0", "VKD3D_FEATURE_LEVEL" to "12_2"),
@@ -34,6 +42,28 @@ class GameEnvironmentTest {
         assertNull(game["VKD3D_SHADER_MODEL"])
         val restored = GameEnvironment.effective(config.withEntries("42", emptyMap()), "", "42")
         assertEquals("6_9", restored["VKD3D_SHADER_MODEL"])
+    }
+
+    @Test fun dotnetRuntimeFitsAndroidAddressSpaceForEveryGame() {
+        val values = GameEnvironment.effective(GameEnvironment.Config(), "PERFORMANCE", "43")
+        assertEquals("800000000", values["DOTNET_GCRegionRange"])
+        assertEquals("0", values["DOTNET_EnableWriteXorExecute"])
+    }
+
+    @Test fun dotnetHeapRangeIsBareHexForNativeAot() {
+        for (preset in FexPreset.all) {
+            val values = GameEnvironment.effective(GameEnvironment.Config(), preset.id, "3478050")
+            assertEquals(32L * 1024 * 1024 * 1024, values.getValue("DOTNET_GCRegionRange")!!.toLong(16))
+        }
+    }
+
+    @Test fun dotnetHeapRangeRespectsSharedAndGameOverrides() {
+        val config = GameEnvironment.Config(
+            shared = mapOf("DOTNET_GCRegionRange" to "400000000"),
+            games = mapOf("3478050" to mapOf("DOTNET_GCRegionRange" to "800000000")),
+        )
+        assertEquals("800000000", GameEnvironment.effective(config, "", "3478050")["DOTNET_GCRegionRange"])
+        assertEquals("400000000", GameEnvironment.effective(config, "", "43")["DOTNET_GCRegionRange"])
     }
 
     @Test fun multiSelectionPreservesCustomTokensAndRemovesToggledValues() {
@@ -71,5 +101,25 @@ class GameEnvironmentTest {
         assertFalse(GameEnvironment.validValue("x".repeat(8193)))
         assertTrue(GameEnvironment.validScope("4294967295"))
         for (scope in listOf("0", "-1", "01", "+1", "4294967296", "../42")) assertFalse(GameEnvironment.validScope(scope))
+    }
+
+    @Test fun gameFexPresetOverridesGeneralAndCanInheritAgain() {
+        val performance = GameEnvironment.withGameFexPreset(GameEnvironment.Config(), "42", "PERFORMANCE")
+        assertEquals("PERFORMANCE", GameEnvironment.gameFexPreset(performance, "42"))
+        assertEquals("0", GameEnvironment.effective(performance, "STABILITY", "42")["FEX_TSOENABLED"])
+        assertEquals("1", GameEnvironment.effective(performance, "STABILITY", "43")["FEX_TSOENABLED"])
+
+        val inherited = GameEnvironment.withGameFexPreset(performance, "42", null)
+        assertNull(GameEnvironment.gameFexPreset(inherited, "42"))
+        assertFalse(inherited.games.containsKey("42"))
+    }
+
+    @Test fun gameFexPresetPreservesOtherOverridesAndRecognizesCustomValues() {
+        val original = GameEnvironment.Config(games = mapOf("42" to mapOf("CUSTOM" to "value", "FEX_MULTIBLOCK" to "7")))
+        assertEquals(GameEnvironment.CUSTOM_FEX_PRESET, GameEnvironment.gameFexPreset(original, "42"))
+
+        val compatibility = GameEnvironment.withGameFexPreset(original, "42", "COMPATIBILITY")
+        assertEquals("value", compatibility.games.getValue("42")["CUSTOM"])
+        assertEquals("COMPATIBILITY", GameEnvironment.gameFexPreset(compatibility, "42"))
     }
 }

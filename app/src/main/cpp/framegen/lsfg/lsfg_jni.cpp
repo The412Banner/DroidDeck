@@ -1,8 +1,3 @@
-// JNI surface for native LSFG shader-cache management.
-//
-// Deliberately free of any renderer handle: extracting the shader chain from
-// Lossless.dll and caching it is a slow, once-per-DLL operation that the app
-// runs off the render thread, long before a game launches.
 
 #include "lsfg_dll.h"
 
@@ -20,7 +15,7 @@ std::string toStdString(JNIEnv* env, jstring s) {
     return out;
 }
 
-} // namespace
+}
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_droiddeck_launcher_gpu_LsfgNative_nativeValidateDll(JNIEnv* env, jclass, jstring dllPath) {
@@ -28,26 +23,10 @@ Java_com_droiddeck_launcher_gpu_LsfgNative_nativeValidateDll(JNIEnv* env, jclass
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_droiddeck_launcher_gpu_LsfgNative_nativeDllVariant(JNIEnv* env, jclass, jstring dllPath,
-                                                        jboolean preferFp16) {
-    return (jint)lsfg::dllVariant(toStdString(env, dllPath), preferFp16 == JNI_TRUE);
-}
-
-extern "C" JNIEXPORT jint JNICALL
 Java_com_droiddeck_launcher_gpu_LsfgNative_nativeBuildCache(JNIEnv* env, jclass, jstring dllPath,
                                                         jstring cachePath, jboolean preferFp16) {
     return (jint)lsfg::buildCache(toStdString(env, dllPath), toStdString(env, cachePath),
                                   preferFp16 == JNI_TRUE);
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_droiddeck_launcher_gpu_LsfgNative_nativeCacheMatchesSource(JNIEnv* env, jclass,
-                                                                jstring cachePath,
-                                                                jstring dllPath) {
-    bool matches = false;
-    const lsfg::DllStatus status = lsfg::cacheMatchesSource(toStdString(env, cachePath),
-                                                            toStdString(env, dllPath), matches);
-    return (jboolean)(status == lsfg::DllStatus::Ok && matches);
 }
 
 extern "C" JNIEXPORT jint JNICALL

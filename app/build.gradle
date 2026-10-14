@@ -49,23 +49,50 @@ if (!(treeState in ['clean', 'dirty'])) {
 buildLabel = "${buildOrigin} ${treeState} · ${buildLabel}"
 def escapedBuildLabel = buildLabel.replace('\\', '\\\\').replace('"', '\\"')
 
+def sourceCommit = providers.environmentVariable('DROIDDECK_SOURCE_COMMIT').getOrNull()
+    ?: providers.environmentVariable('GITHUB_SHA').getOrNull() ?: gitValue(['rev-parse', 'HEAD']) ?: ''
+def prNumber = (providers.environmentVariable('DROIDDECK_PR_NUMBER').getOrNull() ?: '0').with { it.isInteger() ? it : '0' }
+def ciBuild = providers.environmentVariable('GITHUB_ACTIONS').getOrNull() == 'true'
+def releaseSigner = rootProject.file('keystore/release-signer.sha256').text.trim()
+def commitTime = (gitValue(['show', '-s', '--format=%ct', 'HEAD']) ?: '0').with { it.isLong() ? it : '0' }
+def desktopKde = rootProject.file('tools/desktop-kde/release.env').readLines()
+    .findAll { it.contains('=') && !it.startsWith('#') }
+    .collectEntries { def kv = it.split('=', 2); [(kv[0].trim()): kv[1].trim()] }
+def desktopRemovalSources = new groovy.json.JsonSlurper().parse(file('src/main/assets/desktop-removal/sources.json'))
+if (desktopRemovalSources.archives[desktopKde.DESKTOP_KDE_TAG] != desktopKde.DESKTOP_KDE_SHA256) {
+    throw new GradleException('Desktop removal inventories do not match the pinned archive')
+}
+if (!file('src/main/assets/desktop-removal/versions.txt').readLines().contains(desktopKde.DESKTOP_KDE_TAG)) {
+    throw new GradleException('Regenerate desktop removal inventories for ' + desktopKde.DESKTOP_KDE_TAG)
+}
+def variantSuffixes = rootProject.file('tools/release/variants.txt').readLines()
+    .findAll { it.trim() && !it.startsWith('#') }
+    .collect { def f = it.trim().split(/\s+/); "${f[1]}=${f[2] == '-' ? '' : f[2]}" }
+    .join(';')
+
 android {
     namespace 'com.droiddeck.launcher'
     compileSdk 34
-    // The NDK is pinned by property so CI can hand in whatever the runner already has rather than
-    // downloading a second copy; see gradle.properties.
     ndkVersion project.findProperty('ndkVersion') ?: '27.3.13750724'
 
     defaultConfig {
         applicationId "com.droiddeck.launcher"
         minSdkVersion 26
-        // 28 is not a leftover. An app on targetSdk 29+ runs in a domain that may not execute a
-        // file out of its own data directory, and this app's entire job is to exec a rootfs:
-        // proot, gamescope, the Steam client and everything it launches all live under files/.
         targetSdkVersion 28
-        versionCode 9
-        versionName "0.2.0"
+        versionCode 13
+        versionName "0.4.0"
         buildConfigField "String", "BUILD_LABEL", "\"${escapedBuildLabel}\""
+        buildConfigField "String", "SOURCE_COMMIT", "\"${sourceCommit}\""
+        buildConfigField "int", "PR_NUMBER", "${prNumber}"
+        buildConfigField "boolean", "CI_BUILD", "${ciBuild}"
+        buildConfigField "String", "RELEASE_SIGNER", "\"${releaseSigner}\""
+        buildConfigField "long", "COMMIT_TIME", "${commitTime}L * 1000L"
+        buildConfigField "String", "VARIANT_SUFFIXES", "\"${variantSuffixes}\""
+        buildConfigField "String", "SGDB_API_KEY", "\"${System.getenv("SGDB_API_KEY") ?: project.findProperty("sgdbApiKey") ?: ""}\""
+        buildConfigField "String", "DESKTOP_KDE_TAG", "\"${desktopKde.DESKTOP_KDE_TAG}\""
+        buildConfigField "String", "DESKTOP_KDE_URL", "\"https://github.com/${desktopKde.DESKTOP_KDE_REPO}/releases/download/${desktopKde.DESKTOP_KDE_TAG}/desktop-kde.tar.zst\""
+        buildConfigField "String", "DESKTOP_KDE_SHA256", "\"${desktopKde.DESKTOP_KDE_SHA256}\""
+        buildConfigField "long", "DESKTOP_KDE_SIZE", "${desktopKde.DESKTOP_KDE_SIZE}L"
 
         ndk {
             abiFilters 'arm64-v8a'
@@ -85,10 +112,6 @@ android {
     }
 
     signingConfigs {
-        // AOSP testkey (android@android.com), the same key Bannerlator ships with. It is publicly
-        // known, so it proves nothing about who built the apk - what it buys is ONE stable
-        // signature: every build installs over the last one instead of asking the user to
-        // uninstall first. v1 (JAR) + v2 + v3 so every installer and Android version accepts it.
         testkey {
             storeFile file("${rootDir}/keystore/testkey.p12")
             storeType "PKCS12"
@@ -113,24 +136,15 @@ android {
     }
 
     lint {
-        // targetSdk 28 is deliberate and structural: an app on 29+ may not execute a file out of
-        // its own data directory, and executing a rootfs is the whole of what this app does. Lint
-        // fails a release build over it because Google Play will not accept an sdk that old -
-        // true, and not something this app can trade away. Every other check stays on.
         disable 'ExpiredTargetSdkVersion'
     }
 
     packagingOptions {
         resources {
-            // Kadb's Bouncy Castle artifacts repeat the same multi-release JAR manifest.
             excludes += ['META-INF/versions/9/OSGI-INF/MANIFEST.MF']
         }
         jniLibs {
-            // The PulseAudio daemon is executed from the native library directory and its
-            // libraries are read out of the apk by the class loader: both want the old,
-            // uncompressed-and-extracted layout.
             useLegacyPackaging = true
-            // Prefer the PTY helper built by this app's NDK target over Termux's prebuilt copy.
             pickFirsts += ['**/libtermux.so']
         }
     }
@@ -141,8 +155,8 @@ android {
     }
 
     testOptions {
-        // Plain JVM tests: a stray android.util.Log call returns a default instead of throwing.
         unitTests.returnDefaultValues = true
+        unitTests.includeAndroidResources = true
     }
 
     compileOptions {
@@ -154,27 +168,81 @@ android {
     }
 }
 
+def stageSessionScripts = tasks.register('stageSessionScripts', Copy) {
+    from(rootProject.file('tools/linuxfs/overlay')) {
+        include 'usr/local/bin/droiddeck-*', 'usr/local/bin/steam-compatibility', 'usr/bin/**'
+    }
+    into(layout.projectDirectory.dir('src/main/assets/linuxfs'))
+}
+tasks.named('preBuild').configure { dependsOn(stageSessionScripts) }
+
+def runtimeAssetsDir = layout.buildDirectory.dir('runtimeAssets')
+def stageRuntimeAssets = tasks.register('stageRuntimeAssets', Sync) {
+    dependsOn(stageSessionScripts)
+    from(layout.projectDirectory.dir('src/main/assets')) { exclude 'pulseaudio.tzst' }
+    from(layout.buildDirectory.dir('prepared-assets'))
+    into(runtimeAssetsDir)
+}
+android.sourceSets.main.assets.setSrcDirs([runtimeAssetsDir])
+tasks.named('preBuild').configure { dependsOn(stageRuntimeAssets) }
+
+def verifyRuntimeInputs = tasks.register('verifyRuntimeInputs', Exec) {
+    mustRunAfter(stageSessionScripts, stageRuntimeAssets)
+    workingDir rootProject.projectDir
+    commandLine 'python3', 'tools/release/runtime_inputs.py', 'verify'
+}
+tasks.configureEach { task ->
+    if (task.name in ['packageDebug', 'packageRelease']) task.dependsOn(verifyRuntimeInputs)
+}
+
+def rustCrateDir = layout.projectDirectory.dir('src/main/rust/stores')
+def rustJniLibsDir = layout.buildDirectory.dir('rustJniLibs')
+def skipRust = (project.findProperty('skipRust') ?: 'false').toString().toBoolean()
+def buildRustStores = tasks.register('buildRustStores', Exec) {
+    description = 'Cross-compiles the store download engines (libdroiddeckstores.so) with cargo-ndk.'
+    onlyIf { !skipRust }
+    inputs.dir(rustCrateDir.dir('src'))
+    inputs.files(rustCrateDir.file('Cargo.toml'), rustCrateDir.file('Cargo.lock'))
+    inputs.property('ndkVersion', android.ndkVersion)
+    if (!skipRust) inputs.property('rustToolchain', providers.exec {
+        environment 'PATH', "${System.getProperty('user.home')}/.cargo/bin${File.pathSeparator}${System.getenv('PATH')}"
+        commandLine 'rustup', 'run', 'stable', 'rustc', '-Vv'
+    }.standardOutput.asText)
+    outputs.dir(rustJniLibsDir)
+    workingDir rustCrateDir
+    def cargoBin = "${System.getProperty('user.home')}/.cargo/bin"
+    environment 'PATH', "${cargoBin}${File.pathSeparator}${System.getenv('PATH')}"
+    environment 'ANDROID_NDK_HOME', android.ndkDirectory.absolutePath
+    environment 'CARGO_TERM_COLOR', 'never'
+    if (!skipRust) environment 'RUSTC', providers.exec {
+        commandLine 'rustup', 'which', '--toolchain', 'stable', 'rustc'
+    }.standardOutput.asText.get().trim()
+    commandLine 'rustup', 'run', 'stable', 'cargo', 'ndk', '--target', 'arm64-v8a', '--platform', '26',
+        '--output-dir', rustJniLibsDir.get().asFile.absolutePath,
+        'build', '--release', '--locked'
+}
+if (!skipRust) android.sourceSets.main.jniLibs.srcDir(rustJniLibsDir)
+tasks.named('preBuild').configure { dependsOn(buildRustStores) }
+
 dependencies {
-    // The runtime tarball is a zstd-compressed tar.
     implementation 'com.github.luben:zstd-jni:1.5.2-3@aar'
     implementation 'org.apache.commons:commons-compress:1.27.1'
-    // The UI: every menu, dialog and overlay is Compose. The session's SurfaceView and the
-    // on-screen pad are Views underneath it, which is what they are in every Compose app.
+    implementation 'org.tukaani:xz:1.10'
     implementation platform('androidx.compose:compose-bom:2024.02.00')
     implementation 'androidx.compose.ui:ui'
     implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    debugImplementation 'androidx.compose.ui:ui-tooling'
     implementation 'androidx.activity:activity-compose:1.8.2'
-    // The File Manager, Bannerlator's: its icon set, image thumbnails and the coroutines it
-    // copies on. Same versions as Bannerlator so the screen stays a straight copy.
     implementation 'androidx.compose.material:material-icons-extended'
     implementation 'io.coil-kt:coil-compose:2.6.0'
+    implementation 'com.caverock:androidsvg-aar:1.4'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
-    // ADB-over-Wi-Fi pairing and authenticated shell client. Users still approve pairing from
-    // Android's Wireless debugging screen; DroidDeck only runs its one fixed setting command.
     implementation 'com.flyfishxu:kadb-android:1.2.1'
-    // Android terminal view/emulator used by the in-session secondary-display Linux shell.
     implementation 'com.termux.termux-app:terminal-view:0.118.0'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.robolectric:robolectric:4.16.1'
+    testImplementation 'androidx.compose.ui:ui-test-junit4'
+    testRuntimeOnly 'com.github.luben:zstd-jni:1.5.2-3@jar'
 }

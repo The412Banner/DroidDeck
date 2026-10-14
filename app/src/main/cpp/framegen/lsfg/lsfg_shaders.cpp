@@ -1,10 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
-//
-// Ported into Bannerlator's compositor from WinNative (GPL-3.0-or-later),
-// whose LSFG port is credited to Camille LaVey / the Eden Emulator Project and
-// follows upstream lsfg-vk. Only the Vulkan dispatch differs: Bannerlator
-// resolves entry points through the renderer's own table (see lsfg_vkd.h).
 
 #include "lsfg_shaders.hpp"
 #include "lsfg_common.hpp"
@@ -28,12 +23,6 @@ LsfgShaders::LsfgShaders(const Device& device_, const std::string& cache_path,
         return;
     }
 
-    // Vulkan 1.1/1.2 compat: the cache is always built at the translator's
-    // native SPIR-V 1.6 (no device exists at import time), so lower each module
-    // to what THIS device accepts. A no-op on 1.3+ devices. Only the
-    // DXBC-translated chain is lowered: downgradeSpirv knows the capabilities
-    // DXVK emits, not whatever a precompiled vendor SPIR-V variant may carry,
-    // and relabelling one of those could hand the driver invalid SPIR-V.
     uint32_t lowered = 0;
     for (Module& module : set.modules) {
         if (module.words.size() > 1 && module.words[1] > spirv_target) {

@@ -1,5 +1,6 @@
 package com.droiddeck.launcher.ui
 
+import com.droiddeck.launcher.R
 import android.app.Presentation
 import android.content.ClipboardManager
 import android.content.Context
@@ -35,7 +36,6 @@ import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
 
-/** Touch controls drawn on a second Android display while the compositor remains on the main one. */
 class SecondScreenPresentation(
     private val sessionActivity: SessionActivity,
     display: Display,
@@ -82,7 +82,6 @@ class SecondScreenPresentation(
         if (created) renderMode()
     }
 
-    /** Releases the auxiliary Linux shell before the window is dismissed. */
     fun closeControls() {
         closeTerminal()
         keyboardHost?.hide()
@@ -99,7 +98,10 @@ class SecondScreenPresentation(
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) applyImmersiveMode()
+        if (hasFocus) {
+            applyImmersiveMode()
+            sessionActivity.refreshClipboard()
+        }
     }
 
     private fun renderMode() {
@@ -128,37 +130,37 @@ class SecondScreenPresentation(
         }
         controls.addView(Button(context).apply {
             text = "×"
-            contentDescription = "Close second-screen controls"
+            contentDescription = context.getString(R.string.deck_close)
             minWidth = dp(48)
             setOnClickListener { onClose() }
         })
         controls.addView(TextView(context).apply {
-            text = "Trackpad"
+            text = context.getString(R.string.second_trackpad)
             textSize = 14f
             setTextColor(Color.WHITE)
         }, LinearLayout.LayoutParams(0, -2, 1f))
         val keyboardButton = Button(context).apply {
-            text = "Show keyboard"
+            text = context.getString(R.string.second_show_keyboard)
             setOnClickListener {
                 val host = keyboardHost ?: return@setOnClickListener
                 if (host.shown) {
                     host.hide()
-                    text = "Show keyboard"
+                    text = context.getString(R.string.second_show_keyboard)
                 } else {
                     host.show()
-                    text = "Hide keyboard"
+                    text = context.getString(R.string.second_hide_keyboard)
                 }
             }
         }
         controls.addView(keyboardButton)
         controls.addView(Button(context).apply {
             text = "STEAM"
-            contentDescription = "Open Steam menu"
+            contentDescription = context.getString(R.string.deck_open_steam_menu)
             setOnClickListener { onSteamMenu() }
         })
         controls.addView(Button(context).apply {
             text = "…"
-            contentDescription = "Open Quick Access Menu"
+            contentDescription = context.getString(R.string.drawer_open_qam)
             setOnClickListener { onQam() }
         })
         panel.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
@@ -179,17 +181,17 @@ class SecondScreenPresentation(
         }
         bar.addView(Button(context).apply {
             text = "×"
-            contentDescription = "Close second-screen controls"
+            contentDescription = context.getString(R.string.deck_close)
             minWidth = dp(48)
             setOnClickListener { onClose() }
         })
         bar.addView(TextView(context).apply {
-            text = "Linux terminal"
+            text = context.getString(R.string.second_terminal)
             textSize = 14f
             setTextColor(Color.WHITE)
         }, LinearLayout.LayoutParams(0, -2, 1f))
         bar.addView(Button(context).apply {
-            text = "Keyboard"
+            text = context.getString(R.string.drawer_keyboard)
             setOnClickListener { showTerminalKeyboard() }
         })
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))
@@ -205,7 +207,7 @@ class SecondScreenPresentation(
         val session = SessionTerminal.create(terminalClient)
         if (session == null) {
             root.addView(TextView(context).apply {
-                text = "The Linux session is not ready for a terminal yet."
+                text = context.getString(R.string.second_terminal_not_ready)
                 setTextColor(Color.WHITE)
                 gravity = Gravity.CENTER
             }, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -222,22 +224,24 @@ class SecondScreenPresentation(
             }
             keys.addView(button)
         }
-        key("Esc", "\u001b")
-        key("Tab", "\t")
-        key("Ctrl", "") { button ->
+        val ctrl = context.getString(R.string.pckb_key_ctrl)
+        val alt = context.getString(R.string.pckb_key_alt)
+        key(context.getString(R.string.pckb_key_esc), "\u001b")
+        key(context.getString(R.string.second_key_tab), "\t")
+        key(ctrl, "") { button ->
             ctrlActive = !ctrlActive
-            button.text = if (ctrlActive) "Ctrl ✓" else "Ctrl"
+            button.text = if (ctrlActive) context.getString(R.string.second_key_on, ctrl) else ctrl
         }
-        key("Alt", "") { button ->
+        key(alt, "") { button ->
             altActive = !altActive
-            button.text = if (altActive) "Alt ✓" else "Alt"
+            button.text = if (altActive) context.getString(R.string.second_key_on, alt) else alt
         }
         key("↑", "\u001b[A")
         key("↓", "\u001b[B")
         key("←", "\u001b[D")
         key("→", "\u001b[C")
-        key("Ctrl+C", "\u0003")
-        key("Ctrl+D", "\u0004")
+        key(context.getString(R.string.second_key_ctrl_c), "\u0003")
+        key(context.getString(R.string.second_key_ctrl_d), "\u0004")
         keyStrip.addView(keys)
         root.addView(keyStrip, LinearLayout.LayoutParams(-1, -2))
 

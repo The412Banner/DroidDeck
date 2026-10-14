@@ -6,16 +6,13 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 
-/** Writes the machine-readable lifecycle stream beside the existing session artifacts. */
 object SessionEvents {
     private const val TAG = "SessionEvents"
     private val lock = Any()
 
-    fun begin(context: Context, mode: String) {
-        // A runtime-install failure can leave the folder claimed before the service ever starts.
-        // Keep that folder, but give the next attempt its own session directory.
+    fun begin(context: Context, mode: String, label: String? = null) {
         SessionPaths.take()
-        val dir = SessionPaths.beginOrCurrent(context)
+        val dir = SessionPaths.beginOrCurrent(context, label ?: SessionPaths.label(mode, null))
         synchronized(SessionState) {
             SessionState.phase = SessionPhase.PREPARING
             SessionState.mode = mode

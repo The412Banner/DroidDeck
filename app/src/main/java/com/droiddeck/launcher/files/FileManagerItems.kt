@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileCopy
@@ -61,6 +62,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import coil.compose.AsyncImage
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -75,23 +77,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// The File Manager's rows, tiles, favourites and context menu.
 
-// Semantic identity colours for the favourite-card drive badge. Intentionally NOT theme
-// accent colours - they identify the storage source at a glance. Returns (background, foreground).
 private fun badgeColors(loc: FavLocation): Pair<Color, Color> {
     val white = Color(0xFFFFFFFF)
     return when {
-        loc.storage == FavStorage.INTERNAL -> Color(0xFF2E5FB0) to white   // blue
-        loc.storage == FavStorage.SD -> Color(0xFF2E7D32) to white         // green
-        else -> Color(0xFF555555) to white                                 // grey
+        loc.storage == FavStorage.INTERNAL -> Color(0xFF2E5FB0) to white
+        loc.storage == FavStorage.SD -> Color(0xFF2E7D32) to white
+        else -> Color(0xFF555555) to white
     }
 }
 
-// The context-menu item list shared by the list rows (FileItemRow) and the grid tiles
-// (FileGridTile), so both open the identical menu. Gating (isDir/canRun/isInno/looksLikeArchive) is
-// recomputed from [file] here - one source of truth for what each item shows. Every item dismisses
-// the menu first, then runs its action.
 @Composable
 private fun FileContextMenuItems(
     file: File,
@@ -107,23 +102,20 @@ private fun FileContextMenuItems(
 ) {
     val isDir = file.isDirectory
     DropdownMenuItem(
-        text = { Text("Select") },
+        text = { Text(stringResource(R.string.fm_select)) },
         leadingIcon = { Icon(Icons.Filled.Checklist, null, tint = MaterialTheme.colorScheme.primary) },
         onClick = { onDismissMenu(); onSelect() },
     )
     MenuItemDivider()
-    // Properties: basic info + Read-only / Hidden toggles, for ANY file or folder (handy for config
-    // files like .txt/.cfg/.ini). Kept near the top since it's a common reason to open this menu.
     DropdownMenuItem(
-        text = { Text("Properties") },
+        text = { Text(stringResource(R.string.fm_properties)) },
         leadingIcon = { Icon(Icons.Filled.Info, null, tint = MaterialTheme.colorScheme.primary) },
         onClick = { onDismissMenu(); onProperties() },
     )
     MenuItemDivider()
-    // Favorites are directories - only folders get the pin toggle.
     if (isDir) {
         DropdownMenuItem(
-            text = { Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites") },
+            text = { Text(if (isFavorite) stringResource(R.string.fm_favorite_remove) else stringResource(R.string.fm_favorite_add)) },
             leadingIcon = {
                 Icon(
                     if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
@@ -136,25 +128,25 @@ private fun FileContextMenuItems(
         MenuItemDivider()
     }
     DropdownMenuItem(
-        text = { Text("Rename") },
+        text = { Text(stringResource(R.string.fm_rename)) },
         leadingIcon = { Icon(Icons.Filled.Edit, null, tint = MaterialTheme.colorScheme.primary) },
         onClick = { onDismissMenu(); onRename() },
     )
     MenuItemDivider()
     DropdownMenuItem(
-        text = { Text("Copy") },
+        text = { Text(stringResource(R.string.fm_copy)) },
         leadingIcon = { Icon(Icons.Filled.FileCopy, null, tint = MaterialTheme.colorScheme.primary) },
         onClick = { onDismissMenu(); onCopy() },
     )
     MenuItemDivider()
     DropdownMenuItem(
-        text = { Text("Cut") },
+        text = { Text(stringResource(R.string.fm_cut)) },
         leadingIcon = { Icon(Icons.Filled.ContentCut, null, tint = MaterialTheme.colorScheme.primary) },
         onClick = { onDismissMenu(); onCut() },
     )
     MenuItemDivider()
     DropdownMenuItem(
-        text = { Text("Delete") },
+        text = { Text(stringResource(R.string.common_delete)) },
         leadingIcon = { Icon(Icons.Filled.Delete, null, tint = MaterialTheme.colorScheme.primary) },
         onClick = { onDismissMenu(); onDelete() },
     )
@@ -184,13 +176,11 @@ internal fun FileItemRow(
     onProperties: () -> Unit = {},
 ) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+    val context = LocalContext.current
     val isDir = file.isDirectory
     val isExe = !isDir && file.name.lowercase().let { it.endsWith(".exe") || it.endsWith(".bat") || it.endsWith(".msi") || it.endsWith(".sh") }
-    // Image files show a real thumbnail instead of the generic file icon (handy when picking a
-    // wallpaper/icon). Coil sizes the decode to the 36dp slot and caches it, so scrolling stays smooth.
     val isImage = !isDir && file.extension.lowercase() in IMAGE_THUMB_EXTS
 
-    // For real PE executables, try to pull out the embedded application icon (async, off the main thread).
     var exeIcon by remember(file.absolutePath) { mutableStateOf<ImageBitmap?>(null) }
     if (!isDir && file.name.lowercase().endsWith(".exe")) {
         LaunchedEffect(file.absolutePath) {
@@ -204,8 +194,6 @@ internal fun FileItemRow(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 3.dp)
             .combinedClickable(
-                // In selection mode a tap toggles instead of opening, so you can rattle through a
-                // folder without long-pressing every single row.
                 onClick = { if (selectionMode) onToggleSelect() else onTap() },
                 onLongClick = onLongPress,
             ),
@@ -228,7 +216,6 @@ internal fun FileItemRow(
                 Spacer(Modifier.width(4.dp))
             }
             when {
-                // Show the executable's own embedded icon when we managed to extract one.
                 exeIcon != null -> Image(
                     bitmap = exeIcon!!,
                     contentDescription = null,
@@ -246,7 +233,6 @@ internal fun FileItemRow(
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(if (compact) 24.dp else 36.dp),
                 )
-                // Real image preview. Falls back to the generic file icon while loading or on decode failure.
                 isImage -> AsyncImage(
                     model = file,
                     contentDescription = null,
@@ -276,7 +262,7 @@ internal fun FileItemRow(
                 )
                 Text(
                     text = buildString {
-                        if (!isDir) append(FileOps.formatBytes(file.length())).append("  \u2022  ")
+                        if (!isDir) append(FileOps.formatBytes(context, file.length())).append("  \u2022  ")
                         append(dateFormat.format(Date(file.lastModified())))
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -285,7 +271,7 @@ internal fun FileItemRow(
             }
             if (showActions) Box {
                 IconButton(onClick = onMenu) {
-                    Icon(Icons.Filled.MoreVert, "Actions", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Filled.MoreVert, stringResource(R.string.fm_actions), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                 }
                 DropdownMenu(
                     expanded = menuExpanded,
@@ -310,8 +296,45 @@ internal fun FileItemRow(
     }
 }
 
-// Dedicated Favorites list that replaces the file list while the star toggle is on.
-// Reads the store keyed on [favTick] so it recomposes after any pin/unpin.
+@Composable
+internal fun ParentFolderRow(compact: Boolean = false, onTap: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 3.dp)
+            .clickable(onClick = onTap),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = if (compact) 3.dp else 8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.ArrowUpward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(if (compact) 24.dp else 36.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "..",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = stringResource(R.string.fm_up_one_level),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun FavoritesList(
     currentDir: File,
@@ -338,7 +361,7 @@ internal fun FavoritesList(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 Text(
-                    text = "Favorites",
+                    text = stringResource(R.string.fm_favorites),
                     color = MaterialTheme.colorScheme.onBackground,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -351,7 +374,7 @@ internal fun FavoritesList(
                     Icon(Icons.Filled.PushPin, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "Pin current folder",
+                        text = stringResource(R.string.fm_pin_current),
                         color = MaterialTheme.colorScheme.primary,
                         fontSize = 13.sp,
                     )
@@ -366,7 +389,7 @@ internal fun FavoritesList(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "No favorites yet - pin a folder with its ⋮ menu to jump back here fast.",
+                        text = stringResource(R.string.fm_no_favorites),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(horizontal = 32.dp),
@@ -387,9 +410,6 @@ internal fun FavoritesList(
     }
 }
 
-// A single favourite - matches the FileItemRow card style (surfaceContainer + outline +
-// RoundedCornerShape(10.dp)). Shows the folder name, a coloured drive badge + origin text,
-// and the full display path; tapping jumps into it, the filled star unpins.
 @Composable
 private fun FavoriteCard(
     file: File,
@@ -428,10 +448,9 @@ private fun FavoriteCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(2.dp))
-                // Origin line: coloured drive badge + source description.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = loc.driveLabel,
+                        text = stringResource(loc.driveLabel),
                         color = badgeFg,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -443,9 +462,9 @@ private fun FavoriteCard(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = when (loc.storage) {
-                            FavStorage.INTERNAL -> "Internal storage"
-                            FavStorage.SD -> "SD card"
-                            FavStorage.OTHER -> "Storage"
+                            FavStorage.INTERNAL -> stringResource(R.string.games_internal)
+                            FavStorage.SD -> stringResource(R.string.fm_drive_sd)
+                            FavStorage.OTHER -> stringResource(R.string.fm_drive_storage)
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
@@ -464,7 +483,7 @@ private fun FavoriteCard(
             IconButton(onClick = onUnpin) {
                 Icon(
                     Icons.Filled.Star,
-                    contentDescription = "Remove from favorites",
+                    contentDescription = stringResource(R.string.fm_unpin_favorite),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(22.dp),
                 )
@@ -473,13 +492,6 @@ private fun FavoriteCard(
     }
 }
 
-/**
- * One entry in the File Manager's grid view: a big thumbnail with the name under it.
- *
- * Deliberately drops size and date - at this width they truncate to noise. The grid is for
- * recognising things by sight (screenshots, covers, game folders); the list stays the view for
- * reading details.
- */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun FileGridTile(
@@ -510,7 +522,6 @@ internal fun FileGridTile(
             if (bmp != null) exeIcon = bmp.asImageBitmap()
         }
     }
-    // The tile has no ⋮ button - long-press opens this menu, anchored to the Box around the Card.
     Box {
         Card(
             modifier = Modifier
@@ -564,8 +575,6 @@ internal fun FileGridTile(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                // Always reserve two lines (issue #475): a one-line name used to make its card shorter than
-                // its neighbours, so grid rows had ragged heights. Fixed min/max keeps every tile the same size.
                 Text(
                     file.name,
                     color = MaterialTheme.colorScheme.onSurface,

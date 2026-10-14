@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 
+import com.droiddeck.launcher.R;
 import com.droiddeck.launcher.core.ArchivePaths;
 import com.droiddeck.launcher.core.Downloader;
 import com.droiddeck.launcher.core.Hashes;
@@ -28,25 +29,22 @@ import java.nio.file.StandardCopyOption;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 
-/**
- * Downloads and unpacks the Linux runtime rootfs into {@code files/linuxfs}. It is opt-in: nothing
- * fetches it until the user asks for it, and a gamescope session refuses to start without it.
- *
- * <p>The catalog row names the build, its URL and its sha256, so an interrupted or corrupted
- * download is caught before anything is written into the app's files directory.
- */
 public final class LinuxRuntimeInstaller {
     private static final String TAG = "LinuxRuntimeInstaller";
 
-    /** Catalog row, beside the other component catalogs in winlator-contents. */
     public static final String CATALOG_URL =
-            "https://raw.githubusercontent.com/The412Banner/winlator-contents/main/linuxfs.json";
+            "https://raw.githubusercontent.com/Droid-Deck/DroidDeck-Components/main/linuxfs.json";
 
     private static final String VERSION_FILE = ".version";
 
+    public enum Step { DOWNLOADING, VERIFYING, OTHER }
+
     public interface ProgressListener {
-        /** {@code percent} is -1 while the size is unknown. */
         void onProgress(String stage, int percent);
+
+        default void onProgress(Step step, String stage, int percent) {
+            onProgress(stage, percent);
+        }
     }
 
     public static final class Release {
@@ -63,26 +61,24 @@ public final class LinuxRuntimeInstaller {
         }
     }
 
-    /**
-     * One install per process. The launcher and the session screen can both start one, and a
-     * launcher rebuilt mid-install (a pad plugged in, dark mode switched) forgets it had: a second
-     * install would share the first one's archive and staging directory and wreck both.
-     */
     private static final class Job {
         final CopyOnWriteArrayList<ProgressListener> listeners = new CopyOnWriteArrayList<>();
         final CountDownLatch done = new CountDownLatch(1);
-        volatile String stage = "Starting\u2026";
+        volatile String stage;
+        volatile Step step = Step.OTHER;
         volatile int percent = -1;
         volatile boolean ok;
+        final boolean removal;
+        boolean maintenance;
+        Job(boolean removal, String stage) { this.removal = removal; this.stage = stage; }
     }
 
     private static final Object JOB_LOCK = new Object();
     private static Job running;
-    private static boolean removing;
+    private static volatile String removalError;
 
     private LinuxRuntimeInstaller() {}
 
-    /** The build currently unpacked, or null when the runtime is not installed. */
     public static String installedVersion(Context context) {
         File marker = new File(LinuxRuntime.rootDir(context), VERSION_FILE);
         if (!marker.isFile() || !LinuxRuntime.isInstalled(context)) return null;
@@ -90,7 +86,6 @@ public final class LinuxRuntimeInstaller {
         return v == null ? null : v.trim();
     }
 
-    /** The catalog's current build, or null when it cannot be reached or read. */
     public static Release fetchRelease() {
         String body = Downloader.downloadString(CATALOG_URL);
         if (body == null || body.isEmpty()) return null;
@@ -107,38 +102,31 @@ public final class LinuxRuntimeInstaller {
         }
     }
 
-    /**
-     * The guest's home directory, carried across an update rather than replaced with the tarball's
-     * empty one. Steam installs itself here - the client, the signed-in account and every
-     * downloaded game - so replacing the rootfs wholesale used to delete all three and leave the
-     * user re-downloading Steam and signing in again, with their library gone.
-     */
     private static final String USER_DATA = "root";
 
-    /**
-     * Downloads {@code release} and replaces whatever is installed with it. Returns false and
-     * leaves the existing runtime alone if the download or the checksum fails; the new rootfs is
-     * only moved into place once it has been unpacked whole.
-     *
-     * <p>{@link #USER_DATA} survives the swap: the system is replaced, what the user put in it is
-     * not. An update therefore keeps Steam, the login and the installed games.
-     */
     public static boolean install(Context context, Release release, ProgressListener listener) {
         Job job;
         boolean owner;
         synchronized (JOB_LOCK) {
-            if (removing) return false;
+            if (running != null && (running.removal || running.maintenance)) return false;
             owner = running == null;
-            if (owner) running = new Job();
+            if (owner) { running = new Job(false, context.getString(R.string.user_apps_starting)); removalError = null; }
             job = running;
             if (listener != null) job.listeners.add(listener);
         }
         if (!owner) return join(job, listener);
         try {
-            job.ok = installOnce(context.getApplicationContext(), release, (stage, percent) -> {
-                job.stage = stage;
-                job.percent = percent;
-                for (ProgressListener l : job.listeners) l.onProgress(stage, percent);
+            job.ok = installOnce(context.getApplicationContext(), release, new ProgressListener() {
+                @Override public void onProgress(String stage, int percent) {
+                    onProgress(Step.OTHER, stage, percent);
+                }
+
+                @Override public void onProgress(Step step, String stage, int percent) {
+                    job.step = step;
+                    job.stage = stage;
+                    job.percent = percent;
+                    for (ProgressListener l : job.listeners) l.onProgress(step, stage, percent);
+                }
             });
             return job.ok;
         } finally {
@@ -149,17 +137,76 @@ public final class LinuxRuntimeInstaller {
         }
     }
 
-    /** True while an install is running in this process, whoever started it. */
     public static boolean isInstalling() {
         synchronized (JOB_LOCK) {
-            return running != null;
+            return running != null && !running.removal && !running.maintenance;
         }
     }
 
-    /**
-     * Follows the install already running, for a screen that was rebuilt mid-install. Blocks until
-     * it ends and returns its result, or returns null at once when nothing is installing.
-     */
+    public static boolean isBusy() {
+        synchronized (JOB_LOCK) { return running != null; }
+    }
+
+    public static boolean isRemoving() {
+        synchronized (JOB_LOCK) { return running != null && running.removal; }
+    }
+
+    public static boolean isMaintaining() {
+        synchronized (JOB_LOCK) { return running != null && running.maintenance; }
+    }
+
+    public static Maintenance beginMaintenance(Context context, String stage) {
+        if (com.droiddeck.launcher.session.SessionState.INSTANCE.getRunning()) return null;
+        com.droiddeck.launcher.session.SessionPhase phase = com.droiddeck.launcher.session.SessionState.INSTANCE.getPhase();
+        if (phase != com.droiddeck.launcher.session.SessionPhase.IDLE && phase != com.droiddeck.launcher.session.SessionPhase.FAILED) return null;
+        synchronized (JOB_LOCK) {
+            if (running != null) return null;
+            removalError = null;
+            running = new Job(false, stage);
+            running.maintenance = true;
+            return new Maintenance(running);
+        }
+    }
+
+    public interface MaintenanceWork { String run(ProgressListener listener); }
+
+    public static final class Maintenance {
+        private final Job job;
+        private final java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+        private Maintenance(Job job) { this.job = job; }
+        public boolean run(ProgressListener listener, MaintenanceWork work) {
+            if (!started.compareAndSet(false, true)) return join(job, listener);
+            if (listener != null) job.listeners.add(listener);
+            try {
+                removalError = work.run((stage, percent) -> {
+                    job.stage = stage;
+                    job.percent = percent;
+                    for (ProgressListener l : job.listeners) l.onProgress(stage, percent);
+                });
+                job.ok = removalError == null;
+                return job.ok;
+            } catch (Exception e) {
+                removalError = e.getMessage();
+                Log.e(TAG, "maintenance", e);
+                return false;
+            } finally {
+                synchronized (JOB_LOCK) { running = null; }
+                job.done.countDown();
+                if (listener != null) job.listeners.remove(listener);
+            }
+        }
+    }
+
+    public static String removalError() { return removalError; }
+
+    public static boolean hasRemovalPending(Context context) {
+        return removalDirectory(LinuxRuntime.rootDir(context)).exists();
+    }
+
+    private static File removalDirectory(File root) {
+        return new File(root.getParentFile(), root.getName() + ".removing");
+    }
+
     public static Boolean attach(ProgressListener listener) {
         Job job;
         synchronized (JOB_LOCK) {
@@ -172,7 +219,7 @@ public final class LinuxRuntimeInstaller {
 
     private static boolean join(Job job, ProgressListener listener) {
         try {
-            if (listener != null) listener.onProgress(job.stage, job.percent);
+            if (listener != null) listener.onProgress(job.step, job.stage, job.percent);
             job.done.await();
             return job.ok;
         } catch (InterruptedException e) {
@@ -186,11 +233,15 @@ public final class LinuxRuntimeInstaller {
     private static boolean installOnce(Context context, Release release, ProgressListener listener) {
         File archive = new File(context.getCacheDir(), "linuxfs.tar.zst");
         try {
-            if (listener != null) listener.onProgress("Downloading", 0);
-            // Downloader reports a 0..1 fraction, or -1 while the total size is unknown.
+            File pendingRemoval = removalDirectory(LinuxRuntime.rootDir(context));
+            if (pendingRemoval.exists() && listener != null) listener.onProgress(context.getString(R.string.rtinst_removing_leftovers), -1);
+            if (!discard(pendingRemoval, null)) throw new IOException("Cannot clear the previous runtime: " + pendingRemoval);
+            emptyTrash(LinuxRuntime.rootDir(context).getParentFile());
+            String downloading = context.getString(R.string.rtinst_downloading);
+            if (listener != null) listener.onProgress(Step.DOWNLOADING, downloading, 0);
             boolean ok = Downloader.downloadFile(release.url, archive, true, (fraction) -> {
                 if (listener != null) {
-                    listener.onProgress("Downloading",
+                    listener.onProgress(Step.DOWNLOADING, downloading,
                             fraction < 0 ? -1 : Math.round(fraction * 100f));
                 }
             });
@@ -199,49 +250,42 @@ public final class LinuxRuntimeInstaller {
                 return false;
             }
 
-            if (listener != null) listener.onProgress("Verifying", -1);
+            if (listener != null) listener.onProgress(Step.VERIFYING, context.getString(R.string.rtinst_verifying), -1);
             String actual = Hashes.sha256(archive);
             if (!release.sha256.equalsIgnoreCase(actual)) {
                 Log.w(TAG, "checksum mismatch: wanted " + release.sha256 + ", got " + actual);
                 return false;
             }
 
-            // Unpack beside the live rootfs and swap, so a failure here cannot leave a half
-            // runtime that isInstalled() would happily launch.
             File root = LinuxRuntime.rootDir(context);
             File staging = new File(root.getParentFile(), LinuxRuntime.DIR + ".new");
             File old = new File(root.getParentFile(), LinuxRuntime.DIR + ".old");
             recoverInterruptedSwap(root, staging, old);
-            FileUtils.delete(staging);
-            if (!staging.mkdirs()) return false;
-            if (listener != null) listener.onProgress("Extracting", -1);
-            if (!extract(archive, staging, listener)) {
-                FileUtils.delete(staging);
+            if (!discard(staging, null) || !staging.mkdirs()) return false;
+            if (listener != null) listener.onProgress(context.getString(R.string.rtinst_extracting), -1);
+            if (!extract(context, archive, staging, listener)) {
+                RuntimeFileTree.delete(staging, null);
                 return false;
             }
             FileUtils.writeString(new File(staging, VERSION_FILE), release.version);
 
-            FileUtils.delete(old);
+            if (!discard(old, null)) {
+                discard(staging, null);
+                return false;
+            }
             if (root.isDirectory() && !root.renameTo(old)) {
-                FileUtils.delete(staging);
+                RuntimeFileTree.delete(staging, null);
                 return false;
             }
 
-            // Carry the user's home over before the new rootfs takes the name. A rename inside the
-            // same filesystem, so a 30 GB library costs nothing and cannot half-copy; the tarball's
-            // own empty /root is dropped first so the rename has somewhere to land. If this fails
-            // the update is abandoned and the previous runtime is put back untouched - shipping a
-            // working system with the user's games gone is the worse outcome.
-            File keptFrom = new File(old, USER_DATA);
-            if (keptFrom.isDirectory()) {
-                File keptTo = new File(staging, USER_DATA);
-                FileUtils.delete(keptTo);
-                if (!keptFrom.renameTo(keptTo)) {
-                    Log.w(TAG, "could not carry " + USER_DATA + " across the update; rolling back");
-                    FileUtils.delete(staging);
-                    old.renameTo(root);
-                    return false;
-                }
+            try {
+                RuntimeFileTree.carryHome(old, staging);
+            } catch (IOException e) {
+                Log.w(TAG, "could not carry root across the update; rolling back", e);
+                old.renameTo(root);
+                try { RuntimeFileTree.delete(staging, null); }
+                catch (IOException cleanup) { Log.w(TAG, "could not clear the failed staging tree", cleanup); }
+                return false;
             }
 
             if (!staging.renameTo(root)) {
@@ -250,7 +294,7 @@ public final class LinuxRuntimeInstaller {
                 if (old.isDirectory()) old.renameTo(root);
                 return false;
             }
-            FileUtils.delete(old);
+            discard(old, null);
             return LinuxRuntime.isInstalled(context);
         } catch (Exception e) {
             Log.e(TAG, "install", e);
@@ -260,17 +304,38 @@ public final class LinuxRuntimeInstaller {
         }
     }
 
-    private static void recoverInterruptedSwap(File root, File staging, File old) {
+    static void recoverInterruptedSwap(File root, File staging, File old) throws IOException {
         File target = root.isDirectory() ? root : old;
         File stagedHome = new File(staging, USER_DATA);
         File home = new File(target, USER_DATA);
         if (target.isDirectory() && stagedHome.isDirectory() && (!home.exists() || isEmptyDir(home))) {
-            FileUtils.delete(home);
-            if (stagedHome.renameTo(home)) Log.w(TAG, "recovered " + USER_DATA + " from an interrupted update");
+            RuntimeFileTree.carryHome(staging, target);
+            Log.w(TAG, "recovered " + USER_DATA + " from an interrupted update");
         }
         if (!root.isDirectory() && old.isDirectory() && old.renameTo(root)) {
             Log.w(TAG, "restored the previous runtime after an interrupted update");
         }
+    }
+
+    static final String TRASH = ".runtime-trash";
+
+    static boolean discard(File tree, java.util.function.LongConsumer progress) {
+        if (RuntimeFileTree.deleteWhatCan(tree, progress)) return true;
+        File trash = new File(tree.getParentFile(), TRASH);
+        trash.mkdirs();
+        File aside = new File(trash, tree.getName() + "-" + System.currentTimeMillis());
+        if (tree.renameTo(aside)) {
+            Log.w(TAG, "could not delete all of " + tree + "; set the rest aside in " + aside);
+            return true;
+        }
+        Log.w(TAG, "could not delete or set aside " + tree);
+        return !tree.exists();
+    }
+
+    static void emptyTrash(File parent) {
+        File trash = new File(parent, TRASH);
+        if (trash.exists() && !RuntimeFileTree.deleteWhatCan(trash, null))
+            Log.i(TAG, "some runtime leftovers still cannot be deleted: " + trash);
     }
 
     private static boolean isEmptyDir(File dir) {
@@ -278,36 +343,91 @@ public final class LinuxRuntimeInstaller {
         return dir.isDirectory() && names != null && names.length == 0;
     }
 
-    /** Removes the runtime; returns false without touching it while an install is running. */
-    public static boolean uninstall(Context context) {
+    public static Removal beginUninstall(Context context) {
+        if (com.droiddeck.launcher.session.SessionState.INSTANCE.getRunning()) return null;
+        com.droiddeck.launcher.session.SessionPhase phase = com.droiddeck.launcher.session.SessionState.INSTANCE.getPhase();
+        if (phase != com.droiddeck.launcher.session.SessionPhase.IDLE && phase != com.droiddeck.launcher.session.SessionPhase.FAILED) return null;
+        return beginUninstall(context.getApplicationContext(), LinuxRuntime.rootDir(context));
+    }
+
+    static Removal beginUninstall(Context app, File root) {
         synchronized (JOB_LOCK) {
-            if (running != null || removing) return false;
-            removing = true;
-        }
-        try {
-            FileUtils.delete(LinuxRuntime.rootDir(context));
-            return true;
-        } finally {
-            synchronized (JOB_LOCK) {
-                removing = false;
-            }
+            if (running != null) return null;
+            removalError = null;
+            running = new Job(true, text(app, R.string.rtinst_removing));
+            return new Removal(app, root, running);
         }
     }
 
-    /**
-     * A whole-rootfs tar, which is not the shape the shared extractor handles: a distribution
-     * rootfs is full of hard links (one binary under several names), and an entry written as an
-     * empty file instead of its link target is a rootfs that boots to nothing. Symlinks, hard
-     * links and the executable bit are all carried over here.
-     */
-    public static boolean extract(File archive, File destination, ProgressListener listener) {
+    private static String text(Context app, int id) {
+        return app == null ? "" : app.getString(id);
+    }
+
+    public static final class Removal {
+        private final Context app;
+        private final File root;
+        private final Job job;
+        private final java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+        private Removal(Context app, File root, Job job) { this.app = app; this.root = root; this.job = job; }
+
+        public boolean run(ProgressListener listener) {
+            if (!started.compareAndSet(false, true)) return join(job, listener);
+            if (listener != null) job.listeners.add(listener);
+            try {
+                report(text(app, R.string.rtinst_removing), -1);
+                final long[] removed = {0};
+                final long[] lastShown = {0};
+                java.util.function.LongConsumer progress = ignored -> {
+                    removed[0]++;
+                    long now = System.nanoTime();
+                    if (removed[0] == 1 || now - lastShown[0] >= 200_000_000L) {
+                        lastShown[0] = now;
+                        report(app == null ? "" : app.getResources().getQuantityString(
+                                R.plurals.rtinst_removing_entries, (int) Math.min(removed[0], Integer.MAX_VALUE), removed[0]), -1);
+                    }
+                };
+                File pending = removalDirectory(root);
+                if (root.exists()) {
+                    if (!discard(pending, progress) || !root.renameTo(pending))
+                        throw new IOException("Cannot prepare the runtime for removal");
+                } else if (!pending.isDirectory() && !pending.mkdirs()) {
+                    throw new IOException("Cannot prepare the runtime for removal");
+                }
+                for (File leftover : new File[]{
+                        new File(root.getParentFile(), root.getName() + ".new"),
+                        new File(root.getParentFile(), root.getName() + ".old"),
+                        pending}) {
+                    if (!discard(leftover, progress)) throw new IOException("Cannot remove " + leftover);
+                }
+                emptyTrash(root.getParentFile());
+                job.ok = true;
+                report(text(app, R.string.rtinst_removed), 100);
+                return true;
+            } catch (IOException e) {
+                removalError = text(app, R.string.rtinst_removal_failed);
+                Log.w(TAG, "runtime removal incomplete", e);
+                report(removalError, -1);
+                return false;
+            } finally {
+                synchronized (JOB_LOCK) { running = null; }
+                job.done.countDown();
+            }
+        }
+        private void report(String stage, int percent) {
+            job.stage = stage;
+            job.percent = percent;
+            for (ProgressListener listener : job.listeners) listener.onProgress(stage, percent);
+        }
+    }
+
+    public static boolean extract(Context context, File archive, File destination, ProgressListener listener) {
         long entries = 0;
+        String extracting = context.getString(R.string.rtinst_extracting);
         try (InputStream in = new ZstdCompressorInputStream(
                 new BufferedInputStream(new FileInputStream(archive), 1 << 16));
              TarArchiveInputStream tar = new TarArchiveInputStream(in)) {
             TarArchiveEntry entry;
             while ((entry = tar.getNextTarEntry()) != null) {
-                // Refuse anything that would land outside the runtime directory.
                 File file = ArchivePaths.inside(destination, entry.getName());
                 if (file == null) {
                     Log.w(TAG, "skipping entry outside the rootfs: " + entry.getName());
@@ -324,10 +444,6 @@ public final class LinuxRuntimeInstaller {
                     file.delete();
                     FileUtils.symlink(entry.getLinkName(), file.getAbsolutePath());
                 } else if (entry.isLink()) {
-                    // A hard link to an earlier entry. Link where the filesystem allows it and
-                    // fall back to a copy, which costs space but always works.
-                    // The target is checked too: a link to "../../shared_prefs/x" would pull a
-                    // file from outside the rootfs into it.
                     File target = ArchivePaths.inside(destination, entry.getLinkName());
                     if (target == null) {
                         Log.w(TAG, "skipping hard link outside the rootfs: " + entry.getLinkName());
@@ -349,10 +465,10 @@ public final class LinuxRuntimeInstaller {
                     }
                     if ((entry.getMode() & 0111) != 0) file.setExecutable(true, false);
                 } else {
-                    continue; // device nodes and fifos: the runtime binds the real ones
+                    continue;
                 }
                 if (++entries % 2000 == 0 && listener != null) {
-                    listener.onProgress("Extracting", -1);
+                    listener.onProgress(extracting, -1);
                 }
             }
             return true;

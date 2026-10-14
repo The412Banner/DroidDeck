@@ -78,5 +78,25 @@ Added by DroidDeck:
   exit.c act on (`TCSETSF`, the four termios2 requests, `FICLONE`) and allows the rest at once, and
   the ioctl block is emitted first (after WinNative 53836ca9, which traces only the termios2 ones).
   The `faccessat2` exit stop (termux 5ba8b95, for glibc's ENOSYS fallback on kernels before 5.8) and
-  the `statx` one (emulation on kernels before 4.11) are dropped when the running kernel is newer.
+  the `statx` one (emulation on kernels before 4.11) are dropped on kernels 5.8 and newer; patch
+  `0015` keeps it on 4.11–5.7 to return the mount ID added in 5.8.
   Host build: `ioctl` 31.6 -> 0.5 us; `stat`/`statx`/`faccessat2` about 44 -> 28 us (one stop).
+- `0015-statx-mnt-id-fdinfo.patch` - kernels before 5.8 can complete `statx` without the mount ID
+  that libglnx requires while chasing an open descriptor. PRoot keeps the exit stop on those
+  kernels and fills only a missing ordinary `STATX_MNT_ID` for `AT_EMPTY_PATH` after pinning the
+  tracee descriptor, matching its device and inode to the successful statx result, and reading
+  `mnt_id` from the pin's fdinfo. A later close/reuse of the tracee fd cannot redirect that read;
+  a concurrent reuse for the same inode through a different bind mount is indistinguishable at
+  the exit stop. It does not synthesize `STATX_MNT_ID_UNIQUE`.
+
+Prototype (inert unless `PROOT_FASTPATH` is set; see `docs/development/proot-performance.md`):
+
+- `0014-fastpath-trampoline.patch` - with `PROOT_FASTPATH`, every `SECCOMP_RET_TRACE` in the filter
+  is preceded by a check of the caller's address, and a syscall made from the fast path's trampoline
+  page (`fastpath/fastpath.c`, `0xffff00000`) runs without a stop: the tracee already translated it.
+  The check comes after the syscall-number dispatch, so untraced syscalls stay constant-ALLOW and keep
+  the kernel's seccomp action cache (checking first cost every syscall the full filter: +0.5 ms an
+  exec). `chdir`/`fchdir`, still emulated, also move the kernel's cwd to the host directory, and the
+  first tracee starts at `-w`'s, so relative lookups inside the tracee resolve where proot would.
+  SM8850 (adb shell): `stat` 25.3 -> 0.6 us, `open+close` 25.3 -> 0.9 us, ENOENT 22.9 -> 1.6 us,
+  8 threads `stat`ing 89k -> 3.6M/s; equivalence suite (`bench/equiv.py`) byte-identical to proot.

@@ -5,11 +5,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-/**
- * The little that the activity and the service have to agree on. Process-wide rather than passed
- * through intents, because both halves live in one process and the point of the split is that
- * either can outlive the other.
- */
 object SessionState {
     @Volatile
     var phase = SessionPhase.IDLE
@@ -47,26 +42,18 @@ object SessionState {
     @Volatile
     var running = false
     var suspended by mutableStateOf(false)
-    /** MODE_RUN: the program inside the runtime the session was started for. */
+    @Volatile var pipActive = false
     @Volatile
     var program: String? = null
     @Volatile
     var programArgs: List<String> = emptyList()
-    /** MODE_STEAM: "desktop" for the client's desktop UI, else Big Picture; and a steam:// URL to hand it. */
     @Volatile
     var steamUi: String? = null
     @Volatile
     var steamUrl: String? = null
-    /** A session the guest asked for (the desktop's Steam launchers): started by the activity once this one has ended. */
     var relaunch: android.content.Intent? = null
-    /** HDR10 was asked for and the panel can show it: the compositor was told, and the session
-     *  gets DXVK_HDR=1 and gamescope --hdr-enabled. Decided by the activity before the compositor starts. */
     @JvmStatic var hdr = false
 
-    /** The pad is presented to the Steam client as a Steam Deck controller this session
-     *  (SteamDeckPad): its Quick Access button is a real button, not the Guide+A chord. Decided by
-     *  the service as the session starts, which can be after the activity has resumed - hence
-     *  [deckPadListener]. */
     @Volatile private var deckPadValue = false
     @JvmStatic var deckPad: Boolean
         get() = deckPadValue
@@ -76,38 +63,40 @@ object SessionState {
             deckPadListener?.invoke()
         }
 
-    /** Told (on the thread that changed it) whenever [deckPad] changes. */
     @Volatile var deckPadListener: (() -> Unit)? = null
 
-    /** What the second screen shows, and on which display: kept for the session, so a screen
-     *  turned off (sleep, a closed lid) or an activity recreated brings it back as it was. */
+    @Volatile var padBridge: com.droiddeck.launcher.input.PadBridge? = null
+
     @Volatile var secondScreenMode = com.droiddeck.launcher.input.SecondScreenMode.NONE
     @Volatile var secondScreenDisplay = -1
 
-    /** Which session this is: SessionService.MODE_STEAM or MODE_DESKTOP. */
     @Volatile
     var mode = "steam"
 
-    /** The size gamescope was told to render at; set by the activity before the service starts. */
     @Volatile
     var outputSize: Pair<Int, Int> = Pair(1920, 1080)
 
     @Volatile
+    var followScreen = false
+
+    @Volatile
     var refreshHz: Float = 60f
 
-    /** The compositor has presented a frame, so the loading panel is behind us for this session. */
+    @Volatile
+    var upscaleRatio: Float = 0f
+
+    @Volatile
+    var fpsLimit: Int = 0
+
     @Volatile
     var firstFrameSeen = false
 
-    /** Where this session is writing its log, for the "it ended" message. */
     @Volatile
     var logFile: File? = null
 
-    /** The fake evdev directory, once the service has prepared the rings. */
     @Volatile
     var fakeInputDir: File? = null
 
-    /** Told when the session ends, so a visible activity can close itself. */
     @Volatile
     var endListener: ((Int) -> Unit)? = null
 
@@ -116,7 +105,6 @@ object SessionState {
     }
 }
 
-/** Stable lifecycle values returned by the debug agent bridge. */
 enum class SessionPhase {
     IDLE,
     PREPARING,

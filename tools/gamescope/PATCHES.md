@@ -38,6 +38,19 @@ library list, before anything is published.
   iconify request is remembered and the window goes back to NormalState before input returns to it,
   then focus is handed over again. `GAMESCOPE_RESTORE_FOCUS_WINDOW` on the root window asks for the
   same restore from outside (the session script's resume watcher).
+- `0114-take-override-redirect-from-mapnotify.patch` - upstream (ValveSoftware/gamescope 3829340),
+  verbatim; drop it once the runtime's gamescope includes it. Wine creates a game's window
+  override-redirect and makes it managed before mapping it, which sends no X event. When gamescope
+  read the window's attributes first, it kept the window as override-redirect and left it out of
+  `GAMESCOPE_FOCUSABLE_WINDOWS`, so the client kept its loading screen over the running game
+  (Skyrim SE, A Plague Tale: Innocence, on the games' own Xwayland). MapNotify now refreshes the flag.
+- `0115-limiter-paces-per-window.patch` - this app: on a fixed-refresh output the frame limiter
+  (Steam's Frame Limit) let a capped window's frames out only on every Nth refresh of a global grid,
+  so a frame finished just after its slot waited a whole extra slot. At 30 on 60 Hz one picture was
+  held for three or four refreshes - "small stops and ladders" with frame generation - where a game's
+  own limiter slips such a frame by one refresh. The fixed-refresh branch now paces each window by
+  time, as the VRR branch already did: its next frame goes out on the first refresh a capped interval
+  after its last one, with half a refresh of tolerance so an on-time window keeps every Nth refresh.
 
 Sixteen more of Armada's patches are DRM/lease/HDR-on-KMS work for a native display, which this
 app's Wayland-hosted gamescope never reaches, or need a newer gamescope than the runtime has.

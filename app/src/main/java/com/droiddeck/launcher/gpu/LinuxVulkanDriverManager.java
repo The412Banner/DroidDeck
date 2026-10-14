@@ -4,6 +4,7 @@ import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 
+import com.droiddeck.launcher.R;
 import com.droiddeck.launcher.core.FileUtils;
 
 import org.json.JSONObject;
@@ -21,30 +22,6 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-/**
- * Imported LINUX Vulkan drivers: glibc Turnip ICDs ({@code Turnip-<tag>[-variant]-Linux.zip} from
- * Banners-Turnip) for the runtime - the gamescope session that runs Valve's native ARM64 Steam
- * client, and the labwc desktop beside it. This is the driver that DRAWS there: the client's own UI
- * (OpenGL through the runtime's Zink), every game the client launches (D3D through Proton's
- * DXVK/VKD3D) and everything on the desktop. Putting the frame on the screen stays the Android
- * driver's job, in the app's compositor ({@link TurnipDriver}).
- *
- * <p>Not interchangeable with that one: the client and its games are glibc processes and cannot
- * load a bionic object at all, and this one cannot be loaded by the app. The check that separates
- * them is the libc the driver links against - {@code libc.so.6} here, {@code libc.so} there.
- *
- * <p>Layout (under the app's files dir, which the session sees by its full host path):
- * <pre>
- *   files/linux_vulkan_drivers/&lt;id&gt;/
- *       libvulkan_freedreno.so   the driver
- *       icd.json                 generated Vulkan ICD manifest; library_path = the .so's ABSOLUTE path
- *       meta.json                name / driverVersion / minGlibc, our own schema
- * </pre>
- * The session gets {@code icd.json}'s path in {@code BL_VK_DRIVER} and exports it as
- * {@code VK_DRIVER_FILES}, so nothing inside the runtime is modified and the choice is reversible.
- *
- * <p>Ported from Bannerlator's {@code LinuxVulkanDriverManager} (GPL-3.0), unchanged in behaviour.
- */
 public class LinuxVulkanDriverManager {
     private static final String TAG = "LinuxVulkanDriver";
     public static final String DIR_NAME = "linux_vulkan_drivers";
@@ -65,14 +42,12 @@ public class LinuxVulkanDriverManager {
         return new File(rootDir, id);
     }
 
-    /** Installed = has the .so AND the generated manifest (a half-extracted dir is never offered). */
     public boolean isInstalled(String id) {
         if (id == null || id.isEmpty() || id.contains("/") || id.contains("..")) return false;
         File dir = getDriverDir(id);
         return new File(dir, LIB_NAME).isFile() && new File(dir, ICD_NAME).isFile();
     }
 
-    /** Absolute path of the driver's ICD manifest, or null when the id isn't installed. */
     public String getIcdPath(String id) {
         return isInstalled(id) ? new File(getDriverDir(id), ICD_NAME).getAbsolutePath() : null;
     }
@@ -107,7 +82,6 @@ public class LinuxVulkanDriverManager {
         return m != null ? m.optString("driverVersion", "") : "";
     }
 
-    /** The glibc the driver asks for, as its zip recorded it ("" when the zip did not say). */
     public String getMinGlibc(String id) {
         JSONObject m = readMeta(id);
         return m != null ? m.optString("minGlibc", "") : "";
@@ -117,18 +91,10 @@ public class LinuxVulkanDriverManager {
         if (id == null || id.isEmpty() || id.contains("/") || id.contains("..")) return;
         Log.d(TAG, "removing imported Linux Vulkan driver " + id);
         FileUtils.delete(getDriverDir(id));
-        // A mode still set to this id falls back to the runtime's own driver at launch (logged there).
     }
 
-    /**
-     * Import a {@code -Linux.zip}. Returns the new driver id.
-     * @throws IllegalArgumentException with a user-facing reason when the zip is not an importable
-     *         Linux driver; {@link IOException} on read/extract failures.
-     */
     public String installDriver(Uri zipUri, String displayName) throws IOException {
-        File tmpDir = new File(rootDir, ".tmp-" + System.currentTimeMillis());
-        FileUtils.delete(tmpDir);
-        if (!tmpDir.mkdirs()) throw new IOException("cannot create " + tmpDir);
+        File tmpDir = newStagingDir();
         boolean keep = false;
         try {
             String soName = null;
@@ -139,7 +105,6 @@ public class LinuxVulkanDriverManager {
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
                     if (entry.isDirectory()) continue;
-                    // Flatten: only the base name matters, and it also defeats zip-slip paths.
                     String base = new File(entry.getName()).getName();
                     if (base.isEmpty()) continue;
                     if (base.startsWith("libvulkan_freedreno") && base.endsWith(".so")) {
@@ -155,25 +120,34 @@ public class LinuxVulkanDriverManager {
                             Log.w(TAG, "meta.json unreadable, ignoring: " + e.getMessage());
                         }
                     }
-                    // The zip's own freedreno_icd.aarch64.json is dropped on purpose: its
-                    // library_path is relative to itself, and we write an absolute one below.
                 }
             }
+            String id = adopt(tmpDir, soName, zipMeta, displayName);
+            keep = true;
+            return id;
+        } finally {
+            if (!keep) FileUtils.delete(tmpDir);
+        }
+    }
+
+    File newStagingDir() throws IOException {
+        File tmpDir = new File(rootDir, ".tmp-" + System.nanoTime());
+        FileUtils.delete(tmpDir);
+        if (!tmpDir.mkdirs()) throw new IOException("cannot create " + tmpDir);
+        return tmpDir;
+    }
+
+    String adopt(File tmpDir, String soName, JSONObject zipMeta, String displayName) throws IOException {
+        try {
             if (soName == null) {
-                throw new IllegalArgumentException("No libvulkan_freedreno*.so in this zip. An Android "
-                        + "(AdrenoTools) or -Wayland Turnip zip is not a Linux runtime driver.");
+                throw new IllegalArgumentException(context.getString(R.string.lvd_no_library));
             }
             File so = new File(tmpDir, LIB_NAME);
             if (!isAarch64Elf(so)) {
-                throw new IllegalArgumentException(soName + " is not a 64-bit AArch64 ELF shared library.");
+                throw new IllegalArgumentException(context.getString(R.string.lvd_not_aarch64, soName));
             }
-            // The one check that actually separates this from the bionic builds. Both sonames
-            // are in the driver's .dynstr, so a byte scan is enough and needs no ELF parsing:
-            // glibc's is versioned ("libc.so.6"), bionic's is not ("libc.so").
             if (!containsAscii(so, "libc.so.6")) {
-                throw new IllegalArgumentException(soName + " is not a glibc driver - it links Android's libc. "
-                        + "The Linux runtime needs a \"-Linux\" zip; a plain or \"-Wayland\" Turnip cannot be "
-                        + "loaded by the Steam client at all.");
+                throw new IllegalArgumentException(context.getString(R.string.lvd_not_glibc, soName));
             }
             String kind = zipMeta != null ? zipMeta.optString("kind", "") : "";
             if (!kind.isEmpty() && !"linux-vulkan-icd".equals(kind)) {
@@ -190,8 +164,6 @@ public class LinuxVulkanDriverManager {
             String id = uniqueId(sanitizeId(name));
             File dir = getDriverDir(id);
 
-            // ICD manifest: absolute library_path, so the loader never depends on cwd and the guest
-            // reads it at the same path the app wrote (the files dir is bound into the session).
             JSONObject icd = new JSONObject();
             icd.put("file_format_version", "1.0.0");
             JSONObject icdBody = new JSONObject();
@@ -212,13 +184,10 @@ public class LinuxVulkanDriverManager {
             if (!FileUtils.writeString(new File(tmpDir, META_NAME), meta.toString(2))) throw new IOException("cannot write meta.json");
 
             if (!tmpDir.renameTo(dir)) throw new IOException("cannot move into " + dir);
-            keep = true;
             Log.i(TAG, "imported Linux Vulkan driver " + id + " (" + soName + ", minGlibc=" + minGlibc + ") -> " + dir);
             return id;
         } catch (org.json.JSONException e) {
             throw new IOException("manifest write failed: " + e.getMessage());
-        } finally {
-            if (!keep) FileUtils.delete(tmpDir);
         }
     }
 
@@ -235,7 +204,6 @@ public class LinuxVulkanDriverManager {
         return s.isEmpty() ? "linux-driver" : s;
     }
 
-    /** ELF magic, EI_CLASS = 64-bit, EI_DATA = little-endian, e_machine = 0xB7 (AArch64). */
     static boolean isAarch64Elf(File f) {
         try (FileInputStream in = new FileInputStream(f)) {
             byte[] h = new byte[20];
@@ -276,7 +244,6 @@ public class LinuxVulkanDriverManager {
                     while (j < nb.length && buf[i + j] == nb[j]) j++;
                     if (j == nb.length) return true;
                 }
-                // Keep the last needle-1 bytes so a match across a buffer boundary is still found.
                 carry = Math.min(nb.length - 1, len);
                 System.arraycopy(buf, len - carry, buf, 0, carry);
             }

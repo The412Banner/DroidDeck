@@ -1,11 +1,19 @@
 package com.droiddeck.launcher.ui
 
+import androidx.compose.ui.platform.testTag
+import com.droiddeck.launcher.R
+import androidx.compose.ui.res.stringResource
 import android.view.KeyEvent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -22,6 +30,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +40,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -42,21 +52,28 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
@@ -65,8 +82,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.text.style.TextAlign
+import kotlin.math.roundToInt
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +116,10 @@ import androidx.compose.ui.window.PopupProperties
 
 private val RowShape = RoundedCornerShape(12.dp)
 private val GroupShape = RoundedCornerShape(14.dp)
+
+internal object HeldKeys {
+    @Volatile var confirm = false
+}
 
 internal fun Modifier.controllerConfirm(enabled: Boolean = true, onClick: () -> Unit): Modifier = onPreviewKeyEvent { event ->
     val keyEvent = event.nativeKeyEvent
@@ -104,7 +141,6 @@ internal fun Modifier.controllerBack(onBack: () -> Unit): Modifier = onPreviewKe
     }
 }
 
-/** LB and RB turn a page's tabs; the keys are taken whenever focus is anywhere inside [this]. */
 internal fun Modifier.bumpers(onPrevious: () -> Unit, onNext: () -> Unit): Modifier = onPreviewKeyEvent { event ->
     val keyEvent = event.nativeKeyEvent
     val previous = keyEvent.keyCode == KeyEvent.KEYCODE_BUTTON_L1
@@ -116,11 +152,7 @@ internal fun Modifier.bumpers(onPrevious: () -> Unit, onNext: () -> Unit): Modif
     }
 }
 
-/**
- * A page's tabs with the pad's bumpers drawn beside them. The host turns them with LB/RB (see
- * [bumpers]); the keycaps are for touch and stay out of the d-pad's path. The row scrolls sideways
- * when a narrow page cannot fit every tab.
- */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun TabStrip(
     tabs: List<String>, selected: Int, onSelect: (Int) -> Unit,
@@ -129,11 +161,15 @@ internal fun TabStrip(
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     val shape = RoundedCornerShape(12.dp)
+    val scroll = rememberScrollState()
+    var tight by remember(tabs) { mutableStateOf(false) }
+    LaunchedEffect(scroll.maxValue) { if (scroll.maxValue in 1 until Int.MAX_VALUE) tight = true }
+    val tabPadding = if (tight) 10.dp else 16.dp
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = modifier) {
-        BumperKey("LB", "Previous tab") { onSelect((selected + tabs.size - 1) % tabs.size) }
+        BumperKey("LB", stringResource(R.string.widgets_prev_tab)) { onSelect((selected + tabs.size - 1) % tabs.size) }
         Row(
             modifier = Modifier.weight(1f, fill = false).clip(shape).background(colors.surfaceVariant).border(1.dp, pal.line2, shape)
-                .horizontalScroll(rememberScrollState()).padding(3.dp),
+                .horizontalScroll(scroll).padding(3.dp),
         ) {
             tabs.forEachIndexed { i, label ->
                 val on = i == selected
@@ -141,25 +177,28 @@ internal fun TabStrip(
                 val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
                 val pick = { onSelect(i) }
                 val tabShape = RoundedCornerShape(9.dp)
+                val reveal = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+                if (on) LaunchedEffect(Unit) { reveal.bringIntoView() }
                 Text(
                     label, fontSize = 14.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.SemiBold, maxLines = 1,
                     color = if (on) pal.onSignal else if (hot) colors.onBackground else colors.onSurfaceVariant,
                     modifier = Modifier
+                        .bringIntoViewRequester(reveal)
+                        .testTag("tab-$i")
                         .then(focusRequesters?.getOrNull(i)?.let { Modifier.focusRequester(it) } ?: Modifier)
                         .clip(tabShape)
                         .background(if (on) pal.signal else if (hot) pal.signal.copy(alpha = 0.16f) else Color.Transparent)
-                        .border(2.dp, if (!hot) Color.Transparent else if (on) colors.onBackground else pal.signal, tabShape)
+                        .glideBorder(hot, tabShape, if (on) colors.onBackground else pal.signal)
                         .hoverable(src).clickable(interactionSource = src, indication = null, role = Role.Tab, onClick = pick)
                         .controllerConfirm(onClick = pick)
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = tabPadding, vertical = 12.dp),
                 )
             }
         }
-        BumperKey("RB", "Next tab") { onSelect((selected + 1) % tabs.size) }
+        BumperKey("RB", stringResource(R.string.widgets_next_tab)) { onSelect((selected + 1) % tabs.size) }
     }
 }
 
-/** A bumper drawn as a keycap, 44dp to touch; the pad presses the real one. */
 @Composable
 private fun BumperKey(label: String, description: String, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -180,7 +219,6 @@ private fun BumperKey(label: String, description: String, onClick: () -> Unit) {
     }
 }
 
-/** The narrowest a setting's value box gets; the session menu's sheet sets it lower. */
 val LocalChipMinWidth = androidx.compose.runtime.compositionLocalOf { 150.dp }
 
 class MenuHost {
@@ -189,6 +227,18 @@ class MenuHost {
 
 @Composable
 fun rememberMenuHost(): MenuHost = remember { MenuHost() }
+
+private class BelowStartProvider(private val gap: Int) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        var x = anchorBounds.left
+        if (x + popupContentSize.width > windowSize.width - 8) x = windowSize.width - 8 - popupContentSize.width
+        if (x < 8) x = 8
+        var y = anchorBounds.bottom + gap
+        if (y + popupContentSize.height > windowSize.height - 8) y = anchorBounds.top - gap - popupContentSize.height
+        if (y < 8) y = 8
+        return IntOffset(x, y)
+    }
+}
 
 private class BelowEndProvider(private val gap: Int) : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
@@ -202,7 +252,11 @@ private class BelowEndProvider(private val gap: Int) : PopupPositionProvider {
 }
 
 @Composable
-fun AnchoredMenu(open: Boolean, onDismiss: () -> Unit, title: String? = null, note: String? = null, content: @Composable ColumnScope.(FocusRequester) -> Unit) {
+fun AnchoredMenu(
+    open: Boolean, onDismiss: () -> Unit, title: String? = null, note: String? = null,
+    compact: Boolean = false, minWidth: androidx.compose.ui.unit.Dp = 120.dp,
+    content: @Composable ColumnScope.(FocusRequester) -> Unit,
+) {
     val state = remember { MutableTransitionState(false) }
     state.targetState = open
     if (!state.currentState && !state.targetState && state.isIdle) return
@@ -215,23 +269,24 @@ fun AnchoredMenu(open: Boolean, onDismiss: () -> Unit, title: String? = null, no
             android.util.Log.i("AnchoredMenu", "requested first option focus")
         }
     }
-    val gap = with(LocalDensity.current) { 6.dp.roundToPx() }
-    val provider = remember(gap) { BelowEndProvider(gap) }
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val gap = with(density) { 6.dp.roundToPx() }
+    val provider = remember(gap, compact) { if (compact) BelowStartProvider(gap) else BelowEndProvider(gap) }
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     Popup(popupPositionProvider = provider, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
+      CompositionLocalProvider(LocalDensity provides density, LocalConfiguration provides configuration) {
         AnimatedVisibility(
             visibleState = state,
-            enter = fadeIn(Motion.tw(180)) + scaleIn(Motion.sp(0.7f), initialScale = 0.94f, transformOrigin = TransformOrigin(1f, 0f)),
-            exit = fadeOut(Motion.tw(140)) + scaleOut(Motion.tw(140), targetScale = 0.96f, transformOrigin = TransformOrigin(1f, 0f)),
+            enter = fadeIn(Motion.tw(180)) + scaleIn(Motion.sp(0.7f), initialScale = 0.94f, transformOrigin = TransformOrigin(if (compact) 0f else 1f, 0f)),
+            exit = fadeOut(Motion.tw(140)) + scaleOut(Motion.tw(140), targetScale = 0.96f, transformOrigin = TransformOrigin(if (compact) 0f else 1f, 0f)),
             label = "menu",
         ) {
-            // A long list (a driver menu with its downloads) must not run off the screen: the menu is
-            // capped at most of the window's height and its entries scroll under the fixed title.
             val maxHeight = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.86f).dp
             Column(
                 modifier = Modifier
-                    .widthIn(min = 220.dp, max = 340.dp)
+                    .then(if (compact) Modifier.widthIn(min = minWidth, max = 260.dp).width(androidx.compose.foundation.layout.IntrinsicSize.Max) else Modifier.widthIn(min = 220.dp, max = 340.dp))
                     .heightIn(max = maxHeight)
                     .shadow(24.dp, RowShape, ambientColor = Color.Black, spotColor = Color.Black)
                     .clip(RowShape)
@@ -244,7 +299,32 @@ fun AnchoredMenu(open: Boolean, onDismiss: () -> Unit, title: String? = null, no
                     title.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.5.sp, color = colors.onSurfaceVariant,
                     modifier = Modifier.padding(start = 10.dp, top = 6.dp, bottom = 6.dp),
                 )
-                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) { content(firstItemFocus) }
+                val scroll = rememberScrollState()
+                Box(Modifier.weight(1f, fill = false)) {
+                    Column(
+                        Modifier
+                            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                            .drawWithContent {
+                                drawContent()
+                                if (scroll.canScrollForward) {
+                                    val fade = 36.dp.toPx().coerceAtMost(size.height / 3)
+                                    drawRect(
+                                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                                            listOf(Color.Black, Color.Transparent), startY = size.height - fade, endY = size.height,
+                                        ),
+                                        topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - fade),
+                                        size = androidx.compose.ui.geometry.Size(size.width, fade),
+                                        blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                                    )
+                                }
+                            }
+                            .verticalScroll(scroll),
+                    ) { content(firstItemFocus) }
+                    if (scroll.canScrollForward) Icon(
+                        Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = colors.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.BottomCenter).size(20.dp),
+                    )
+                }
                 if (note != null) {
                     Spacer(Modifier.height(4.dp))
                     Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
@@ -252,9 +332,11 @@ fun AnchoredMenu(open: Boolean, onDismiss: () -> Unit, title: String? = null, no
                 }
             }
         }
+      }
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MenuItem(
     label: String, checked: Boolean, enabled: Boolean = true, detail: String? = null,
@@ -266,9 +348,12 @@ fun MenuItem(
     val src = remember { MutableInteractionSource() }
     val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
     val shift by animateFloatAsState(if (hot) 2f else 0f, Motion.sp(0.5f), label = "miShift")
+    val reveal = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    if (checked) LaunchedEffect(Unit) { reveal.bringIntoView() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier.fillMaxWidth()
+            .bringIntoViewRequester(reveal)
             .graphicsLayer { translationX = shift.dp.toPx() }
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .clip(RoundedCornerShape(8.dp))
@@ -297,7 +382,6 @@ fun ValueChip(text: String, open: Boolean, enabled: Boolean = true, modifier: Mo
     val src = remember { MutableInteractionSource() }
     val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
     val pal = LocalPalette.current
-    val edge by animateColorAsState(if (open || hot) pal.signal else pal.line2, Motion.tw(200), label = "chipEdge")
     val rot by animateFloatAsState(if (open) 180f else 0f, Motion.sp(0.6f), label = "chipCaret")
     Row(
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
@@ -306,7 +390,7 @@ fun ValueChip(text: String, open: Boolean, enabled: Boolean = true, modifier: Mo
             .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(colors.surfaceVariant)
-            .border(1.dp, edge, RoundedCornerShape(10.dp))
+            .glideBorder(hot, RoundedCornerShape(10.dp), pal.signal, if (open) pal.signal else pal.line2)
             .alpha(if (enabled) 1f else 0.5f)
             .hoverable(src).clickable(interactionSource = src, indication = LocalIndication.current, enabled = enabled, onClick = onClick)
             .controllerConfirm(enabled = enabled, onClick = onClick)
@@ -326,6 +410,7 @@ fun ValueChip(text: String, open: Boolean, enabled: Boolean = true, modifier: Mo
 fun SettingsGroup(title: String, compact: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
+    Column(Modifier.fillMaxWidth().sheetPiece()) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
@@ -335,19 +420,23 @@ fun SettingsGroup(title: String, compact: Boolean = false, content: @Composable 
         Box(modifier = Modifier.weight(1f).height(1.dp).background(pal.line))
     }
     Column(modifier = Modifier.fillMaxWidth().clip(GroupShape).background(colors.surface).border(1.dp, pal.line, GroupShape)) { content() }
+    }
 }
 
 @Composable
-fun SettingsRow(label: String, hint: String?, highlighted: Boolean = false, control: @Composable () -> Unit) {
+fun SettingsRow(label: String, hint: String?, highlighted: Boolean = false, hintLines: Int? = null, stacked: Boolean = false, control: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     val bg by animateColorAsState(if (highlighted) pal.signal.copy(alpha = 0.10f) else Color.Transparent, Motion.tw(200), label = "rowBg")
-    // A narrow page stacks the control under its label, so neither squeezes the other.
-    if (LocalNarrowPane.current) Column(
+    val hintText: @Composable (androidx.compose.ui.unit.TextUnit) -> Unit = { size ->
+        Text(hint ?: "", fontSize = size, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp),
+            minLines = hintLines ?: 1, maxLines = hintLines ?: Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
+    }
+    if (stacked || LocalNarrowPane.current) Column(
         modifier = Modifier.fillMaxWidth().background(bg).padding(start = 14.dp, end = 14.dp, top = 11.dp, bottom = 12.dp),
     ) {
         Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground)
-        if (hint != null) Text(hint, fontSize = 13.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+        if (hint != null || hintLines != null) hintText(13.sp)
         Box(Modifier.padding(top = 8.dp)) { control() }
     } else Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -355,7 +444,7 @@ fun SettingsRow(label: String, hint: String?, highlighted: Boolean = false, cont
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
             Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground)
-            if (hint != null) Text(hint, fontSize = 12.5.sp, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+            if (hint != null || hintLines != null) hintText(12.5.sp)
         }
         control()
     }
@@ -366,14 +455,14 @@ fun SettingsRow(label: String, hint: String?, highlighted: Boolean = false, cont
 fun <T> ChoiceRow(
     host: MenuHost, key: String, label: String, hint: String?,
     options: List<Pair<T, String>>, selected: T, enabled: Boolean = true, note: String? = null,
-    /** For the box itself - a page's FocusRequester for its first control. */
     chipModifier: Modifier = Modifier,
+    hintLines: Int? = null,
     onPick: (T) -> Unit,
 ) {
     val open = host.open == key
-    SettingsRow(label, hint, highlighted = open) {
+    SettingsRow(label, hint, highlighted = open, hintLines = hintLines) {
         Box {
-            ValueChip(options.firstOrNull { it.first == selected }?.second ?: "-", open, enabled, modifier = chipModifier) { host.open = if (open) null else key }
+            ValueChip(options.firstOrNull { it.first == selected }?.second ?: "-", open, enabled, modifier = chipModifier.testTag("setting-$key")) { host.open = if (open) null else key }
             AnchoredMenu(open, onDismiss = { if (host.open == key) host.open = null }, title = label, note = note) { firstItemFocus ->
                 options.forEachIndexed { index, (value, text) ->
                     MenuItem(text, checked = value == selected, focusRequester = if (index == 0) firstItemFocus else null) {
@@ -387,12 +476,23 @@ fun <T> ChoiceRow(
 }
 
 @Composable
+fun UncertainMark(description: String) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(22.dp).clip(CircleShape).background(colors.surfaceVariant)
+            .semantics { contentDescription = description },
+    ) {
+        Text("?", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.onSurfaceVariant)
+    }
+}
+
+@Composable
 fun ToggleRow(host: MenuHost, key: String, label: String, hint: String?, checked: Boolean, enabled: Boolean = true, chipModifier: Modifier = Modifier, onChange: (Boolean) -> Unit) =
     SettingsRow(label, hint) {
-        ToggleSwitch(checked, enabled, label, chipModifier) { host.open = null; onChange(it) }
+        ToggleSwitch(checked, enabled, label, chipModifier.testTag("setting-$key")) { host.open = null; onChange(it) }
     }
 
-/** An on/off switch: one tap or one A press flips it, where a menu of On and Off took three. */
 @Composable
 fun ToggleSwitch(checked: Boolean, enabled: Boolean = true, label: String? = null, modifier: Modifier = Modifier, onChange: (Boolean) -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -400,11 +500,11 @@ fun ToggleSwitch(checked: Boolean, enabled: Boolean = true, label: String? = nul
     val src = remember { MutableInteractionSource() }
     val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
     val track by animateColorAsState(if (checked) pal.signal else colors.surfaceVariant, Motion.tw(180), label = "switchTrack")
-    val edge by animateColorAsState(if (hot) pal.signal else if (checked) pal.signal else pal.line2, Motion.tw(180), label = "switchEdge")
     val knob by animateFloatAsState(if (checked) 1f else 0f, Motion.sp(0.7f), label = "switchKnob")
     val flip = { onChange(!checked) }
+    val onLabel = stringResource(R.string.widgets_on)
+    val offLabel = stringResource(R.string.widgets_off)
     val shape = RoundedCornerShape(99.dp)
-    // 48dp tall to touch; the visible track sits inside it.
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
@@ -413,11 +513,11 @@ fun ToggleSwitch(checked: Boolean, enabled: Boolean = true, label: String? = nul
             .hoverable(src)
             .clickable(interactionSource = src, indication = null, enabled = enabled, role = Role.Switch, onClick = flip)
             .controllerConfirm(enabled = enabled, onClick = flip)
-            .semantics { stateDescription = if (checked) "On" else "Off"; if (label != null) contentDescription = label },
+            .semantics { stateDescription = if (checked) onLabel else offLabel; if (label != null) contentDescription = label },
     ) {
         Box(
             Modifier.size(width = 52.dp, height = 30.dp).clip(shape).background(track)
-                .border(if (hot) 2.dp else 1.dp, if (hot && checked) colors.onBackground else edge, shape),
+                .glideBorder(hot, shape, if (checked) colors.onBackground else pal.signal, if (checked) pal.signal else pal.line2),
         ) {
             Box(
                 Modifier.padding(4.dp).size(22.dp)
@@ -430,6 +530,99 @@ fun ToggleSwitch(checked: Boolean, enabled: Boolean = true, label: String? = nul
 }
 
 @Composable
+fun SliderRow(
+    label: String, hint: String?, value: Int, range: IntRange, step: Int = 1, enabled: Boolean = true,
+    format: (Int) -> String = { it.toString() }, modifier: Modifier = Modifier, onChange: (Int) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    Column(Modifier.fillMaxWidth()) {
+        ValueSlider(value, range, step, enabled, label, format,
+            modifier = modifier.padding(horizontal = 6.dp, vertical = 3.dp), onChange = onChange)
+        if (hint != null) Text(hint, fontSize = 12.5.sp, color = colors.onSurfaceVariant,
+            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 8.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
+    }
+}
+
+@Composable
+fun ValueSlider(
+    value: Int, range: IntRange, step: Int, enabled: Boolean, label: String?, format: (Int) -> String,
+    modifier: Modifier = Modifier, onChange: (Int) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val source = remember { MutableInteractionSource() }
+    val hot = source.collectIsFocusedAsState().value || source.collectIsHoveredAsState().value
+    val currentOnChange by rememberUpdatedState(onChange)
+    val span = (range.last - range.first).coerceAtLeast(1)
+    val fraction = ((value - range.first).toFloat() / span).coerceIn(0f, 1f)
+    val thumbInset = with(LocalDensity.current) { 8.dp.toPx() }
+    var trackPx by remember { mutableIntStateOf(0) }
+    val text = format(value)
+    val shape = RoundedCornerShape(8.dp)
+    fun stepped(v: Int) = (((v - range.first).toFloat() / step).roundToInt() * step + range.first).coerceIn(range.first, range.last)
+    fun fromX(x: Float) {
+        val width = trackPx - 2 * thumbInset
+        if (width > 0) {
+            val position = ((x - thumbInset) / width).coerceIn(0f, 1f)
+            currentOnChange(stepped(range.first + (position * span).roundToInt()))
+        }
+    }
+    Column(
+        modifier = modifier.fillMaxWidth().heightIn(min = 72.dp)
+            .clip(shape).background(if (hot) pal.signal.copy(alpha = 0.12f) else Color.Transparent)
+            .glideBorder(hot, shape, pal.signal)
+            .alpha(if (enabled) 1f else 0.5f)
+            .hoverable(source).focusable(enabled, source)
+            .onPreviewKeyEvent { event ->
+                val keyEvent = event.nativeKeyEvent
+                val left = keyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                if (!left && keyEvent.keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) false
+                else {
+                    if (enabled && keyEvent.action == KeyEvent.ACTION_DOWN) {
+                        val next = stepped(value + if (left) -step else step)
+                        if (next != value) currentOnChange(next)
+                    }
+                    true
+                }
+            }
+            .semantics {
+                stateDescription = text
+                progressBarRangeInfo = ProgressBarRangeInfo(value.toFloat(), range.first.toFloat()..range.last.toFloat())
+                if (label != null) contentDescription = label
+                if (!enabled) disabled()
+                setProgress { next ->
+                    if (!enabled) false else { currentOnChange(stepped(next.roundToInt())); true }
+                }
+            }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (label != null) Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                color = colors.onBackground, modifier = Modifier.weight(1f))
+            else Spacer(Modifier.weight(1f))
+            Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = colors.onBackground, maxLines = 1)
+        }
+        Canvas(
+            Modifier.fillMaxWidth().height(40.dp).onSizeChanged { trackPx = it.width }
+                .pointerInput(enabled, range, step, thumbInset) { if (enabled) detectTapGestures { fromX(it.x) } }
+                .pointerInput(enabled, range, step, thumbInset) {
+                    if (enabled) detectHorizontalDragGestures { change, _ -> fromX(change.position.x); change.consume() }
+                },
+        ) {
+            val start = Offset(thumbInset, size.height / 2f)
+            val end = Offset(size.width - thumbInset, start.y)
+            val thumb = Offset(start.x + (end.x - start.x) * fraction, start.y)
+            val fill = if (hot) pal.signal else colors.onBackground
+            drawLine(colors.onSurfaceVariant.copy(alpha = 0.35f), start, end, strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+            if (fraction > 0) drawLine(fill, start, thumb, strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+            drawCircle(fill, radius = 7.dp.toPx(), center = thumb)
+        }
+    }
+}
+
+@Composable
 fun MultiRow(
     host: MenuHost, key: String, label: String, hint: String?,
     items: List<Pair<Int, String>>, selected: Set<Int>, enabled: Boolean = true, note: String? = null,
@@ -437,9 +630,9 @@ fun MultiRow(
 ) {
     val open = host.open == key
     val summary = when {
-        selected.size >= items.size -> "All ${items.size}"
-        selected.isEmpty() -> "None"
-        else -> "${selected.size} of ${items.size}"
+        selected.size >= items.size -> stringResource(R.string.widgets_all_n, items.size)
+        selected.isEmpty() -> stringResource(R.string.widgets_none)
+        else -> stringResource(R.string.widgets_n_of_m, selected.size, items.size)
     }
     SettingsRow(label, hint, highlighted = open) {
         Box {
@@ -455,23 +648,23 @@ fun MultiRow(
 }
 
 @Composable
-fun ActionRow(label: String, hint: String?, button: String, onClick: () -> Unit) {
-    SettingsRow(label, hint) { SecondaryButton(button, onClick = onClick) }
+fun ActionRow(label: String, hint: String?, button: String, onClick: () -> Unit, progress: Float? = null) {
+    SettingsRow(label, hint) { SecondaryButton(button, progress = progress, onClick = onClick) }
 }
 
 @Composable
 fun SettingsPage(
     host: MenuHost,
-    title: String,
+    title: String?,
     onBack: () -> Unit,
     eyebrow: String? = null,
     lede: String? = null,
-    /** A small control at the right of the title (the driver pages' refresh button). */
     action: (@Composable () -> Unit)? = null,
-    /** Pass one held above the page to keep its scroll position across a page opened over it. */
     scroll: androidx.compose.foundation.ScrollState? = null,
     scrollContent: Boolean = true,
     compactLayout: Boolean = false,
+    header: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scrollState = scroll ?: rememberScrollState()
@@ -479,20 +672,30 @@ fun SettingsPage(
     val dim by animateFloatAsState(if (host.open != null) 0.6f else 1f, Motion.tw(220), label = "pageDim")
     val narrow = LocalNarrowPane.current && !compactLayout
     Column(
-        modifier = Modifier.fillMaxSize().padding(
+        modifier = modifier.fillMaxSize().padding(
             horizontal = if (compactLayout) 14.dp else if (narrow) 16.dp else 22.dp,
             vertical = if (compactLayout) 6.dp else if (narrow) 12.dp else 18.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(if (compactLayout) 2.dp else 0.dp),
     ) {
-        if (narrow) {
-            // Back and the title share one line: a 4:3 screen has no height to spare.
+        if (title == null) {
+            Rise(0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    BackLink(stringResource(R.string.mode_back), compact = true, onClick = onBack)
+                    if (header != null) Box(Modifier.weight(1f)) { header() }
+                }
+            }
+        } else if (narrow) {
             Rise(0) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.padding(bottom = 6.dp),
                 ) {
-                    BackLink("Back", compact = true, onClick = onBack)
+                    BackLink(stringResource(R.string.mode_back), compact = true, onClick = onBack)
                     Text(
                         title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = colors.onBackground,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
@@ -504,7 +707,7 @@ fun SettingsPage(
         } else {
             Rise(0) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    BackLink("Back", compact = compactLayout, onClick = onBack)
+                    BackLink(stringResource(R.string.mode_back), compact = compactLayout, onClick = onBack)
                     if (eyebrow != null) {
                         Spacer(Modifier.width(10.dp))
                         Eyebrow(eyebrow)
@@ -544,6 +747,7 @@ fun SettingsPage(
                 }
             }
         }
+        if (header != null && title != null) header()
         Rise(3, Modifier.weight(1f).fillMaxWidth()) {
             Column(
                 modifier = Modifier
@@ -552,6 +756,60 @@ fun SettingsPage(
                     .then(if (scrollContent) Modifier.verticalScroll(scrollState) else Modifier)
                     .padding(bottom = if (compactLayout) 0.dp else 24.dp),
             ) { content() }
+        }
+    }
+}
+
+@Composable
+fun <T> SegmentedTabs(options: List<Pair<T, String>>, selected: T?, modifier: Modifier = Modifier, onPick: (T) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val index = options.indexOfFirst { it.first == selected }
+    val shape = RoundedCornerShape(12.dp)
+    val pillShape = RoundedCornerShape(9.dp)
+    BoxWithConstraints(modifier) {
+        val segment = minOf(92.dp, (maxWidth - 8.dp) / options.size)
+        val slide by animateDpAsState(segment * index.coerceAtLeast(0), Motion.sp(0.75f), label = "tabPill")
+        val shown by animateFloatAsState(if (index >= 0) 1f else 0f, Motion.tw(180), label = "tabPillShown")
+        Box(
+            modifier = Modifier
+                .height(48.dp).width(segment * options.size + 8.dp)
+                .clip(shape).background(colors.surfaceVariant).border(1.dp, pal.line2, shape)
+                .padding(4.dp),
+        ) {
+            Box(
+                Modifier.offset(x = slide).width(segment).fillMaxHeight()
+                    .graphicsLayer { alpha = shown }
+                    .clip(pillShape).background(pal.signal),
+            )
+            Row {
+                options.forEachIndexed { i, (value, label) ->
+                    val src = remember { MutableInteractionSource() }
+                    val hot = src.collectIsFocusedAsState().value || src.collectIsHoveredAsState().value
+                    val chosen = i == index
+                    val ink by animateColorAsState(
+                        when {
+                            chosen -> pal.onSignal
+                            hot -> colors.onBackground
+                            else -> colors.onSurfaceVariant
+                        },
+                        Motion.tw(220), label = "tabInk",
+                    )
+                    val pick = { onPick(value) }
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.width(segment).fillMaxHeight()
+                            .clip(pillShape)
+                            .glideBorder(hot, pillShape, if (chosen) pal.onSignal else pal.signal)
+                            .semantics { role = Role.Tab; this.selected = chosen }
+                            .hoverable(src)
+                            .clickable(interactionSource = src, indication = LocalIndication.current, onClick = pick)
+                            .controllerConfirm(onClick = pick),
+                    ) {
+                        Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ink, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
         }
     }
 }

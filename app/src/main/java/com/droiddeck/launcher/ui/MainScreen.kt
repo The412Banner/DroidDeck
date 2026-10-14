@@ -1,16 +1,30 @@
 package com.droiddeck.launcher.ui
 
+import com.droiddeck.launcher.R
+import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.droiddeck.launcher.HomeApp
 import com.droiddeck.launcher.input.SecondScreenDisplay
@@ -25,17 +39,17 @@ fun ChooseAppDisplayDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Launch ${app.label}") },
+        title = { Text(stringResource(R.string.main_launch_named, app.label)) },
         text = {
             Text(
-                secondaryDisplay?.let { "Choose a screen. Secondary: ${it.label}." }
-                    ?: "The secondary display is no longer available.",
+                secondaryDisplay?.let { stringResource(R.string.main_choose_screen, it.label) }
+                    ?: stringResource(R.string.main_secondary_gone),
             )
         },
-        confirmButton = { TextButton(onClick = onPrimary) { Text("Primary screen") } },
+        confirmButton = { TextButton(onClick = onPrimary) { Text(stringResource(R.string.main_primary)) } },
         dismissButton = {
             TextButton(onClick = onSecondary, enabled = secondaryDisplay != null) {
-                Text("Secondary screen")
+                Text(stringResource(R.string.main_secondary))
             }
         },
     )
@@ -48,28 +62,34 @@ fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () ->
         title = { Text(title) },
         text = { Text(text) },
         confirmButton = { TextButton(onClick = { onDismiss(); onConfirm() }) { Text(confirm) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
 @Composable
-fun CreditsDialog(onDismiss: () -> Unit) {
+fun ResetSettingsDialog(onConfirm: (gameProfiles: Boolean) -> Unit, onDismiss: () -> Unit) {
+    var gameProfiles by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Credits") },
+        title = { Text(stringResource(R.string.setup_reset_settings_title)) },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text("The412Banner: app, compositor, runtime, and Steam session.", style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(10.dp))
-                Text("maxjivi05: gamescope runtime and controller support, based on WinNative.", style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "GPL-3.0. Steam, Steam Deck, and Proton are Valve trademarks. Not affiliated with Valve. Third-party software remains under its authors' licenses.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.setup_reset_settings_body))
+                Row(
+                    Modifier.fillMaxWidth().toggleable(gameProfiles, role = Role.Checkbox) { gameProfiles = it },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = gameProfiles, onCheckedChange = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.setup_reset_settings_profiles), style = MaterialTheme.typography.bodyMedium)
+                }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+        confirmButton = {
+            TextButton(onClick = { onDismiss(); onConfirm(gameProfiles) }) {
+                Text(stringResource(R.string.setup_reset_settings_button), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
