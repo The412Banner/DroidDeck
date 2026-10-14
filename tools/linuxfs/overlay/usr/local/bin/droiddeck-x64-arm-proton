@@ -41,6 +41,16 @@ fi
 dir=$HOME/.local/share/Steam/compatibilitytools.d/$tool
 manifest=$dir/toolmanifest.vdf
 [ -f "$manifest" ] || { echo "droiddeck-x64-arm-proton: no tool $dir" >&2; exit 127; }
+if ! grep -q droiddeck-proton-wrap "$manifest" 2>/dev/null; then
+  python3 - "${dir%/*}" <<'PY' >&2 || true
+import importlib.machinery, importlib.util, sys
+path = "/usr/local/bin/steam-compatibility"
+spec = importlib.util.spec_from_file_location("compat", path, loader=importlib.machinery.SourceFileLoader("compat", path))
+compat = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(compat)
+compat.adopt_extras(sys.argv[1])
+PY
+fi
 # "commandline" "/droiddeck-proton %verb%": the entry point, relative to the tool's folder.
 cmd=$(sed -n 's/^[[:space:]]*"commandline"[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)
 entry=${cmd%% *}
