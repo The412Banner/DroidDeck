@@ -32,6 +32,7 @@ else
 fi
 [ -z "$game_display" ] || export DISPLAY=$game_display
 # Proton takes its Steam client parts from the client's install folder; the x86-64 client's are x86.
+export BL_X64_STEAM_ROOT=${STEAM_COMPAT_CLIENT_INSTALL_PATH:-}
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=$HOME/.local/share/Steam
 arm_overlay=$STEAM_COMPAT_CLIENT_INSTALL_PATH/steamrtarm64/gameoverlayrenderer.so
 if [ "$overlay" = 1 ] && [ -f "$arm_overlay" ]; then
