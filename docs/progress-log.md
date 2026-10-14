@@ -7,6 +7,41 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
+## 2026-10-14 - `feat/x86-64-steam-client`: brought up to main; added games run through the x86-64 client
+
+Work lives on The412Banner/DroidDeck only until it runs correctly; the org branch and draft PR #152
+stay as they were (`afa479ee`).
+
+- **Merged main (94 commits).** Main dropped the Steam channel and Deck-mode settings (#546): only the
+  client choice (`steamClientArch`), `activeSteamRoot` and VAC diagnostics remain. Main's web-helper
+  arguments (#566, `bl_webhelper_argv`) are composed with the x86 client's arm64 web-helper redirect in
+  `preload/net.c`. Main's single background loop (#575) now carries the x86 hooks: the client's own
+  compat pass (`--x64 --live`), `steamrt64` in the pinning and stale-tmp patterns, Lossless probe off for
+  x86, and the once-per-title restart after a new mapping. The text-strings merge had dropped three of
+  main's strings; main's files were taken and the six x86 strings added back.
+- **Builds on the personal repo** need the pinned Debian image in a release of their own:
+  `ci-debian-bullseye-r1` was copied (same sha256) as a pre-release. The bullseye compilers come from
+  `deb.debian.org` first; `archive.debian.org` no longer serves `libmpfr6_4.1.0-3`.
+- **Client update before start** (`x64_sync_client`): Valve serves one build to both clients; the x86
+  client is brought to it (changed parts only, 9 of 28 on device) so it can use the arm64 web helper on
+  the GPU from the first frame (device: 144 fps menus).
+- **Web helper loop:** with main's in-process GPU arguments the x86 web helper's GPU crash took the
+  whole helper down (102 restarts). The x86 helper now starts with stock arguments.
+- **Loading screen:** "Starting Steam x86-64", and the x86 setup and update steps reach it.
+- **Added games:** written first, then pointed at the x86 client's Proton (they were mapped to the
+  arm64 client's tool name, which this client ignores). Windows components install into the x86
+  prefix (DiRT Showdown and DiRT 3 needed OpenAL).
+- **Hidden game window, two causes.** The arm64 launcher loaded the saved arm session's `DISPLAY=:0`
+  over the game display Steam chose; it now keeps Steam's. And the game window had no `STEAM_GAME`
+  tag, so gamescope never listed it as focusable; the agent's focus watcher now tags untagged
+  `steam_app_<id>` windows on the game display when the x86 client runs. Device: DiRT 3 (added game)
+  at its title screen at 144 fps.
+- **Parity with the arm64 client:** Steam UI scale and the Steam import watcher run for the x86 client
+  too (the import is untested). An SD-card library stays arm64-only: FEX cannot run Linux games from it.
+- **Open:** DiRT Showdown on x86 exits after ~7 s (`wine client error: sendmsg: Socket operation on
+  non-socket`); Linux games through DroidDeck direct (TF2, CS2, L4D2) untested on this build; the arm64
+  client untested on this build.
+
 ## 2026-10-10 - `feat/wincomp-auto-sources`: Windows components picked by the game's source
 
 - **Per source** (`WinCompSources`): Steam - Steamworks Shared depots from the appmanifest or the
