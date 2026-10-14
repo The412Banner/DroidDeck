@@ -196,6 +196,22 @@ if [ ! -x "$STEAM_X64/steamrt64/steam" ] || [ ! -f "$STEAM_X64/package/droiddeck
   chmod +x "$STEAM_X64/steam.sh" "$STEAM_X64/steamrt64/steam" "$STEAM_X64/ubuntu12_32/steam" 2>/dev/null || true
 fi
 x64_sync_client
+scout=$STEAM_X64/ubuntu12_32
+if [ -f "$scout/steam-runtime.tar.xz" ] &&
+   { [ ! -x "$scout/steam-runtime/run.sh" ] ||
+     ! cmp -s "$scout/steam-runtime.tar.xz.checksum" "$scout/steam-runtime/checksum"; }; then
+  step "unpacking Valve's scout runtime for native Linux games"
+  rm -rf "$scout/steam-runtime.new"
+  mkdir -p "$scout/steam-runtime.new"
+  if tar -xJf "$scout/steam-runtime.tar.xz" -C "$scout/steam-runtime.new" && [ -x "$scout/steam-runtime.new/steam-runtime/run.sh" ]; then
+    rm -rf "$scout/steam-runtime"
+    mv "$scout/steam-runtime.new/steam-runtime" "$scout/steam-runtime"
+    cp -f "$scout/steam-runtime.tar.xz.checksum" "$scout/steam-runtime/checksum" 2>/dev/null || true
+  else
+    step "could not unpack the scout runtime; native Linux games will not start"
+  fi
+  rm -rf "$scout/steam-runtime.new"
+fi
 # Its own library (see the library folders below): the arm64 client's installs are not this one's.
 [ -L "$STEAM_X64/steamapps" ] && rm -f "$STEAM_X64/steamapps"
 mkdir -p "$STEAM_X64/steamapps"
