@@ -726,6 +726,7 @@ x64_exec() {
       echo "== x86-64 client build ${x86_build:-?}, arm64 web helper's ${arm_build:-?}: keeping the x86 web helper" >&2
     fi
   fi
+  [ -n "${BL_X64_ARM_WEBHELPER:-}" ] || export BL_WEBHELPER_ARGS=stock
   # The session asks for the GPU on the arm64 helper's behalf; the x86 one has no driver for this GPU
   # and its GPU process dies at once (exit_code=11), the client restarting the helper without end
   # (device: a fresh install's first start, -startcount=15 in three minutes). It draws in software.
