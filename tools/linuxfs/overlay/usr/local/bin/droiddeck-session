@@ -464,12 +464,12 @@ case $mode in
     else
     _bl_x64_tool=$(droiddeck-steam-x64 --default-tool)
     if [ -n "$_bl_x64_tool" ]; then
-      step "pointing the x86-64 client's Windows titles at $_bl_x64_tool"
-      BL_COMPAT_TOOL=$_bl_x64_tool steam-compatibility "$steam_root" --x64 || true
       if [ -n "${BL_ADDED_GAMES:-}" ]; then
         step "adding the app's own games to the x86-64 client's library"
         BL_COMPAT_TOOL=$_bl_x64_tool droiddeck-steam-shortcuts "$steam_root" "$BL_ADDED_GAMES" || true
       fi
+      step "pointing the x86-64 client's Windows titles at $_bl_x64_tool"
+      BL_COMPAT_TOOL=$_bl_x64_tool steam-compatibility "$steam_root" --x64 || true
     fi
     droiddeck-seed-redists "$steam_root" || true
     fi
@@ -1022,6 +1022,7 @@ BUSCONF
           droiddeck-steam-shortcuts "$steam_root" "$BL_ADDED_GAMES" || true
         elif [ -n "${_bl_x64_tool:-}" ]; then
           BL_COMPAT_TOOL=$_bl_x64_tool droiddeck-steam-shortcuts "$steam_root" "$BL_ADDED_GAMES" || true
+          BL_COMPAT_TOOL=$_bl_x64_tool steam-compatibility "$steam_root" --x64 >/dev/null 2>&1 || true
         fi
       fi
       if [ -f "$HOME/.bl-stop-requested" ]; then
