@@ -339,6 +339,13 @@ case $verb in
     # Titles Valve gives a newer runtime (sniper, soldier; the launcher lists them in direct-sniper)
     # are built for newer libraries than scout's: they run on the rootfs (Ubuntu 24.04) as it is.
     if grep -qx "${STEAM_COMPAT_APP_ID:-${SteamAppId:-none}}" "$HOME/direct-sniper" 2>/dev/null; then
+      case $1 in
+        *.sh)
+          if grep -q '^[[:space:]]*\. /etc/os-release' "$1" 2>/dev/null; then
+            script=$1; shift
+            exec bash -c "$(sed 's|^\([[:space:]]*\)\. /etc/os-release|\1VERSION_CODENAME=sniper|' "$script")" "$script" "$@"
+          fi ;;
+      esac
       exec "$@"
     fi
     exec "$rt/run.sh" "$@" ;;
