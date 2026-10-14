@@ -34,7 +34,7 @@ STEAM_X64=$X64_HOME/.local/share/Steam
 ARM_STEAM=${XDG_DATA_HOME:-$REAL_HOME/.local/share}/Steam
 LOG=$X64_HOME/steam-x64.log
 mkdir -p "$X64_HOME"
-step() { echo "== $(date -u +%H:%M:%S) $*" | tee -a "$LOG"; }
+step() { echo "== STEP $(date -u +%H:%M:%S) $*" | tee -a "$LOG"; }
 
 # The arm64 Proton wrapper this client maps Windows titles to: the newest GE-Proton, else the arm64
 # client's own (droiddeck-proton-arm64, Proton Experimental). Prints its folder; --default-tool
