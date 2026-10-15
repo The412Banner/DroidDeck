@@ -725,7 +725,6 @@ BUSCONF
         droiddeck-steam-games watch "$steam_root" "$BL_ADDED_GAMES" &
       else
         BL_STEAMCLIENT=$XDG_DATA_HOME/Steam/steamrtarm64/steamclient.so \
-          BL_STEAM_IPC_HOME=${BL_X64_HOME:-$HOME/.droiddeck-x64} \
           BL_STEAM_SHUTDOWN="droiddeck-steam-x64 --exec -shutdown" \
           droiddeck-steam-games watch "$steam_root" "$BL_ADDED_GAMES" &
       fi
