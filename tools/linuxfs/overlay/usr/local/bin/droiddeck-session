@@ -998,9 +998,6 @@ BUSCONF
       fi
       if [ -f "$HOME/.bl-restart-once" ]; then
         echo "== steam: restarting once so the new compatibility layer is in the client's lists"
-        # The client wrote config.vdf back from its own memory as it exited, which can drop the
-        # per-title entries written while it ran - the very ones this restart is for.
-        [ "$steam_x64" = 1 ] || droiddeck-steam-compat "$steam_root" >/dev/null 2>&1 || true
         set --
         continue
       fi
