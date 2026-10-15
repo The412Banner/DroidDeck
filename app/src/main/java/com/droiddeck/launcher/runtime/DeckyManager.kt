@@ -148,7 +148,7 @@ object DeckyManager {
         old.delete()
         File(target.parentFile, ".droiddeck-decky-version").writeText(release.tag + "\n")
         File(target.parentFile, ".droiddeck-decky-arch").writeText(if (release.machine == 183) "arm64\n" else "x86_64\n")
-        if (!supervisorEnabled(context)) cefMarker.delete()
+        if (!supervisorEnabled(context)) cefMarkers(context).forEach { it.delete() }
         return null
     }
 
