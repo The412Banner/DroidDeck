@@ -2483,6 +2483,10 @@
     <string name="setup_vac_diag">Diagnóstico de VAC</string>
     <string name="setup_vac_diag_hint">Los juegos Source registran su consola (-condebug); vac.txt en los registros dice si es seguro o no</string>
     <string name="load_starting_steam_x64">Iniciando Steam x86-64</string>
+    <string name="storage_game_x64">%1$s · x86-64</string>
+    <string name="storage_tool_x64_client">Lo usa el cliente de Steam x86-64</string>
+    <string name="storage_uninstall_in_x64">Esta copia está en el cliente de Steam x86-64. Elige x86-64 en Cliente de Steam y desinstálala aquí.</string>
+    <string name="storage_uninstall_in_arm64">Esta copia está en el cliente de Steam ARM64. Elige ARM64 en Cliente de Steam y desinstálala aquí.</string>
     <string name="mode_zram">Compresión zRAM</string>
     <string name="mode_zram_hint">Mientras se ejecuta un juego, la memoria del cliente de Steam se comprime en la zram del dispositivo, lo que deja más RAM para el juego. Se aplica la próxima vez que se inicie Steam.</string>
     <string name="mode_zram_unsupported">No disponible: este dispositivo no tiene swap activo, o su kernel es anterior a la 5.4.</string>
