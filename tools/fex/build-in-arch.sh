@@ -5,7 +5,7 @@
 # as fex.tzst (usr/local/...) for droiddeck-steam-x64 to stage. FEX_THUNKS=1 adds the host
 # thunks (see below).
 set -euxo pipefail
-VERSION=${FEX_VERSION:-FEX-2609}
+VERSION=${FEX_VERSION:-FEX-2610}
 WORK=/work
 cd "$WORK"
 # Same pacman workarounds as tools/gamescope/build-in-arch.sh.
