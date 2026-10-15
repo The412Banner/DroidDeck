@@ -52,9 +52,13 @@ rm -rf fex-src out && git clone -q --depth 1 --branch "$VERSION" --recurse-submo
 for p in tools/fex/patches/*.patch; do patch -d fex-src -p1 --no-backup-if-mismatch < "$p"; done
 # FEX's x86 toolchain files assume an x86 build machine: on this arm64 one the guest thunks need the
 # x86 sysroot for their headers, C runtime objects and libgcc too, not just the generator.
+# Arch's clang adds stack protection by default; its canary load in the prologue of each guest
+# thunk's host call took r11, which carries the host function's address, before the thunk read it:
+# a call with 7+ arguments (vkCmdBindDescriptorSets from Team Fortress 2's DXVK) went to the canary.
 if [ "$THUNKS" = 1 ]; then
   for t in fex-src/Data/CMake/toolchain_x86_64.cmake fex-src/Data/CMake/toolchain_x86_32.cmake; do
     printf '\nif (X86_DEV_ROOTFS AND NOT X86_DEV_ROOTFS STREQUAL "/")\n  set(CMAKE_SYSROOT "${X86_DEV_ROOTFS}")\nendif()\n' >> "$t"
+    printf '\nset(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-stack-protector")\nset(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-stack-protector")\n' >> "$t"
   done
 fi
 # TUNE_CPU none: the default (native) would tune for the runner's Neoverse cores, not the device.
