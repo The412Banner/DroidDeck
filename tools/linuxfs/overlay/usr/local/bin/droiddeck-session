@@ -331,10 +331,13 @@ case $mode in
     steam_cef_gpu=1
     if [ "$steam_x64" = 1 ]; then
       step "checking the Steam client's arm64 parts (first run downloads them, ~1-2 min)"
+      # Repair Steam covers both clients; droiddeck-steam-install takes the request away when done.
+      _bl_x64_repair=0
+      [ -e "$HOME/.bl-steam-repair" ] && _bl_x64_repair=1
       droiddeck-steam-install || exit $?
       droiddeck-steam-install --sync steamdeck_publicbeta || step "could not update the arm64 client's parts; the x86-64 client keeps its own web helper"
       step "checking the x86-64 Steam client (FEX, experimental; the first run downloads ~2 GB)"
-      droiddeck-steam-x64 --prepare || exit $?
+      BL_X64_REPAIR=$_bl_x64_repair droiddeck-steam-x64 --prepare || exit $?
       step "x86-64 Steam client ready"
       steam_root=${BL_X64_HOME:-$HOME/.droiddeck-x64}/.local/share/Steam
       steam_client=(droiddeck-steam-x64 --exec)
@@ -829,7 +832,7 @@ BUSCONF
       lossless_owned=$HOME/.config/droiddeck/lossless-owned
       lossless_asked=$HOME/.bl-lossless-asked
       rm -f "$lossless_asked"
-      [ "$steam_x64" = 0 ] && [ "${BL_LOSSLESS_OWNED:-0}" != 1 ] && lossless_left=60
+      [ "${BL_LOSSLESS_OWNED:-0}" != 1 ] && lossless_left=60
       declare -A _bl_pinned=()
       compat_stamp=$HOME/.bl-compat-beat
       seed_stamp=$HOME/.bl-seed-beat
@@ -977,6 +980,8 @@ BUSCONF
             lossless_left=0
           elif ! pgrep -x wineserver >/dev/null 2>&1; then
             (
+              # The x86-64 client is asked through the arm64 client's steamclient.so, as the import watcher does.
+              if [ "$steam_x64" = 1 ]; then export BL_STEAMCLIENT=$XDG_DATA_HOME/Steam/steamrtarm64/steamclient.so; fi
               answer=$(droiddeck-steam-games probe "$steam_root" 993090 2>/dev/null) || exit 0
               case $answer in
                 *'"993090": true'*) mkdir -p "${lossless_owned%/*}" && : > "$lossless_owned" && echo "== Lossless Scaling: owned" ;;
