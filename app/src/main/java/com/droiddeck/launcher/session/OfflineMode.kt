@@ -20,7 +20,11 @@ object OfflineMode {
     private fun x64LoginUsers(root: File) = File(root, "root/.droiddeck-x64/.local/share/Steam/config/loginusers.vdf")
 
     fun account(context: Context): String? {
-        val file = loginUsers(LinuxRuntime.rootDir(context))
+        val root = LinuxRuntime.rootDir(context)
+        // The client the session runs. Before the x86-64 client's first start it has no sign-in of its
+        // own; it takes the arm64 one's then (droiddeck-steam-x64 --sync-login).
+        val file = x64LoginUsers(root).takeIf { SessionPrefs.steamClientArch(context) == "x86_64" && it.isFile }
+            ?: loginUsers(root)
         val text = try {
             if (file.isFile) file.readText() else return null
         } catch (e: Exception) {
