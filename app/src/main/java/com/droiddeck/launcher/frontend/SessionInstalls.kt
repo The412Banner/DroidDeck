@@ -27,7 +27,10 @@ object SessionInstalls {
 
     internal fun steamappsDirs(context: Context): List<File> = (
         if (com.droiddeck.launcher.session.SessionPrefs.steamClientArch(context) == "x86_64")
-            listOf(File(com.droiddeck.launcher.session.SessionPrefs.activeSteamRoot(context), "steamapps"))
+            listOfNotNull(
+                File(com.droiddeck.launcher.session.SessionPrefs.activeSteamRoot(context), "steamapps"),
+                GameStorage.x64CardLibrary(context)?.let { File(it, "steamapps") },
+            )
         else listOfNotNull(
             File(LinuxRuntime.rootDir(context), "root/.local/share/Steam/steamapps"),
             GameStorage.effective(context)?.let { File(it.path, "steamapps") },
