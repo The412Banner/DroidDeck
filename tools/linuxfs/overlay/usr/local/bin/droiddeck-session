@@ -884,7 +884,7 @@ BUSCONF
               ''|0*|*[!0-9]*|???????????*) echo "== steam: ignored invalid uninstall request" ;;
               *)
                 echo "== steam: opening the uninstall dialog for $uninstall_id"
-                "$steam_root/steamrtarm64/steam" "steam://uninstall/$uninstall_id" >/dev/null 2>&1 &
+                "${steam_client[@]}" "steam://uninstall/$uninstall_id" >/dev/null 2>&1 &
                 ;;
             esac
           fi
