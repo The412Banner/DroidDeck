@@ -97,6 +97,16 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   `page_alloc`, MemFree, Shmem, Unevictable and each process with more than 200 MB of GPU memory. If
   Shmem rises with `page_alloc`, the GPU memory is what is pinned. Background apps were force-stopped
   and caches dropped first (about 11 GB free).
+- **GPU memory confirmed (15:47):** with low settings CS2 reached its menu at 94 fps and was killed at
+  15:47:59 the same way. KGSL `page_alloc` followed Shmem within 20-120 MB through the whole load
+  (0.23 GB at 15:44:50, 0.93 GB at 15:46:47, then +2.2 GB in 3 s, about 3.2 GB at the kill), and
+  Unevictable stayed about 100 MB above it. One process (`exe`, pid 23906) held nearly all of it. So the
+  pinned 3.4 GB is the game's GPU memory, and the low settings did not make it smaller. (The negative
+  values in that log were the device shell's 32-bit arithmetic; the logger now divides in awk.)
+- **New page-out trigger (16:23):** the tool now acts on what lmkd's minfree mode looks at, MemFree plus
+  `Cached + Buffers - Shmem - Unevictable`, instead of MemAvailable (which counted the GPU memory as
+  free). Threshold 2500 MB, checked every 0.5 s, page-out at most once a second. The idea: push CS2's
+  swappable memory out early so the 3.2 GB of GPU memory fits beside it. The open-file logger was stopped.
 - **Still to test:** CS2 without the kill; touch layouts, Offline Mode, Switch to Desktop, a Linux game from
   the card. TF2 on the device is the Windows build after the VAC test.
 
