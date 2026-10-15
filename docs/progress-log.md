@@ -7,7 +7,7 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
-## 2026-10-14 (evening) - `feat/x86-64-steam-client`: Team Fortress 2, the sniper check and a FEX thunk bug
+## 2026-10-14 (evening) - `feat/x86-64-steam-client`: Team Fortress 2 runs (sniper check, FEX thunks)
 
 - **Sniper check:** `tf.sh` reads `VERSION_CODENAME` from `/etc/os-release` and stops unless it is
   `sniper`. DroidDeck direct cannot use Valve's sniper container (no user namespaces under Android), so
@@ -27,8 +27,19 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 - **FEX 2610** (`af49e545`): `tools/fex/build-in-arch.sh` builds FEX-2610 with the same openat2 patch and
   host thunks as `fex-2609-r3`. The container's newer clang has no `FileManager::clearStatCache()`,
   which the thunk generator called after each run; patch `0002` drops that call (`31d66e67`). Published
-  as `fex-2610-r1` on the personal repo; `droiddeck-steam-x64` still fetches the org's `fex-2609-r3`
-  until it is device-tested.
+  as `fex-2610-r1` on the personal repo.
+- **2610 alone did not fix it.** An ARM-side signal hook in FEX (wrapping its `syscall(rt_sigaction)`)
+  logged no fault in Turnip, and the guest thunk's disassembly showed why: Arch's clang builds the x86
+  guest thunks with stack protection, and the canary load in `CallHostFunction`'s prologue
+  (`mov %fs:0x28, %r11`) overwrote r11, which carries the host function's address, before the thunk
+  stored it. FEX called the canary. 9 of 521 Vulkan and 66 of 736 GL host calls (those with 7+
+  arguments) were affected, `vkCmdBindDescriptorSets` among them; the Windows games through Proton and
+  32-bit games (host address in mm0) never made those calls through r11.
+- **`fex-2610-r2`** (`56e5a712`): the toolchain files add `-fno-stack-protector` for the guest thunks;
+  no guest thunk library has a canary load. The x86 client fetches it (`9cc0ebcb`). Device, stock
+  settings: TF2 main menu at 358 fps on the GPU, Casual matchmaking onto a VAC-secured Valve server,
+  in game at about 84 fps; Half-Life (32-bit, direct) and Borderlands 2 (Windows build, GE-Proton)
+  run on it.
 
 ## 2026-10-14 - `feat/x86-64-steam-client`: brought up to main; added games run through the x86-64 client
 
