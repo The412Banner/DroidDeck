@@ -56,6 +56,18 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   apps go below about 120 MB free), which does not count swap. Proposed, not applied: switch it to the
   PSI mode (`use_minfree_levels=false`, `lmkd.reinit=1`; reverted with `true`). CS2 has not been seen
   at its menu yet.
+- **CS2 reached its menu (14:47, DroidDeck in the foreground):** still loading, 11 fps, 11.6 GiB used.
+  Five seconds later `lmkd` killed nearly every app, then DroidDeck itself at adj 0 (foreground), while
+  swap was about 22 of 23 GB free (zRAM 6 GB with 0.9 GB used, `/data/swapfile` 16 GB almost unused).
+  Steam and CS2 died with the app; neither crashed on its own.
+- **Root test without changing Android (lmkd left as is):** DroidDeck's zRAM watcher only pages out
+  `steam` and `steamwebhelper`, never the game. A root tool (`/data/local/tmp/pageout cs2 3000 <log>`)
+  calls `process_madvise(MADV_PAGEOUT)` on CS2's private anonymous memory whenever MemAvailable drops
+  below 3 GB, so free RAM stays above the killer's levels. One call per mapping in 1 GB pieces: a single
+  call with many ranges is capped at about 2 GB in total, and FEX reserves huge ranges, so batched calls
+  silently skipped most of a FEX process. With that fixed, the x86 Steam client moved 223 of 256 MB to
+  swap. If CS2 survives to its menu, the app version is the zRAM watcher also paging out the running
+  game during its load (no root).
 - **Still to test:** CS2 to its menu; touch layouts, Offline Mode, Switch to Desktop, a Linux game from
   the card. TF2 on the device is the Windows build after the VAC test.
 
