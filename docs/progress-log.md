@@ -68,7 +68,20 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   silently skipped most of a FEX process. With that fixed, the x86 Steam client moved 223 of 256 MB to
   swap. If CS2 survives to its menu, the app version is the zRAM watcher also paging out the running
   game during its load (no root).
-- **Still to test:** CS2 to its menu; touch layouts, Offline Mode, Switch to Desktop, a Linux game from
+- **Page-out result (14:59):** the tool fired at 2.9 GB available and moved 4.8 GB of CS2 to swap
+  (resident 5.8 → 1.5 GB). CS2 drew its full menu (2–34 fps). 27 s later `lmkd` still killed down to
+  DroidDeck at adj 0. Its kill record: MemFree 111 MB, Cached 6.3 GB, but **Shmem 3.4 GB and
+  Unevictable 3.5 GB** (Mlocked only 120 MB), swap 17 GB free. In minfree mode the "file" figure is
+  Cached minus Shmem, Unevictable and SwapCached, so about 0, and it kills to the foreground. After the
+  session died Shmem fell to 0.3 GB, so the 3.4 GB of pinned shared memory belonged to the CS2 session.
+  MemAvailable counted it as available, which is why the tool saw 3.7 GB of headroom 2 s before the
+  kill. Page-out cannot move unevictable pages.
+- **Next run (15:04):** a root logger (`/data/local/tmp/shmlog.sh` → `shm-cs2.log`, every 3 s) records
+  MemFree / Cached / Shmem / Unevictable / Mlocked / SwapFree and every process holding more than 50 MB
+  of shared (`RssShmem`) or locked (`VmLck`) memory, to find who pins the 3.4 GB (FEX, the X server,
+  Vulkan buffers, a ramfs). No SysV shared memory on the device. Then the trigger moves from
+  MemAvailable to MemFree plus droppable file pages.
+- **Still to test:** CS2 without the kill; touch layouts, Offline Mode, Switch to Desktop, a Linux game from
   the card. TF2 on the device is the Windows build after the VAC test.
 
 ## 2026-10-14 (evening) - `feat/x86-64-steam-client`: Team Fortress 2 runs (sniper check, FEX thunks)
