@@ -30,7 +30,10 @@ import java.util.Locale
 object VacDiagnostics {
     private const val TAG = "VacDiagnostics"
 
-    /** In the guest's home; the launch wrapper checks for it. Holds the session's start, epoch seconds. */
+    /**
+     * In the guest's home; the launch wrapper checks for it. Holds the session's start, epoch seconds,
+     * then the Steam client it ran (SessionPrefs.steamClientArch) - the setting can change before the report.
+     */
     private const val MARKER = "root/.droiddeck-vac-diagnostics"
 
     /** One line per game launch the wrapper saw: epoch, app id, -condebug added or not, the exe. */
@@ -61,7 +64,7 @@ object VacDiagnostics {
         val marker = File(root, MARKER)
         try {
             File(root, LAUNCHES).delete()
-            if (enabled(context)) marker.writeText("${System.currentTimeMillis() / 1000}\n")
+            if (enabled(context)) marker.writeText("${System.currentTimeMillis() / 1000}\n${SessionPrefs.steamClientArch(context)}\n")
             else marker.delete()
         } catch (e: Exception) {
             Log.w(TAG, "could not arm VAC diagnostics", e)
@@ -74,15 +77,19 @@ object VacDiagnostics {
         val marker = File(root, MARKER)
         if (!marker.isFile) return
         try {
-            val since = (marker.readText().trim().toLongOrNull() ?: 0L) * 1000 - 5_000
+            val armed = marker.readLines().map { it.trim() }
+            val since = (armed.getOrNull(0)?.toLongOrNull() ?: 0L) * 1000 - 5_000
+            val arch = armed.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: SessionPrefs.steamClientArch(context)
             val out = File(dir, "vac").apply { mkdirs() }
-            val consoles = consoleLogs(context).filter { it.lastModified() >= since }
+            val consoles = consoleLogs(context, arch).filter { it.lastModified() >= since }
             val report = StringBuilder()
             report.appendLine("VAC diagnostics - ${now()}")
             report.appendLine("Read from the game's own console (-condebug) and the Steam client's logs.")
             report.appendLine()
             report.appendLine("== Client")
-            clientFiles(root).forEach { report.appendLine("  $it") }
+            report.appendLine("  Client this session: " + if (arch == "x86_64") "x86-64 (Valve's x86-64 client under FEX)" else "arm64")
+            report.appendLine("  Files in its folder (/${SessionPrefs.steamRoot(context, arch).relativeTo(root).path}):")
+            clientFiles(context, arch).forEach { report.appendLine("    $it") }
             report.appendLine()
             report.appendLine("== Game launches this session (from the launch wrapper)")
             val launches = File(root, LAUNCHES).takeIf { it.isFile }?.readLines().orEmpty().filter { it.isNotBlank() }
@@ -132,9 +139,9 @@ object VacDiagnostics {
     }
 
     /** Every console.log in a Steam library: <game>/<mod>/console.log (Source) and <game>/game/<mod>/console.log (Source 2). */
-    private fun consoleLogs(context: Context): List<File> {
+    private fun consoleLogs(context: Context, arch: String): List<File> {
         val found = LinkedHashMap<String, File>()
-        for (library in libraryRoots(context)) {
+        for (library in libraryRoots(context, arch)) {
             val games = File(library, "steamapps/common").listFiles { f -> f.isDirectory } ?: continue
             for (game in games) {
                 val mods = (game.listFiles { f -> f.isDirectory }.orEmpty().toList() +
@@ -148,11 +155,13 @@ object VacDiagnostics {
         return found.values.toList()
     }
 
-    private fun libraryRoots(context: Context): List<File> {
+    private fun libraryRoots(context: Context, arch: String): List<File> {
         val root = LinuxRuntime.rootDir(context)
-        val steam = SessionPrefs.activeSteamRoot(context)
+        val steam = SessionPrefs.steamRoot(context, arch)
         val roots = mutableListOf(steam)
-        GameStorage.effective(context)?.let { roots.add(File(it.path)) }
+        // The x86-64 client's card library is a folder inside the arm64 one's (GameStorage.X64_CARD_DIR).
+        (if (arch == "x86_64") GameStorage.x64CardLibrary(context) else GameStorage.effective(context)?.let { File(it.path) })
+            ?.let { roots.add(it) }
         runCatching {
             Regex("\"path\"\\s+\"([^\"]+)\"").findAll(File(steam, "steamapps/libraryfolders.vdf").readText()).forEach {
                 roots.add(File(root, it.groupValues[1].removePrefix("/")))
@@ -180,13 +189,14 @@ object VacDiagnostics {
         emptyList()
     }
 
-    /** Which Steam client builds are on disk - the arm64 one has no VAC module of its own to run. */
-    private fun clientFiles(root: File): List<String> {
-        val steam = File(root, "root/.local/share/Steam")
+    /** Which Steam client builds are in the session's client folder - the arm64 one has no VAC module of its own to run. */
+    private fun clientFiles(context: Context, arch: String): List<String> {
+        val steam = SessionPrefs.steamRoot(context, arch)
         return listOf(
             "linuxarm64/steamclient.so" to "arm64 Linux client",
             "linux64/steamclient.so" to "x86-64 Linux client",
             "ubuntu12_64/steamclient.so" to "x86-64 Linux client (ubuntu12_64)",
+            "steamrt64/steamclient.so" to "x86-64 Linux client (steamrt64)",
         ).map { (path, label) -> "$label: ${if (File(steam, path).isFile) "present" else "absent"} ($path)" }
     }
 
