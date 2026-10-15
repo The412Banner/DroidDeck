@@ -357,7 +357,7 @@ RUN
   # here, while no x86 client runs.
   if [ -f "$STEAM_X64/config/config.vdf" ] && ! pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then
     python3 - "$STEAM_X64/config/config.vdf" "$STEAM_X64/appcache/appinfo.vdf" "$X64_HOME/direct-auto.json" \
-      "$X64_HOME/direct-sniper" "$STEAM_X64/steamapps" "$(x64_default_tool)" ${BL_X64_DIRECT_APPS:-550} \
+      "$X64_HOME/direct-sniper" "$STEAM_X64/steamapps:/mnt/droiddeck-sd/x86-64/steamapps" "$(x64_default_tool)" ${BL_X64_DIRECT_APPS:-550} \
       <<'PY' || step "could not map titles to DroidDeck direct"
 # Every game with a Linux build goes to DroidDeck direct: Steam would run it in its Linux runtime
 # container, which needs user namespaces no Android app has, and the game would not start. The
@@ -451,10 +451,15 @@ def linux_games(file):
 
 
 def windows_installed(app):
-    """Whether the installed build of `app` is its Windows one (a Windows depot among those installed)."""
-    try:
-        text = open(os.path.join(steamapps, "appmanifest_%s.acf" % app), encoding="utf-8", errors="replace").read()
-    except OSError:
+    """Whether the installed build of `app` is its Windows one (a Windows depot among those installed),
+    in any of the client's libraries (internal storage, the card)."""
+    for library in steamapps.split(":"):
+        try:
+            text = open(os.path.join(library, "appmanifest_%s.acf" % app), encoding="utf-8", errors="replace").read()
+            break
+        except OSError:
+            pass
+    else:
         return False
     found = block(text, "InstalledDepots")
     if not found:
@@ -571,18 +576,24 @@ VDF
     chmod 755 "$dst/run"
   done
   x64_sync_login
-  # Its own library only. The arm64 client's folders (internal storage and the card) are not this
+  # Its own libraries only. The arm64 client's folders (internal storage and the card) are not this
   # client's: with them shared, each client could update, verify or switch the other's games - a
   # title with a Linux build runs as that here and as the Windows build there, so opening it in the
   # other client switched the files and the first one downloaded its version again (Left 4 Dead 2,
   # 8.6 GB). A game wanted in both clients is installed in both. Folders an earlier version shared
   # are taken out of this client's lists; the games stay where they are, in the arm64 client's
-  # library. Written while no x86 client runs: it rewrites these files on exit.
+  # library. On the card this client has a folder of its own inside the arm64 client's
+  # (BL_X64_STEAM_LIBRARIES: /mnt/droiddeck-sd/x86-64), so the install dialog offers both places.
+  # Written while no x86 client runs: it rewrites these files on exit.
   if ! pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then
-    python3 - "$STEAM_X64" "$STEAM_X64/config/libraryfolders.vdf" "$STEAM_X64/steamapps/libraryfolders.vdf" <<'PY' || step "could not check the x86-64 client's library folders"
-import os, re, sys
-own = os.path.realpath(sys.argv[1])
-for path in sys.argv[2:]:
+    python3 - "$STEAM_X64" "${BL_X64_STEAM_LIBRARIES:-}" "$STEAM_X64/config/libraryfolders.vdf" "$STEAM_X64/steamapps/libraryfolders.vdf" <<'PY' || step "could not check the x86-64 client's library folders"
+import json, os, re, sys
+keep = {os.path.realpath(sys.argv[1])}
+try:
+    keep |= {os.path.realpath(str(e["path"])) for e in json.load(open(sys.argv[2], encoding="utf-8"))}
+except (OSError, ValueError, KeyError, TypeError):
+    pass
+for path in sys.argv[3:]:
     if not os.path.isfile(path):
         continue
     s = open(path, encoding="utf-8", errors="surrogateescape").read()
@@ -598,7 +609,7 @@ for path in sys.argv[2:]:
             k += 1
         block = s[m.start():k]
         p = re.search(r'"path"\s*"([^"]*)"', block)
-        if p and os.path.realpath(p.group(1)) != own:
+        if p and os.path.realpath(p.group(1)) not in keep:
             out.append(s[i:m.start()])
             i = k + (1 if s[k:k + 1] == "\n" else 0)
             removed.append(p.group(1))
@@ -608,6 +619,10 @@ for path in sys.argv[2:]:
     open(path, "w", encoding="utf-8", errors="surrogateescape").write("".join(out))
     print("droiddeck-steam-x64: no longer shared with the arm64 client: %s" % ", ".join(removed))
 PY
+    if [ -n "${BL_X64_STEAM_LIBRARIES:-}" ]; then
+      BL_STEAM_LIBRARIES=$BL_X64_STEAM_LIBRARIES droiddeck-steam-library "$STEAM_X64" ||
+        step "could not add the card to the x86-64 client's library folders"
+    fi
   fi
   # Steam Play for every title not mapped otherwise: one of the arm64 client's own ARM64 Protons. The
   # newest GE-Proton first:
