@@ -3,6 +3,7 @@
 #   droiddeck-steam-x64 [steam:// URL or client arguments]   run it (the desktop menu entry)
 #   droiddeck-steam-x64 --prepare                            install and set up, then exit
 #   droiddeck-steam-x64 --sync-login                         copy the newer sign-in to the other client
+#   droiddeck-steam-x64 --map-direct [--live]                map Linux titles to DroidDeck direct
 #   droiddeck-steam-x64 --exec ARGS...                       run the client binary with ARGS in
 #                                                              its environment (droiddeck-session
 #                                                              with BL_STEAM_CLIENT_ARCH=x86_64)
@@ -98,6 +99,245 @@ x64_sync_client() {
   echo "$version" > "$STEAM_X64/package/droiddeck-installed"
   chmod +x "$STEAM_X64/steam.sh" "$STEAM_X64/steamrt64/steam" "$STEAM_X64/ubuntu12_32/steam" 2>/dev/null || true
   rm -rf "$work"
+}
+
+# Every game with a Linux build on DroidDeck direct (the python below says why). The mapping lives in
+# config.vdf, which the client rewrites from memory as it exits: written only while no x86 client runs,
+# by --prepare and by the session after each exit (--map-direct), when the appinfo cache also knows
+# what was bought during that run. --map-direct --live is the session's pass while the client runs.
+x64_map_direct() {
+  local mode=write
+  [ "${1:-}" = --live ] && mode=live
+  [ -f "$STEAM_X64/config/config.vdf" ] || return 0
+  if [ "$mode" = write ] && pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then return 0; fi
+  python3 - "$mode" "$STEAM_X64/config/config.vdf" "$STEAM_X64/appcache/appinfo.vdf" "$X64_HOME/direct-auto.json" \
+    "$X64_HOME/direct-sniper" "$STEAM_X64/steamapps:/mnt/droiddeck-sd/x86-64/steamapps" "$(x64_default_tool)" \
+    "$REAL_HOME/.bl-compat-pending" ${BL_X64_DIRECT_APPS:-550} \
+    <<'PY' || { [ "$mode" = live ] || step "could not map titles to DroidDeck direct"; }
+# Every game with a Linux build goes to DroidDeck direct: Steam would run it in its Linux runtime
+# container, which needs user namespaces no Android app has, and the game would not start. The
+# client's own appinfo cache says which games have a Linux build and which runtime Valve gives them
+# (config/app_mappings: SteamLinuxRuntime_sniper or _soldier; none = scout). Those ids go to
+# direct-sniper for the tool's run script. A title on a tool chosen in Properties keeps it, except
+# BL_X64_DIRECT_APPS (Left 4 Dead 2 by default), which is always taken back.
+# direct-auto.json lists what this mapped.
+# live (the session, while the client runs): nothing is written; the installed Linux titles this would
+# map are added to the session's pending list, and it restarts the client once they have installed.
+# A game whose Windows build is the one installed (it ran on a Proton before) stays a Windows game, on
+# the client's default Proton: Steam does not swap an installed build when the tool changes, so
+# DroidDeck direct was handed Launcher.exe and the game ended at once (device: Borderlands 2), and
+# getting the Linux build back means downloading the game again.
+import json, os, re, struct, sys
+mode, path, appinfo, auto_file, sniper_file, steamapps, proton, pending = sys.argv[1:9]
+extra = sys.argv[9:]
+WINDOWS_DEPOTS = {}
+KNOWN = set()
+
+
+def read_kv(buf, pos, strings):
+    out = {}
+    while True:
+        t = buf[pos]
+        pos += 1
+        if t == 0x08:
+            return out, pos
+        if strings is not None:
+            key = strings[struct.unpack_from("<I", buf, pos)[0]]
+            pos += 4
+        else:
+            end = buf.index(b"\0", pos)
+            key = buf[pos:end].decode("utf-8", "replace")
+            pos = end + 1
+        if t == 0x00:
+            out[key], pos = read_kv(buf, pos, strings)
+        elif t == 0x01:
+            end = buf.index(b"\0", pos)
+            out[key] = buf[pos:end].decode("utf-8", "replace")
+            pos = end + 1
+        elif t in (0x02, 0x03, 0x04, 0x06):
+            pos += 4
+        elif t in (0x07, 0x0A):
+            pos += 8
+        else:
+            raise ValueError("type %#x" % t)
+
+
+def linux_games(file):
+    """{appid: runtime} for the games with a Linux build in the client's appinfo cache."""
+    try:
+        buf = open(file, "rb").read()
+    except OSError:
+        return {}
+    magic = struct.unpack_from("<I", buf, 0)[0]
+    strings, pos = None, 8
+    if magic == 0x07564429:
+        table = struct.unpack_from("<q", buf, 8)[0]
+        count, p = struct.unpack_from("<I", buf, table)[0], table + 4
+        strings = []
+        for _ in range(count):
+            end = buf.index(b"\0", p)
+            strings.append(buf[p:end].decode("utf-8", "replace"))
+            p = end + 1
+        pos = 16
+    elif magic != 0x07564428:
+        return {}
+    games = {}
+    while True:
+        try:
+            appid, size = struct.unpack_from("<II", buf, pos)
+        except struct.error:
+            break
+        if appid == 0:
+            break
+        KNOWN.add(str(appid))
+        try:
+            info = read_kv(buf, pos + 8 + 60, strings)[0].get("appinfo", {})
+        except (ValueError, IndexError, struct.error):
+            info = {}
+        pos += 8 + size
+        common = info.get("common", {})
+        if str(common.get("type", "")).lower() != "game" or "linux" not in str(common.get("oslist", "")):
+            continue
+        runtime = "scout"
+        for m in (info.get("config", {}).get("app_mappings") or {}).values():
+            if isinstance(m, dict) and m.get("platform") == "linux":
+                tool = str(m.get("tool", "")).lower()
+                runtime = "sniper" if "sniper" in tool else "soldier" if "soldier" in tool else runtime
+        games[str(appid)] = runtime
+        WINDOWS_DEPOTS[str(appid)] = {
+            d for d, v in (info.get("depots") or {}).items()
+            if isinstance(v, dict) and "windows" in str((v.get("config") or {}).get("oslist", ""))
+            and "linux" not in str((v.get("config") or {}).get("oslist", ""))
+        }
+    return games
+
+
+def manifest(app):
+    """The app's appmanifest text from the first of the client's libraries (internal storage, the
+    card) holding one, or None."""
+    for library in steamapps.split(":"):
+        try:
+            return open(os.path.join(library, "appmanifest_%s.acf" % app), encoding="utf-8", errors="replace").read()
+        except OSError:
+            pass
+    return None
+
+
+def installed_apps():
+    found = set()
+    for library in steamapps.split(":"):
+        try:
+            found |= {m.group(1) for m in map(re.compile(r"appmanifest_(\d+)\.acf$").match, os.listdir(library)) if m}
+        except OSError:
+            pass
+    return found
+
+
+def new_linux_build(app):
+    """For a title the appinfo cache does not know yet (bought while the client runs): installed as
+    itself, not as a Windows build through a compatibility tool, and not one of Valve's runtimes or
+    Protons, which the client installs as apps too."""
+    text = manifest(app) or ""
+    if re.search(r'"platform_override_source"\s*"windows"', text, re.I):
+        return False
+    folder = re.search(r'"installdir"\s*"([^"]*)"', text)
+    return not re.match(r"steam ?linux ?runtime|proton|steamworks shared", folder.group(1) if folder else "", re.I)
+
+
+def windows_installed(app):
+    """Whether the installed build of `app` is its Windows one (a Windows depot among those installed),
+    in any of the client's libraries (internal storage, the card)."""
+    text = manifest(app)
+    if text is None:
+        return False
+    found = block(text, "InstalledDepots")
+    if not found:
+        return False
+    installed = set(re.findall(r'"(\d+)"\s*\{', text[found[1]:found[2]]))
+    return bool(installed & WINDOWS_DEPOTS.get(app, set()))
+
+
+def block(text, key):
+    """(start of the key, index after its opening brace, index of its closing brace) or None."""
+    m = re.search(r'"%s"\s*\{' % re.escape(key), text)
+    if not m:
+        return None
+    depth, k = 1, m.end()
+    while depth:
+        c = text[k]
+        depth += c == "{"
+        depth -= c == "}"
+        k += 1
+    return m.start(), m.end(), k - 1
+
+
+games = linux_games(appinfo)
+for app in extra:
+    games.setdefault(app, "scout")
+s = open(path, encoding="utf-8", errors="surrogateescape").read()
+if not block(s, "CompatToolMapping"):
+    st = block(s, "Steam")
+    if not st:
+        sys.exit("no Steam section")
+    s = s[:st[1]] + '\n\t\t\t\t"CompatToolMapping"\n\t\t\t\t{\n\t\t\t\t}' + s[st[1]:]
+
+
+def decide(app, inner):
+    """(the tool `app` goes to, or None when its entry stays; its entry's span in `inner`; the tool
+    that entry names, None without one)."""
+    on_windows = windows_installed(app)
+    old = block(inner, app)
+    name = None
+    if old:
+        name = re.search(r'"name"\s*"([^"]*)"', inner[old[1]:old[2]])
+        name = name.group(1) if name else ""
+        # Another tool chosen for it in Properties stays; the forced ones are retaken, and so are the
+        # automatic ones: Valve's own Proton names and droiddeck-proton-arm64, the arm64 client's
+        # name for its Proton, which only its live compat pass writes (here the wrapper is -a64).
+        automatic = name in ("", "droiddeck-direct", "droiddeck-proton-arm64") or name.startswith("proton_")
+        if not automatic and app not in extra:
+            return None, old, name
+        if on_windows and (name == proton or not proton):
+            return None, old, name
+    elif on_windows and not proton:
+        return None, old, name
+    return (proton if on_windows else "droiddeck-direct"), old, name
+
+
+if mode == "live":
+    _, open_, close = block(s, "CompatToolMapping")
+    inner = s[open_:close]
+    new = []
+    for app in sorted(installed_apps(), key=int):
+        if app not in games and (app in KNOWN or not new_linux_build(app)):
+            continue
+        tool, _, name = decide(app, inner)
+        if tool == "droiddeck-direct" and name != tool:
+            new.append(app)
+    if new:
+        open(pending, "a").write("".join("%s\n" % a for a in new))
+        print("droiddeck-steam-x64: installed while the client runs, for DroidDeck direct at its restart: %s" % " ".join(new))
+    sys.exit(0)
+mapped, windows = [], []
+for app in sorted(games, key=int):
+    _, open_, close = block(s, "CompatToolMapping")
+    inner = s[open_:close]
+    tool, old, _ = decide(app, inner)
+    if tool is None:
+        continue
+    if old:
+        inner = inner[:old[0]] + inner[old[2] + 1:]
+    entry = ('\n\t\t\t\t\t"%s"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"%s"\n'
+             '\t\t\t\t\t\t"config"\t\t""\n\t\t\t\t\t\t"priority"\t\t"250"\n\t\t\t\t\t}' % (app, tool))
+    s = s[:open_] + entry + inner + s[close:]
+    (mapped if tool == "droiddeck-direct" else windows).append(app)
+open(path, "w", encoding="utf-8", errors="surrogateescape").write(s)
+json.dump(mapped, open(auto_file, "w"))
+open(sniper_file, "w").write("".join("%s\n" % a for a in mapped if games[a] != "scout"))
+print("droiddeck-steam-x64: %d Linux title(s) on DroidDeck direct (%d on the newer runtime)%s"
+      % (len(mapped), sum(games[a] != "scout" for a in mapped),
+         "; %d installed as Windows games kept on %s" % (len(windows), proton) if windows else ""))
+PY
 }
 
 x64_prepare() {
@@ -384,177 +624,15 @@ case $verb in
 esac
 RUN
   chmod 755 "$tool/run"
-  # The mapping lives in config.vdf, which the client rewrites from memory as it exits: written
-  # here, while no x86 client runs.
-  if [ -f "$STEAM_X64/config/config.vdf" ] && ! pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then
-    python3 - "$STEAM_X64/config/config.vdf" "$STEAM_X64/appcache/appinfo.vdf" "$X64_HOME/direct-auto.json" \
-      "$X64_HOME/direct-sniper" "$STEAM_X64/steamapps:/mnt/droiddeck-sd/x86-64/steamapps" "$(x64_default_tool)" ${BL_X64_DIRECT_APPS:-550} \
-      <<'PY' || step "could not map titles to DroidDeck direct"
-# Every game with a Linux build goes to DroidDeck direct: Steam would run it in its Linux runtime
-# container, which needs user namespaces no Android app has, and the game would not start. The
-# client's own appinfo cache says which games have a Linux build and which runtime Valve gives them
-# (config/app_mappings: SteamLinuxRuntime_sniper or _soldier; none = scout). Those ids go to
-# direct-sniper for the tool's run script. A title on a tool chosen in Properties keeps it, except
-# BL_X64_DIRECT_APPS (Left 4 Dead 2 by default), which is always taken back.
-# direct-auto.json lists what this mapped.
-# A game whose Windows build is the one installed (it ran on a Proton before) stays a Windows game, on
-# the client's default Proton: Steam does not swap an installed build when the tool changes, so
-# DroidDeck direct was handed Launcher.exe and the game ended at once (device: Borderlands 2), and
-# getting the Linux build back means downloading the game again.
-import json, os, re, struct, sys
-path, appinfo, auto_file, sniper_file, steamapps, proton = sys.argv[1:7]
-extra = sys.argv[7:]
-WINDOWS_DEPOTS = {}
-
-
-def read_kv(buf, pos, strings):
-    out = {}
-    while True:
-        t = buf[pos]
-        pos += 1
-        if t == 0x08:
-            return out, pos
-        if strings is not None:
-            key = strings[struct.unpack_from("<I", buf, pos)[0]]
-            pos += 4
-        else:
-            end = buf.index(b"\0", pos)
-            key = buf[pos:end].decode("utf-8", "replace")
-            pos = end + 1
-        if t == 0x00:
-            out[key], pos = read_kv(buf, pos, strings)
-        elif t == 0x01:
-            end = buf.index(b"\0", pos)
-            out[key] = buf[pos:end].decode("utf-8", "replace")
-            pos = end + 1
-        elif t in (0x02, 0x03, 0x04, 0x06):
-            pos += 4
-        elif t in (0x07, 0x0A):
-            pos += 8
-        else:
-            raise ValueError("type %#x" % t)
-
-
-def linux_games(file):
-    """{appid: runtime} for the games with a Linux build in the client's appinfo cache."""
-    try:
-        buf = open(file, "rb").read()
-    except OSError:
-        return {}
-    magic = struct.unpack_from("<I", buf, 0)[0]
-    strings, pos = None, 8
-    if magic == 0x07564429:
-        table = struct.unpack_from("<q", buf, 8)[0]
-        count, p = struct.unpack_from("<I", buf, table)[0], table + 4
-        strings = []
-        for _ in range(count):
-            end = buf.index(b"\0", p)
-            strings.append(buf[p:end].decode("utf-8", "replace"))
-            p = end + 1
-        pos = 16
-    elif magic != 0x07564428:
-        return {}
-    games = {}
-    while True:
-        appid, size = struct.unpack_from("<II", buf, pos)
-        if appid == 0:
-            break
-        try:
-            info = read_kv(buf, pos + 8 + 60, strings)[0].get("appinfo", {})
-        except (ValueError, IndexError, struct.error):
-            info = {}
-        pos += 8 + size
-        common = info.get("common", {})
-        if str(common.get("type", "")).lower() != "game" or "linux" not in str(common.get("oslist", "")):
-            continue
-        runtime = "scout"
-        for m in (info.get("config", {}).get("app_mappings") or {}).values():
-            if isinstance(m, dict) and m.get("platform") == "linux":
-                tool = str(m.get("tool", "")).lower()
-                runtime = "sniper" if "sniper" in tool else "soldier" if "soldier" in tool else runtime
-        games[str(appid)] = runtime
-        WINDOWS_DEPOTS[str(appid)] = {
-            d for d, v in (info.get("depots") or {}).items()
-            if isinstance(v, dict) and "windows" in str((v.get("config") or {}).get("oslist", ""))
-            and "linux" not in str((v.get("config") or {}).get("oslist", ""))
-        }
-    return games
-
-
-def windows_installed(app):
-    """Whether the installed build of `app` is its Windows one (a Windows depot among those installed),
-    in any of the client's libraries (internal storage, the card)."""
-    for library in steamapps.split(":"):
-        try:
-            text = open(os.path.join(library, "appmanifest_%s.acf" % app), encoding="utf-8", errors="replace").read()
-            break
-        except OSError:
-            pass
-    else:
-        return False
-    found = block(text, "InstalledDepots")
-    if not found:
-        return False
-    installed = set(re.findall(r'"(\d+)"\s*\{', text[found[1]:found[2]]))
-    return bool(installed & WINDOWS_DEPOTS.get(app, set()))
-
-
-def block(text, key):
-    """(start of the key, index after its opening brace, index of its closing brace) or None."""
-    m = re.search(r'"%s"\s*\{' % re.escape(key), text)
-    if not m:
-        return None
-    depth, k = 1, m.end()
-    while depth:
-        c = text[k]
-        depth += c == "{"
-        depth -= c == "}"
-        k += 1
-    return m.start(), m.end(), k - 1
-
-
-games = linux_games(appinfo)
-for app in extra:
-    games.setdefault(app, "scout")
-s = open(path, encoding="utf-8", errors="surrogateescape").read()
-if not block(s, "CompatToolMapping"):
-    st = block(s, "Steam")
-    if not st:
-        sys.exit("no Steam section")
-    s = s[:st[1]] + '\n\t\t\t\t"CompatToolMapping"\n\t\t\t\t{\n\t\t\t\t}' + s[st[1]:]
-mapped, windows = [], []
-for app in sorted(games, key=int):
-    on_windows = windows_installed(app)
-    _, open_, close = block(s, "CompatToolMapping")
-    inner = s[open_:close]
-    old = block(inner, app)
-    if old:
-        name = re.search(r'"name"\s*"([^"]*)"', inner[old[1]:old[2]])
-        name = name.group(1) if name else ""
-        # Another tool chosen for it in Properties stays; the forced ones are retaken, and so are the
-        # automatic ones: Valve's own Proton names and droiddeck-proton-arm64, the arm64 client's
-        # name for its Proton, which only its live compat pass writes (here the wrapper is -a64).
-        automatic = name in ("", "droiddeck-direct", "droiddeck-proton-arm64") or name.startswith("proton_")
-        if not automatic and app not in extra:
-            continue
-        if on_windows and (name == proton or not proton):
-            continue
-        inner = inner[:old[0]] + inner[old[2] + 1:]
-    elif on_windows and not proton:
-        continue
-    tool = proton if on_windows else "droiddeck-direct"
-    entry = ('\n\t\t\t\t\t"%s"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"%s"\n'
-             '\t\t\t\t\t\t"config"\t\t""\n\t\t\t\t\t\t"priority"\t\t"250"\n\t\t\t\t\t}' % (app, tool))
-    s = s[:open_] + entry + inner + s[close:]
-    (windows if on_windows else mapped).append(app)
-open(path, "w", encoding="utf-8", errors="surrogateescape").write(s)
-json.dump(mapped, open(auto_file, "w"))
-open(sniper_file, "w").write("".join("%s\n" % a for a in mapped if games[a] != "scout"))
-print("droiddeck-steam-x64: %d Linux title(s) on DroidDeck direct (%d on the newer runtime)%s"
-      % (len(mapped), sum(games[a] != "scout" for a in mapped),
-         "; %d installed as Windows games kept on %s" % (len(windows), proton) if windows else ""))
-PY
+  # A new user's client has no config.vdf before its first start, so Steam Play's default and the
+  # Linux titles would wait a session for it. The mapping block alone, which the client keeps: the
+  # titles are added to it here, the default (and its default-tool record) further down.
+  if [ ! -f "$STEAM_X64/config/config.vdf" ] && ! pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then
+    mkdir -p "$STEAM_X64/config"
+    printf '"InstallConfigStore"\n{\n\t"Software"\n\t{\n\t\t"Valve"\n\t\t{\n\t\t\t"Steam"\n\t\t\t{\n\t\t\t\t"CompatToolMapping"\n\t\t\t\t{\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n' \
+      > "$STEAM_X64/config/config.vdf"
   fi
+  x64_map_direct
   # The arm64 client's Proton tools (droiddeck-proton-arm64, GE-Proton, CachyOS): one wrapper per
   # tool, same folder and tool name (Components swaps and per-title mappings are keyed by them). The
   # wrapper is an x86 script under FEX; it starts droiddeck-x64-arm-proton through an arm64 binary,
@@ -947,6 +1025,7 @@ case "${1:-}" in
   --exec) shift; x64_exec "$@" ;;
   --gpu) x64_gpu; exit $? ;;
   --default-tool) x64_default_tool; exit 0 ;;
+  --map-direct) shift; x64_map_direct "$@"; exit 0 ;;
 esac
 
 # --- standalone (the desktop menu entry) ------------------------------------------------------
