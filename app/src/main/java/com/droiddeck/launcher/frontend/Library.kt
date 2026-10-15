@@ -74,11 +74,12 @@ object Library {
 
     internal fun steamLibraries(context: Context): List<Pair<File, String>> {
         val root = SessionPrefs.activeSteamRoot(context)
-        // The x86-64 client keeps one library of its own; the selected library is the arm64 client's.
+        // The x86-64 client keeps libraries of its own; the selected library is the arm64 client's,
+        // and the x86-64 client's card library is a folder inside it.
         val x64 = SessionPrefs.steamClientArch(context) == "x86_64"
         return listOfNotNull(
             root to "internal",
-            GameStorage.effective(context)?.takeUnless { x64 }?.let { File(it.path) to it.label },
+            GameStorage.effective(context)?.let { (if (x64) File(it.path, GameStorage.X64_CARD_DIR) else File(it.path)) to it.label },
         ) + GameStorage.gamesFolderLibraries(context).map { it.host to it.label }
     }
 

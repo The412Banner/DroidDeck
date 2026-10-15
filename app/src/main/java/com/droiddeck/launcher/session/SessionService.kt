@@ -801,6 +801,36 @@ class SessionService : Service() {
                 }
             }
         }
+        val x64Libraries = org.json.JSONArray()
+        if (storageDiagnosticLibrary != null && library != null && SessionPrefs.steamClientArch(this) == "x86_64") {
+            val x64 = File(library.path, GameStorage.X64_CARD_DIR)
+            val problem = GameStorage.prepare(this, x64.path)
+            if (problem != null) {
+                Log.w(TAG, "x86-64 steam library: $problem")
+            } else try {
+                val room = if (ProotFastPath.enabled(this)) {
+                    ProotFastPath.MAX_BINDS - LinuxRuntime.binds(this, sessionRoot, runtimeDir, Environment.getExternalStorageDirectory(), binds).size
+                } else Int.MAX_VALUE
+                val extra = SecondaryLibrary.binds(filesDir, x64, listOf(GameStorage.X64_CARD_GUEST)).drop(1)
+                if (extra.size > room) {
+                    Log.w(TAG, "x86-64 steam library: $x64 needs ${extra.size} binds, $room left for the fast path; not a library this session")
+                } else {
+                    binds.addAll(extra)
+                    x64Libraries.put(org.json.JSONObject().put("path", GameStorage.X64_CARD_GUEST).put("label", library.label.replace('"', ' ').replace('\\', ' ')))
+                    Log.i(TAG, "x86-64 steam library: $x64 -> ${GameStorage.X64_CARD_GUEST} (\"${library.label}\")")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "x86-64 steam library: $x64 private directories could not be prepared", e)
+            }
+        }
+        try {
+            val listing = File(filesDir, "session/steam-libraries-x64.json").apply { parentFile?.mkdirs() }
+            listing.writeText(x64Libraries.toString())
+            val envAt = guest.indexOf(LinuxRuntime.SESSION_SCRIPT).takeIf { it >= 0 } ?: guest.size
+            guest.add(envAt, "BL_X64_STEAM_LIBRARIES=" + listing.path)
+        } catch (e: Exception) {
+            Log.w(TAG, "x86-64 steam library: the list could not be written; internal storage alone this session", e)
+        }
         try {
             val listing = File(filesDir, "session/steam-libraries.json").apply { parentFile?.mkdirs() }
             val json = org.json.JSONArray()
