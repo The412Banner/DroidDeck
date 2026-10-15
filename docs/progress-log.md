@@ -48,8 +48,16 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   could not open. DroidDeck direct now preloads Valve's runtime HarfBuzz (2.7) for newer-runtime titles
   (`c9eb7d30`). Device with both done by hand: engine and modules loaded (5 GB) with no error, then Android
   killed DroidDeck for memory while it was in the background. Not yet seen at the menu.
-- **Still to test:** CS2 on the r3 APK in the foreground; touch layouts, Offline Mode, Switch to Desktop,
-  a Linux game from the card. TF2 on the device is the Windows build after the VAC test.
+- **CS2 on the r3 APK** (`c9eb7d30`, no launch options): no hang, the menu text library loads, the game
+  client and modules load and the window resizes. Every run then ended in Android's low-memory killer:
+  CS2 goes from 3.5 to 5.3 GB in about 15 s and `lmkd` killed DroidDeck (adj 200, in the background
+  while the device was in Termux) with zRAM on and still filling (1.5 to 3.2 GB of 6 GB). This device's
+  `lmkd` runs in minfree mode (`persist.device_config.lmkd_native.use_minfree_levels=true`; background
+  apps go below about 120 MB free), which does not count swap. Proposed, not applied: switch it to the
+  PSI mode (`use_minfree_levels=false`, `lmkd.reinit=1`; reverted with `true`). CS2 has not been seen
+  at its menu yet.
+- **Still to test:** CS2 to its menu; touch layouts, Offline Mode, Switch to Desktop, a Linux game from
+  the card. TF2 on the device is the Windows build after the VAC test.
 
 ## 2026-10-14 (evening) - `feat/x86-64-steam-client`: Team Fortress 2 runs (sniper check, FEX thunks)
 
