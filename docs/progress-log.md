@@ -7,6 +7,50 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
+## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
+
+- **SD card library** (`3fc74f3e`): the x86-64 client had internal storage as its only library, so Steam's
+  install dialog never offered a place. It now has `x86-64/` inside the card library
+  (`/mnt/droiddeck-sd/x86-64`; compatdata, shadercache and runtime tools private like the arm64 card
+  library). Before building, FEX was shown to run x86 programs from the noexec exFAT card. Device: the
+  dialog offers Internal Storage and SD card.
+- **Card downloads** (`f77113fb`): `storage.c` (no zero-filled reservation where `fallocate` is refused)
+  and `dircache.c` recognised only `steamrtarm64/steam`; the x86-64 client wrote each download in full as
+  zeros first (Audiosurf: 415 MB written, 0 downloaded). Device: FlatOut, 1.19 GB, to the card in 51 s.
+- **zRAM** (`877c27eb`): the watcher read argv[0], which under FEX is FEX; it now reads FEX's first argument.
+- **ARM parity** (`b0923f05`): touch layouts read the active client's files; Offline Mode is written to
+  both clients' `loginusers.vdf`; the Lossless Scaling ownership check runs for x86-64; Repair Steam repairs
+  the x86-64 client too (and two unshown starts do, like arm64; the app clears its start count). Device: no
+  repair on the stale 31-start count, count cleared once the client was on screen. Switch to Desktop needs
+  no change (Deck mode: an x86 shell under FEX runs `steamos-session-select`).
+- **DroidDeck-Proton default** (`2bd752aa`): newest DroidDeck-Proton before GE-Proton; `default-tool`
+  records the default this script set, and on a change the titles still on it move along (device: 113 off
+  GE-Proton11-7). A default the user chose is kept. FlatOut from the card: in game on DroidDeck-Proton
+  11-9.1, exits on GE-Proton11-7 (no log).
+- **Org main** merged (`714198bf`, 36 commits; strings and `steam_started` conflicts kept both sides).
+  A stale line from the 10-07 sync ran the live compat helper in the foreground on the arm64 restart path:
+  black screen after a Steam import restart (`02e7c503` matches main again).
+- **VAC findings:** x86-64 client + Linux builds secure (TF2, HL, L4D2). x86-64 client + Windows build
+  (TF2 on DroidDeck-Proton) insecure: Proton reaches Steam through the arm64 client's `steamclient.so`.
+  arm64 client + L4D2 blocked on both Protons; arm64 + Half-Life (Windows) joined a vac=1 GoldSrc server.
+  Why the arm64 client fails is not established. Sharing libraries between the clients stays parked.
+- **arm64 `droiddeck-fex`** (`a53b49ef`): Valve's FEX-Emu keeps its server socket in
+  `$STEAM_COMPAT_DATA_PATH/fex-emu/Server` whatever `FEX_APP_DATA_LOCATION`/`FEX_SERVERSOCKETPATH` say;
+  under the app's folder that path passed 108 bytes (Half-Life: 136) and FEXServer never listened. A short
+  path is used now. 32-bit Linux titles through it still fail (not pursued).
+- **Counter-Strike 2** (Linux, newer runtime) hung at 100% of one core before loading its engine. With
+  ptrace taken by proot, `perf_event_open` IP sampling put the loop in FEX's `MemAllocator32Bit`: CS2
+  reserves the low 2 GB with `MAP_32BIT` in shrinking sizes, FEX met `EEXIST`, stepped down one page per
+  retry and restarted from the top for ever. **`fex-2610-r3`** (patch `0003`, `b0d316dc`): such a range is
+  skipped whole and a second exhausted scan returns `-ENOMEM`, as the kernel does. Next, its menu text
+  library failed: CS2 ships an older `libfreetype.so.6` but no HarfBuzz, and the rootfs's needs a newer
+  FreeType; the game flagged its files corrupt (a verify each start) and waited behind an error box that
+  could not open. DroidDeck direct now preloads Valve's runtime HarfBuzz (2.7) for newer-runtime titles
+  (`c9eb7d30`). Device with both done by hand: engine and modules loaded (5 GB) with no error, then Android
+  killed DroidDeck for memory while it was in the background. Not yet seen at the menu.
+- **Still to test:** CS2 on the r3 APK in the foreground; touch layouts, Offline Mode, Switch to Desktop,
+  a Linux game from the card. TF2 on the device is the Windows build after the VAC test.
+
 ## 2026-10-14 (evening) - `feat/x86-64-steam-client`: Team Fortress 2 runs (sniper check, FEX thunks)
 
 - **Sniper check:** `tf.sh` reads `VERSION_CODENAME` from `/etc/os-release` and stops unless it is
