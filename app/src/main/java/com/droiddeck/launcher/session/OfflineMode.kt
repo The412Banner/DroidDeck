@@ -17,6 +17,8 @@ object OfflineMode {
 
     private fun loginUsers(root: File) = File(root, "root/.local/share/Steam/config/loginusers.vdf")
 
+    private fun x64LoginUsers(root: File) = File(root, "root/.droiddeck-x64/.local/share/Steam/config/loginusers.vdf")
+
     fun account(context: Context): String? {
         val file = loginUsers(LinuxRuntime.rootDir(context))
         val text = try {
@@ -36,7 +38,11 @@ object OfflineMode {
     }
 
     fun apply(context: Context, root: File) {
-        val file = loginUsers(root)
+        applyTo(context, loginUsers(root))
+        applyTo(context, x64LoginUsers(root))
+    }
+
+    private fun applyTo(context: Context, file: File) {
         if (!file.isFile) return
         val want = if (enabled(context)) "1" else "0"
         try {
