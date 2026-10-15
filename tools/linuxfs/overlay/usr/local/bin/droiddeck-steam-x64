@@ -19,8 +19,8 @@
 # First run downloads FEX (this repo's release), FEX's Ubuntu 24.04 x86 rootfs (~525 MB, unpacked
 # ~1.5 GB) and the x86 client (~600 MB). Log: $X64_HOME/steam-x64.log.
 set -eu
-FEX_TAG=fex-2610-r1
-FEX_SHA256=717b49469924e61641167473f2c2e3ebb74359161c216edd87f11984b4f0a4fa
+FEX_TAG=fex-2610-r2
+FEX_SHA256=3d769018a4228486ca1bfceb53161902e7d925eb8bbf5188384f859beaad7c02
 FEX_URL=https://github.com/The412Banner/DroidDeck/releases/download/$FEX_TAG/fex.tzst
 ROOTFS_URL=https://rootfs.fex-emu.gg/Ubuntu_24_04/2026-08-11/Ubuntu_24_04.sqsh
 ROOTFS_SHA256=2854b06d3ff1b8f6e526135bfb6dd5b7b30ab3ab73e79ae933a3d9fed959a178
