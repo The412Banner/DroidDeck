@@ -81,6 +81,22 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   of shared (`RssShmem`) or locked (`VmLck`) memory, to find who pins the 3.4 GB (FEX, the X server,
   Vulkan buffers, a ramfs). No SysV shared memory on the device. Then the trigger moves from
   MemAvailable to MemFree plus droppable file pages.
+- **Dust II (15:27):** CS2 loaded Dust II "Training Day" (bots) at 78 fps, then was killed at 15:28:05 the
+  same way. From 15:25:30 Shmem and Unevictable rose from 0.25 to 3.9 / 4.0 GB, yet the largest process
+  mapping shared memory (an `exe`) held only about 535 MB, so about 3.3 GB is not mapped by any process.
+- **Open files ruled out (15:32-15:36):** a second logger (`fdlog.sh` → `fd-cs2.log`) listed every memfd,
+  ashmem, deleted or tmpfs file of 20 MB or more held by the app. Only 64 MB PulseAudio memfds showed up
+  while Shmem reached 2.7 GB. The run was killed at 15:36:28 (Shmem 3.4 GB, Unevictable 3.5 GB).
+- **Lead: GPU memory.** `/sys/class/kgsl/kgsl/page_alloc_max` reads 6.07 GB (the peak since boot), and the
+  driver has `max_reclaim_limit` / `page_reclaim_per_call`, i.e. a KGSL build with process reclaim, where
+  GPU pages are shmem-backed and stay unevictable while the process is in the foreground. That fits
+  memory that no process maps, that has no file, and that is freed when the session dies. Not proven.
+- **Low-settings test (15:42):** `cs2_video.txt` in the x86 userdata: `gpu_mem_level` 3 → 0,
+  `cpu_level` 3 → 0, resolution 1024x576 → 854x480 (everything else was already at its lowest; backup
+  `cs2_video.txt.before-low`). A third logger (`gpulog.sh` → `gpu-cs2.log`, every 3 s) records KGSL
+  `page_alloc`, MemFree, Shmem, Unevictable and each process with more than 200 MB of GPU memory. If
+  Shmem rises with `page_alloc`, the GPU memory is what is pinned. Background apps were force-stopped
+  and caches dropped first (about 11 GB free).
 - **Still to test:** CS2 without the kill; touch layouts, Offline Mode, Switch to Desktop, a Linux game from
   the card. TF2 on the device is the Windows build after the VAC test.
 
