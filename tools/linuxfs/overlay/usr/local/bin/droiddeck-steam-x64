@@ -166,6 +166,22 @@ for lib in libblsession libfakeinput; do
 done
 rm -f "$ROOTFS/usr/local/lib/libblsession-x86_64.so" "$ROOTFS/usr/local/lib/libfakeinput-x86_64.so"
 # --- the x86-64 client -------------------------------------------------------------------------
+# Repair, as droiddeck-steam-install does for the arm64 client: asked for (Repair Steam), or after
+# two starts in a row that never showed the client (the app clears the count once it is on screen).
+# Counts from before this client was tracked are dropped rather than taken as failed starts.
+unconfirmed=$STEAM_X64/package/droiddeck-unconfirmed
+if [ -d "${unconfirmed%/*}" ] && ! grep -qx tracked "$unconfirmed" 2>/dev/null; then echo tracked > "$unconfirmed"; fi
+x64_repair=
+if [ "${BL_X64_REPAIR:-0}" = 1 ]; then
+  x64_repair=requested
+elif [ -f "$unconfirmed" ] && ! grep -qx repaired "$unconfirmed" && [ "$(grep -cx start "$unconfirmed")" -ge 2 ]; then
+  x64_repair="the client was started $(grep -cx start "$unconfirmed") times without showing anything"
+fi
+if [ -n "$x64_repair" ]; then
+  step "repairing the x86-64 Steam client ($x64_repair)"
+  rm -f "$STEAM_X64/package/droiddeck-installed" "$STEAM_X64/.crash" "$STEAM_X64/steam.pid" \
+    "$STEAM_X64"/package/steam_client_*.installed
+fi
 if [ ! -x "$STEAM_X64/steamrt64/steam" ] || [ ! -f "$STEAM_X64/package/droiddeck-installed" ]; then
   step "downloading the x86-64 Steam client ($MANIFEST)"
   work=$(mktemp -d)
@@ -195,6 +211,7 @@ if [ ! -x "$STEAM_X64/steamrt64/steam" ] || [ ! -f "$STEAM_X64/package/droiddeck
   echo "$version" > "$STEAM_X64/package/droiddeck-installed"
   chmod +x "$STEAM_X64/steam.sh" "$STEAM_X64/steamrt64/steam" "$STEAM_X64/ubuntu12_32/steam" 2>/dev/null || true
 fi
+[ -n "$x64_repair" ] && printf 'tracked\nrepaired\n' > "$unconfirmed"
 x64_sync_client
 scout=$STEAM_X64/ubuntu12_32
 if [ -f "$scout/steam-runtime.tar.xz" ] &&
