@@ -41,6 +41,13 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   in game at about 84 fps; Half-Life (32-bit, direct) runs on it. Windows games are not on this FEX:
   in x86 client mode they still run on the arm64 Proton (Borderlands 2: GE-Proton11-7-aarch64), whose
   own FEX translates the game.
+- **Which FEX runs what in x86 client mode:** the client (`steamrt64/steam`) and every Linux game on
+  DroidDeck direct run on the runtime's FEX (`fex-2610-r2`); Windows games go to the arm64 Proton and
+  its own FEX. At each start every library game with a Linux build, installed or not, is mapped to
+  DroidDeck direct, so Steam downloads the Linux depots; Windows-only games stay on the default
+  Proton, and a game already installed as its Windows build stays there (Borderlands 2 here:
+  `Binaries/Win32`, depot 49521). A game new to the library mid-session is mapped at the next start.
+- APK run 38670180921 (`9cc0ebcb`), signed and staged as `DroidDeck-x64-fex2610r2-9cc0ebcb.apk`.
 
 ## 2026-10-14 - `feat/x86-64-steam-client`: brought up to main; added games run through the x86-64 client
 
