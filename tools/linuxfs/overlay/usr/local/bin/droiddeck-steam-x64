@@ -41,9 +41,10 @@ step() { echo "== STEP $(date -u +%H:%M:%S) $*" | tee -a "$LOG"; }
 # prints its tool name, which the session hands to droiddeck-steam-compat and the shortcuts.
 x64_default_dir() {
   local d
-  for d in $(ls -d "$STEAM_X64"/compatibilitytools.d/GE-Proton*-aarch64 2>/dev/null | sort -V -r); do
+  while IFS= read -r d; do
     [ -f "$d/.droiddeck-arm64-proton" ] && { echo "$d"; return; }
-  done
+  done < <(ls -d "$STEAM_X64"/compatibilitytools.d/DroidDeck-Proton* 2>/dev/null | sort -V -r
+           ls -d "$STEAM_X64"/compatibilitytools.d/GE-Proton*-aarch64 2>/dev/null | sort -V -r)
   echo "$STEAM_X64/compatibilitytools.d/droiddeck-proton-arm64"
 }
 x64_default_tool() {
@@ -642,17 +643,21 @@ PY
     fi
   fi
   # Steam Play for every title not mapped otherwise: one of the arm64 client's own ARM64 Protons. The
-  # newest GE-Proton first:
+  # newest DroidDeck-Proton first (FlatOut from the card ran on it and not on GE-Proton11-7), then the
+  # newest GE-Proton:
   # with droiddeck-proton-arm64 (Proton Experimental) Xwayland never got its window buffers back
   # and FlatOut took the device's RAM with it (10.5 GB of dma-buf in 35 s); GE-Proton, same game,
-  # same client, stayed flat. droiddeck-proton-a64 when no GE-Proton is installed.
+  # same client, stayed flat. droiddeck-proton-a64 when neither is installed.
+  # default-tool records the default this script set. When it changes, the titles still on the old one
+  # move with it: they were put there by this script and the session's compat passes, which map each
+  # Windows title to the default by name. A default or title the user set to another tool keeps it.
   default=$(x64_default_dir)
   if [ -f "$default/compatibilitytool.vdf" ] && [ -f "$STEAM_X64/config/config.vdf" ] &&
      ! pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then
-    python3 - "$STEAM_X64/config/config.vdf" "$default/compatibilitytool.vdf" <<'PY' || step "could not make ARM64 Proton the default"
-import re, sys
-path = sys.argv[1]
-tool = re.search(r'"compat_tools"\s*\{\s*"([^"]+)"', open(sys.argv[2]).read()).group(1)
+    python3 - "$STEAM_X64/config/config.vdf" "$default/compatibilitytool.vdf" "$X64_HOME/default-tool" <<'PY' || step "could not make ARM64 Proton the default"
+import os, re, sys
+path, vdf, record = sys.argv[1:4]
+tool = re.search(r'"compat_tools"\s*\{\s*"([^"]+)"', open(vdf).read()).group(1)
 s = open(path, encoding="utf-8", errors="surrogateescape").read()
 m = re.search(r'"CompatToolMapping"\s*\{', s)
 if not m:
@@ -663,21 +668,35 @@ while depth:
     depth -= s[k] == "}"
     k += 1
 block = s[m.end():k]
+try:
+    previous = open(record).read().strip() or None
+except OSError:
+    previous = None
 z = re.search(r'^\s*"0"\s*\{([^{}]*)\}', block, re.M)
 if z:
+    name = re.search(r'"name"\s*"([^"]*)"', z.group(1))
+    name = name.group(1) if name else ""
+    set_here = re.search(r'"priority"\s*"75"', z.group(1)) is not None
+    # Before default-tool was kept: the default this script set was an -a64 wrapper at priority 75.
+    if previous is None and set_here and name.endswith("-a64"):
+        previous = name
     # Kept when the user chose another default; replaced when it names a tool this client ignores,
-    # or is the earlier default this script set (droiddeck-proton-a64 at priority 75).
-    ours = re.search(r'"name"\s*"droiddeck-proton-a64"', z.group(1)) and \
-        re.search(r'"priority"\s*"75"', z.group(1))
-    if "arm64" not in z.group(1) and not ours:
+    # or is the one this script set.
+    if "arm64" not in z.group(1) and name != previous:
         sys.exit(0)
-    if re.search(r'"name"\s*"%s"' % re.escape(tool), z.group(1)):
+    if name == tool and previous == tool:
         sys.exit(0)
-    s = s[:m.end() + z.start()] + s[m.end() + z.end():]
+    block = block[:z.start()] + block[z.end():]
+moved = 0
+if previous and previous != tool:
+    block, moved = re.subn(r'("name"\s*")%s(")' % re.escape(previous), lambda x: x.group(1) + tool + x.group(2), block)
 entry = ('\n\t\t\t\t\t"0"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"%s"\n' % tool +
          '\t\t\t\t\t\t"config"\t\t""\n\t\t\t\t\t\t"priority"\t\t"75"\n\t\t\t\t\t}')
-s = s[:m.end()] + entry + s[m.end():]
+s = s[:m.end()] + entry + block + s[k:]
 open(path, "w", encoding="utf-8", errors="surrogateescape").write(s)
+open(record, "w").write(tool + "\n")
+if moved:
+    print("droiddeck-steam-x64: default %s -> %s, with the %d titles on it" % (previous, tool, moved))
 PY
   fi
   # The startup movie the app stages for the arm64 client (its config/uioverrides/movies, chosen in
