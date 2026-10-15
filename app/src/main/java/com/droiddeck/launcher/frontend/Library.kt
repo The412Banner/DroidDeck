@@ -69,7 +69,7 @@ object Library {
     private val LAST_PLAYED = Regex("^\\s*\"LastPlayed\"\\s*\"(\\d+)\"", RegexOption.MULTILINE)
     private val INSTALL_DIR = Regex("^\\s*\"installdir\"\\s*\"([^\"]*)\"", RegexOption.MULTILINE)
 
-    private fun steamLibraries(context: Context): List<Pair<File, String>> {
+    internal fun steamLibraries(context: Context): List<Pair<File, String>> {
         val root = File(LinuxRuntime.rootDir(context), "root/.local/share/Steam")
         return listOfNotNull(
             root to "internal",
@@ -126,6 +126,14 @@ object Library {
                 }
         }
         return out.values.toList()
+    }
+
+    fun steamLibraryArt(context: Context): List<Pair<Int, File>> {
+        val cache = File(LinuxRuntime.rootDir(context), "root/.local/share/Steam/appcache/librarycache")
+        return cache.listFiles().orEmpty().mapNotNull { dir ->
+            val appId = dir.name.toIntOrNull()?.takeIf { it !in NOT_GAMES } ?: return@mapNotNull null
+            steamCacheImage(cache, appId, STEAM_CAPSULES)?.let { appId to it }
+        }
     }
 
     fun launchableGames(context: Context, strictRead: Boolean = false, added: List<AddedGames.Game>? = null): List<SteamGame> {
