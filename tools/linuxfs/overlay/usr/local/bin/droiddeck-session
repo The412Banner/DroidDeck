@@ -56,6 +56,12 @@ clear_stale_tmp() {
 }
 [ -z "${BL_INSIDE:-}" ] && clear_stale_tmp
 
+steam_update_stuck() {
+  [ "$1" -lt 60 ] || steam_updates=0
+  steam_updates=$((steam_updates + 1))
+  [ "$steam_updates" -ge 3 ]
+}
+
 collect_steam_logs() {
   [ -n "${BL_DEBUG_DIR:-}" ] || return 0
   local steam_root=${XDG_DATA_HOME:-$HOME/.local/share}/Steam
@@ -195,6 +201,9 @@ if [ -z "${BL_INSIDE:-}" ]; then
       nested=$wide
       echo "== gamescope: games at ${nested}x${height} stretched to the ${width}x${height} output"
     fi
+  fi
+  if [ "$mode" = steam ]; then
+    export gamescope_cursor_composite=2
   fi
   args=(--backend wayland --expose-wayland -f -W "$width" -H "$height" -w "$nested" -h "$height")
   [ "$nested" != "$width" ] && args+=(-S stretch) && export BL_STRETCHED=1
@@ -949,9 +958,11 @@ BUSCONF
         /usr/local/bin/droiddeck-steam-desktop-ui &
         desktop_ui_pid=$!
       fi
+      steam_started=$SECONDS
       "${steam_client[@]}" "${_bl_ui[@]}" "${_bl_cdp[@]}" "${_bl_lang[@]}" -clientbeta "$steam_channel" \
         -no-cef-sandbox -cef-ozone-platform=x11 "${_bl_cef[@]}" "$@"
       rc=$?
+      steam_ran=$((SECONDS - steam_started))
       if [ -n "$desktop_ui_pid" ]; then
         kill "$desktop_ui_pid" 2>/dev/null || true
         wait "$desktop_ui_pid" 2>/dev/null || true
@@ -994,8 +1005,7 @@ BUSCONF
         continue
       fi
       [ "$rc" -eq 42 ] || break
-      steam_updates=$((steam_updates + 1))
-      if [ "$steam_updates" -ge 3 ]; then
+      if steam_update_stuck "$steam_ran"; then
         echo "== steam: asked to restart for an update $steam_updates times and it is not installing; the session stops here rather than loop"
         break
       fi
