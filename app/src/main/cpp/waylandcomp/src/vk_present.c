@@ -8,9 +8,11 @@
 #include "hdr_compose.h"
 #include "blend_pass.h"
 #include "droiddeck_color.h"
+#include "quest_device.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/system_properties.h>
 #include <unistd.h>
 #include <errno.h>
 #include <poll.h>
@@ -64,6 +66,21 @@ static VkExtent2D g_extent;
 static int g_first_frame_done;
 
 static int g_base_black;
+
+int vkp_quest_layer_presentation(void) {
+    /* Compositor thread only; this is a process-wide device property, not a session setting.
+     * Quest 2 still needs its separate A6xx driver: this gate only chooses presentation. */
+    static int enabled = -1;
+    if (enabled < 0) {
+        char model[PROP_VALUE_MAX] = {0}, device[PROP_VALUE_MAX] = {0}, maker[PROP_VALUE_MAX] = {0};
+        __system_property_get("ro.product.model", model);
+        __system_property_get("ro.product.device", device);
+        __system_property_get("ro.product.manufacturer", maker);
+        enabled = quest_device_matches(model, device, maker);
+        if (enabled) droiddeck_log("gpu", "Quest presentation: display layers for Steam and desktop, CPU-initialized black backdrop; independent of HDR");
+    }
+    return enabled;
+}
 static VkExtent2D g_caps_extent;
 static int64_t g_surface_checked_ns;
 
@@ -1335,6 +1352,10 @@ static void check_surface_changed(void) {
 
 int vkp_base_black(int scene_w, int scene_h) {
     vkp_apply_window_request();
+    if (vkp_quest_layer_presentation()) {
+        if (vkp_update_map(scene_w, scene_h) != 0) return -1;
+        return sc_layer_base_black((int)g_extent.width, (int)g_extent.height);
+    }
     check_surface_changed();
     if (g_base_black && g_swapchain && g_window && g_dev_state == 1) {
         g_perf.base_kept++;
@@ -1413,6 +1434,7 @@ static int render_impl(int scene_w, int scene_h, const struct vkp_draw *draws, i
                        const struct vkp_hdr_frame *hf, int *how) {
     if (how) *how = 0;
     vkp_apply_window_request();
+    sc_layer_hide_base();
     check_surface_changed();
     if (g_dev_state == -2) return -1;
     if (dev_init() != 0 || !g_window || scene_w <= 0 || scene_h <= 0) return -1;
@@ -1670,6 +1692,26 @@ static int render_impl(int scene_w, int scene_h, const struct vkp_draw *draws, i
 }
 
 int vkp_render(int scene_w, int scene_h, const struct vkp_draw *draws, int n) {
+    if (vkp_quest_layer_presentation() && !vkp_framegen_active() && !vkp_cardboard_active()) {
+        /* The desktop (multiple windows), overlays and an empty scene must also avoid WSI.
+         * Merely enabling zero-copy handles only a single fullscreen window and leaves both
+         * the letterbox and every fallback frame going through the corrupted swapchain. */
+        vkp_apply_window_request();
+        sc_layer_hide_overlay();
+        if (n > 0) {
+            if (sc_layer_present_pass(draws, n, scene_w, scene_h) != 0) {
+                static int said;
+                if (!said) { said = 1; droiddeck_log("error", "Quest scene layer unavailable; retaining the previous frame rather than using the corrupt Android swapchain"); }
+                return -1;
+            }
+        } else {
+            sc_layer_hide();
+        }
+        /* sc_layer_present_pass signals only after submitting client content.
+         * A backdrop alone, or a successful no-op while a layer slot is unavailable,
+         * must not dismiss the app's loading UI or mark Steam's window as shown. */
+        return vkp_base_black(scene_w, scene_h);
+    }
     return render_impl(scene_w, scene_h, draws, n, NULL, NULL);
 }
 
@@ -1703,6 +1745,15 @@ void vkp_signal_first_frame(void) {
 
 int vkp_update_map(int scene_w, int scene_h) {
     if (g_dev_state == -2 || dev_init() != 0 || !g_window || scene_w <= 0 || scene_h <= 0) return -1;
+    if (vkp_quest_layer_presentation()) {
+        /* Layer geometry needs the window size, not a Vulkan swapchain. In particular, do
+         * not create/present a swapchain just to paint black under an otherwise clean layer. */
+        int w = ANativeWindow_getWidth(g_window), h = ANativeWindow_getHeight(g_window);
+        if (w <= 0 || h <= 0) return -1;
+        g_extent = (VkExtent2D){(uint32_t)w, (uint32_t)h};
+        update_map(scene_w, scene_h);
+        return g_map.valid ? 0 : -1;
+    }
     check_surface_changed();
     if (!g_swapchain && swap_init() != 0) return -1;
     update_map(scene_w, scene_h);
@@ -1911,11 +1962,7 @@ int vkp_pass_begin_hdr(int scene_w, int scene_h, const struct vkp_draw *draws, i
 static int pass_begin_impl(int scene_w, int scene_h, const struct vkp_draw *draws, int n,
                            const struct vkp_hdr_frame *hf, int *rw, int *rh) {
     if (g_pass.active) vkp_pass_abort();
-    if (g_dev_state == -2 || dev_init() != 0 || !g_window || scene_w <= 0 || scene_h <= 0) return -1;
-    check_surface_changed();
-    if (!g_swapchain && swap_init() != 0) return -1;
-    update_map(scene_w, scene_h);
-    if (!g_map.valid) return -1;
+    if (vkp_update_map(scene_w, scene_h) != 0) return -1;
     if (hf) {
         if (ensure_img(&g_hdrscene, scene_w, scene_h, HDR_FMT,
                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
