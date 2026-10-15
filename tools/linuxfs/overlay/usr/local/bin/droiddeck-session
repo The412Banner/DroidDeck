@@ -399,7 +399,9 @@ case $mode in
         bl_zram_scan() {
           _bl_game=0 _bl_pids=()
           for _d in /proc/[0-9]*; do
-            IFS= read -r -d '' _c 2>/dev/null < "$_d/cmdline" || continue
+            # Under FEX (the x86-64 client, its reaper and games) the program is FEX's first argument.
+            { IFS= read -r -d '' _c && case ${_c##*/} in FEX|FEXInterpreter) IFS= read -r -d '' _c ;; esac; } \
+              2>/dev/null < "$_d/cmdline" || continue
             case ${_c##*/} in
               reaper) _bl_game=1 ;;
               steam|steamwebhelper) _bl_pids+=("${_d#/proc/}") ;;
