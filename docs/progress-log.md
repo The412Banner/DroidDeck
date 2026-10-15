@@ -7,6 +7,29 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
+## 2026-10-14 (evening) - `feat/x86-64-steam-client`: Team Fortress 2, the sniper check and a FEX thunk bug
+
+- **Sniper check:** `tf.sh` reads `VERSION_CODENAME` from `/etc/os-release` and stops unless it is
+  `sniper`. DroidDeck direct cannot use Valve's sniper container (no user namespaces under Android), so
+  for titles in `direct-sniper` it runs such a script through `bash -c` with that line replaced by
+  `VERSION_CODENAME=sniper` (`92d65e3d`). Device: TF2 gets past the check and loads on the rootfs
+  libraries; sniper itself is not needed.
+- **Then a crash at the first frames**, with both launch options (Vulkan and Legacy OpenGL). Strict FEX
+  memory ordering and turning off the Gamescope WSI layer changed nothing. With FEX thunks off (lavapipe,
+  software) TF2 reached its main menu and loaded a match at 17 fps, so the thunks were the cause; with
+  only the Vulkan thunk on it still crashed.
+- **Cause (from a SIGSEGV report taken inside the game):** the main thread was executing Turnip's
+  `vk_common_CmdBindDescriptorSets` as x86 code, an address FEX never linked. FEX-2609's guest
+  `vkGetDeviceProcAddr` passes a lookup of `vkGetDeviceProcAddr` itself to the host and hands back the
+  raw host function; every pointer fetched through it is unlinked. TF2's native DXVK (2.3) makes that
+  lookup; the Windows games through Proton do not. FEX-2610 answers self-lookups in the guest
+  (FEX-Emu/FEX 3397eb9b).
+- **FEX 2610** (`af49e545`): `tools/fex/build-in-arch.sh` builds FEX-2610 with the same openat2 patch and
+  host thunks as `fex-2609-r3`. The container's newer clang has no `FileManager::clearStatCache()`,
+  which the thunk generator called after each run; patch `0002` drops that call (`31d66e67`). Published
+  as `fex-2610-r1` on the personal repo; `droiddeck-steam-x64` still fetches the org's `fex-2609-r3`
+  until it is device-tested.
+
 ## 2026-10-14 - `feat/x86-64-steam-client`: brought up to main; added games run through the x86-64 client
 
 Work lives on The412Banner/DroidDeck only until it runs correctly; the org branch and draft PR #152
