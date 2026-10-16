@@ -1,0 +1,22 @@
+#!/bin/bash
+# The x86-64 client's own web helper on the GPU (droiddeck-steam-x64 x64_webhelper_gpu): the session
+# shim turns the client's exec of steamrt64/steamwebhelper into this (preload/net.c,
+# BL_X64_ARM_WEBHELPER), and this runs the client's helper itself with one change to its environment.
+#
+# Steam's GL compositor in the helper draws every browser window (the main UI, the Quick Access
+# Menu, toasts) from that window's X pixmap (texture_from_pixmap, rebound on each damage event). The
+# helper's GPU process presents those windows through zink's Vulkan swapchain, and gamescope's WSI
+# layer (ENABLE_GAMESCOPE_WSI, set by gamescope for everything it starts) took each of those
+# swapchains and handed the frames to gamescope directly, so the X pixmaps the compositor reads
+# never got them: a new window (the QAM) stayed blank until something redrew it, and the window
+# behind went black. The layer's swapchains also held the menus to 60 fps on a 144 Hz panel.
+# Without the layer the frames go through the X server as Steam expects (device: QAM correct on
+# every open; menus 113-143 fps idle, ~95 fps repainting). Games keep the layer: only the helper
+# and its child processes get this.
+unset BL_X64_ARM_WEBHELPER
+# The shim already added the GPU flags (preload/webhelper.c) to these arguments.
+export BL_WEBHELPER_ARGS=stock DISABLE_GAMESCOPE_WSI=1
+if [ -x ./steamwebhelper ]; then
+  exec ./steamwebhelper "$@"
+fi
+exec "$HOME/.local/share/Steam/steamrt64/steamwebhelper" "$@"
