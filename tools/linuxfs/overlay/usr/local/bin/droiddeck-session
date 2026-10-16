@@ -344,7 +344,7 @@ case $mode in
       steam_root=${BL_X64_HOME:-$HOME/.droiddeck-x64}/.local/share/Steam
       steam_client=(droiddeck-steam-x64 --exec)
       if [ "${BL_X64_X86_WEBHELPER:-0}" = 1 ] &&
-         ! { [ "${BL_X64_CEF_GPU:-0}" = 1 ] && droiddeck-steam-x64 --gpu; }; then
+         ! droiddeck-steam-x64 --webhelper-gpu; then
         steam_cef_gpu=0
       fi
     else

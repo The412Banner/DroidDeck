@@ -838,6 +838,12 @@ x64_gpu() {
   [ "${BL_X64_SOFTWARE:-0}" != 1 ] && [ -d /usr/local/share/fex-emu/GuestThunks ] && [ -d /usr/local/lib/fex-emu/HostThunks ]
 }
 
+# Whether the client's own (x86) web helper draws on the GPU: it inherits the client's thunks.
+# BL_X64_CEF_GPU=0 keeps it in software.
+x64_webhelper_gpu() {
+  x64_gpu && [ "${BL_X64_CLIENT_SOFTWARE:-0}" != 1 ] && [ "${BL_X64_CEF_GPU:-1}" != 0 ]
+}
+
 # The environment the client and everything it starts run in.
 x64_env() {
 # The arm64 session's environment as it is now, for the arm64 Proton tools this client starts
@@ -846,11 +852,8 @@ export -p | grep -v -E '^declare -x (PWD|OLDPWD|SHLVL|_)=' > "$X64_HOME/arm-sess
 mv -f "$X64_HOME/arm-session.env.new" "$X64_HOME/arm-session.env"
 # The arm64 session's library paths and preloads are aarch64 and mean nothing to x86 processes.
 unset LD_LIBRARY_PATH LD_PRELOAD STEAM_RUNTIME STEAM_RUNTIME_PREFER_HOST_LIBRARIES
-# The client and its browser draw in software, as they always have: with the thunks the browser's
-# GPU process (even under -cef-disable-gpu it probes GL and Vulkan) gets the host drivers, fails
-# ("MESA-LOADER: failed to retrieve device information") and dies, and the client never opens a
-# window (device: 0 windows, "Starting display and audio" forever). Games get the GPU: the session's
-# GPU settings are saved for DroidDeck direct, which hands them, and FEX's host thunks, to the game.
+# Games get the GPU: the session's GPU settings are saved for DroidDeck direct, which hands them, and
+# FEX's host thunks, to the game.
 gpu_vars="GALLIUM_DRIVER MESA_LOADER_DRIVER_OVERRIDE VK_ICD_FILENAMES VK_DRIVER_FILES LIBGL_KOPPER_DRI2 ZINK_DEBUG ZINK_DESCRIPTORS TU_DEBUG MESA_NO_ERROR mesa_glthread"
 rm -f "$X64_HOME/game-gpu.env"
 if x64_gpu; then
@@ -942,11 +945,13 @@ x64_exec() {
       echo "== x86-64 client build ${x86_build:-?}, arm64 web helper's ${arm_build:-?}: keeping the x86 web helper" >&2
     fi
   fi
-  [ -n "${BL_X64_ARM_WEBHELPER:-}" ] || export BL_WEBHELPER_ARGS=stock
-  # The session asks for the GPU on the arm64 helper's behalf; the x86 one has no driver for this GPU
-  # and its GPU process dies at once (exit_code=11), the client restarting the helper without end
-  # (device: a fresh install's first start, -startcount=15 in three minutes). It draws in software.
-  if [ -z "${BL_X64_ARM_WEBHELPER:-}" ] && [ "${BL_X64_CEF_GPU:-0}" != 1 ]; then
+  if [ -z "${BL_X64_ARM_WEBHELPER:-}" ] && x64_webhelper_gpu; then
+    # ANGLE's GL backend, so the work happens in the host's driver behind FEX's GL thunk: on ANGLE's
+    # Vulkan backend the x86 compositor thread itself was the bottleneck (device: 16 fps against 60).
+    # Never --in-process-gpu (the preload's default): that crash took the whole helper down.
+    export BL_WEBHELPER_ARGS="--ignore-gpu-blocklist --use-gl=angle --use-angle=gl --ozone-platform=x11"
+  elif [ -z "${BL_X64_ARM_WEBHELPER:-}" ]; then
+    export BL_WEBHELPER_ARGS=stock
     local a args=() soft=0
     for a in "$@"; do
       case $a in
@@ -1024,6 +1029,7 @@ case "${1:-}" in
   --prepare) x64_prepare; exit 0 ;;
   --exec) shift; x64_exec "$@" ;;
   --gpu) x64_gpu; exit $? ;;
+  --webhelper-gpu) x64_webhelper_gpu; exit $? ;;
   --default-tool) x64_default_tool; exit 0 ;;
   --map-direct) shift; x64_map_direct "$@"; exit 0 ;;
 esac
@@ -1112,7 +1118,7 @@ for attempt in 1 2 3 4 5; do
   echo publicbeta > "$STEAM_X64/package/beta"
   step "starting the x86-64 SteamRT3 client under FEX (attempt $attempt): $*"
   rc=0
-  if [ "${BL_X64_X86_WEBHELPER:-0}" != 1 ] || { [ "${BL_X64_CEF_GPU:-0}" = 1 ] && x64_gpu; }; then cef=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan); else cef=(-cef-disable-gpu); fi
+  if [ "${BL_X64_X86_WEBHELPER:-0}" != 1 ] || x64_webhelper_gpu; then cef=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan); else cef=(-cef-disable-gpu); fi
   ( x64_exec -clientbeta publicbeta -no-cef-sandbox "${cef[@]}" "$@" ) >>"$LOG" 2>&1 || rc=$?
   step "client exited rc=$rc"
   [ "$rc" = 42 ] || break
