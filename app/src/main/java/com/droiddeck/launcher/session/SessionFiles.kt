@@ -75,6 +75,7 @@ object SessionFiles {
             "usr/local/bin/droiddeck-steam-x64" to "usr/local/bin/droiddeck-steam-x64",
             "usr/local/bin/droiddeck-x64-arm-proton" to "usr/local/bin/droiddeck-x64-arm-proton",
             "usr/local/bin/droiddeck-x64-arm-webhelper" to "usr/local/bin/droiddeck-x64-arm-webhelper",
+            "usr/local/bin/droiddeck-x64-webhelper" to "usr/local/bin/droiddeck-x64-webhelper",
             "usr/local/bin/droiddeck-steamvr" to "usr/local/bin/droiddeck-steamvr",
             "usr/local/bin/droiddeck-steamvr-settings" to "usr/local/bin/droiddeck-steamvr-settings",
             "usr/local/bin/droiddeck-steamvr-game" to "usr/local/bin/droiddeck-steamvr-game",
