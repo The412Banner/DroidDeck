@@ -511,7 +511,11 @@ object SessionPrefs {
         prefs(context).edit().putString("steamClientArch", id).apply()
     }
 
-    fun activeSteamRoot(context: Context): java.io.File = steamRoot(context, steamClientArch(context))
+    /** The running session's client (the setting only applies next session), else the selected one. */
+    fun activeSteamClientArch(context: Context): String =
+        SessionState.steamClientArch?.takeIf { SessionState.running } ?: steamClientArch(context)
+
+    fun activeSteamRoot(context: Context): java.io.File = steamRoot(context, activeSteamClientArch(context))
 
     /** The Steam root of the client [arch] names ("arm64"/"x86_64"), whichever is selected now. */
     fun steamRoot(context: Context, arch: String): java.io.File = java.io.File(

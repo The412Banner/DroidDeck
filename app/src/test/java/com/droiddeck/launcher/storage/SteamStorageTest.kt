@@ -134,6 +134,19 @@ class SteamStorageTest {
         assertNull(SteamStorage.manifests(File(library, "missing")))
     }
 
+    @Test fun anEmptyX64FolderIsNoClient() {
+        val root = tmp.newFolder("x64")
+        File(root, ".cef-enable-remote-debugging").createNewFile()
+        assertFalse(SteamStorage.x64ClientPresent(root))
+        assertFalse(SteamStorage.x64ClientPresent(File(root, "missing")))
+        File(root, "package").mkdirs()
+        File(root, "package/droiddeck-installed").writeText("1\n")
+        assertTrue(SteamStorage.x64ClientPresent(root))
+        val bare = tmp.newFolder("x64-steamapps")
+        File(bare, "steamapps").mkdirs()
+        assertTrue(SteamStorage.x64ClientPresent(bare))
+    }
+
     @Test fun leftoverIdsSkipTheSharedPrefixAndShortcuts() {
         assertNull(SteamStorage.leftoverId("0"))
         assertNull(SteamStorage.leftoverId("3207321049"))

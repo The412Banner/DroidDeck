@@ -86,6 +86,14 @@ class X64RepointTest(unittest.TestCase):
         self.assertEqual(m["880"], "GE-Proton11-7-a64")
         self.assertEqual(m["0"], "GE-Proton11-7-a64")
 
+    def test_repoints_arm64_name_even_with_its_stray_tool(self):
+        # An arm64 compat pass that ran against this client also left its tool folder here.
+        stray = self.root / "compatibilitytools.d" / "droiddeck-proton-arm64"
+        stray.mkdir(parents=True)
+        (stray / "compatibilitytool.vdf").write_text('"compatibilitytools"\n{\n\t"compat_tools"\n\t{\n\t\t"droiddeck-proton-arm64"\n\t\t{\n\t\t}\n\t}\n}\n')
+        self.assertIn("880", COMPAT["x64_repoint"](str(self.root), "GE-Proton11-7-a64"))
+        self.assertEqual(self.mapping()["880"], "GE-Proton11-7-a64")
+
     def test_live_notes_pending_restart(self):
         COMPAT["x64_repoint"](str(self.root), "GE-Proton11-7-a64", live=True)
         self.assertEqual((Path(self.home.name) / ".bl-compat-pending").read_text(), "550\n880\n")
