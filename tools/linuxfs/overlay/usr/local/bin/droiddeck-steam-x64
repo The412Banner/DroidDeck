@@ -953,6 +953,11 @@ x64_exec() {
     # Vulkan backend the x86 compositor thread itself was the bottleneck (device: 16 fps against 60).
     # Never --in-process-gpu (the preload's default): that crash took the whole helper down.
     export BL_WEBHELPER_ARGS="--ignore-gpu-blocklist --use-gl=angle --use-angle=gl --ozone-platform=x11"
+    # Run through droiddeck-x64-webhelper, which keeps gamescope's WSI layer off the helper: the layer
+    # took the swapchains of the helper's windows, so Steam's compositor (which reads their X pixmaps)
+    # never saw new frames - the Quick Access Menu stayed blank, the screen behind it black - and the
+    # menus were held to 60 fps. The helper stays this client's own (x86) one.
+    [ -x /usr/local/bin/droiddeck-x64-webhelper ] && export BL_X64_ARM_WEBHELPER=/usr/local/bin/droiddeck-x64-webhelper
   elif [ -z "${BL_X64_ARM_WEBHELPER:-}" ]; then
     export BL_WEBHELPER_ARGS=stock
     local a args=() soft=0
