@@ -1,10 +1,9 @@
 #!/bin/bash
 # The x86-64 client's web helper (its whole UI) is the arm64 client's, run natively: both clients are
 # the same Steam build, and the session shim turns the x86 client's exec of its own helper into this
-# (preload/net.c, BL_X64_ARM_WEBHELPER); FEX hands the arm64 program here to the CPU. Under FEX the
-# x86 helper could not have the GPU (its GPU process needs libgbm, which FEX does not thunk) and drew
-# on SwiftShader; this one draws with ANGLE on Turnip and takes the session's preloads (KGSL poll fix,
-# fast path), as from the arm64 client.
+# (preload/net.c, BL_X64_ARM_WEBHELPER); FEX hands the arm64 program here to the CPU. It runs natively
+# (no x86 emulation) and takes the session's preloads (KGSL poll fix, fast path), as from the arm64
+# client.
 x64_home=$HOME
 arm=/root/.local/share/Steam/steamrtarm64
 
