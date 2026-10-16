@@ -243,9 +243,9 @@ class SessionService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun collectSessionArtifacts(dir: File) {
+    private fun collectSessionArtifacts(dir: File, steamArch: String?) {
         try {
-            SessionArtifacts.collect(this, dir, "session stopped")
+            SessionArtifacts.collect(this, dir, "session stopped", steamArch)
         } finally {
             SessionLogCapture.stopFor(dir)
             SessionPaths.release(this, dir)
@@ -535,7 +535,8 @@ class SessionService : Service() {
         guest.add("MESA_DISK_CACHE_DATABASE=1")
         guest.add("GLIBC_TUNABLES=glibc.pthread.rseq=0:glibc.malloc.top_pad=16777216")
         if (SessionState.mode == MODE_STEAM) guest.add("BL_MANGOAPP=" + (if (SessionPrefs.mangoapp(this)) "1" else "0"))
-        if (steamHere) guest.add("BL_STEAM_CLIENT_ARCH=" + SessionPrefs.steamClientArch(this))
+        SessionState.steamClientArch = if (steamHere) SessionPrefs.steamClientArch(this) else null
+        SessionState.steamClientArch?.let { guest.add("BL_STEAM_CLIENT_ARCH=$it") }
         if (SessionState.mode == MODE_STEAM) {
             guest.add("BL_GAMESCOPE_STRETCH_16X9=" + (if (SessionPrefs.stretch16x9(this)) "1" else "0"))
         }
@@ -1358,7 +1359,8 @@ class SessionService : Service() {
         val controller = suspendController
         suspendController = null
         val ended = SessionPaths.take()
-        if (ended != null) Thread({ collectSessionArtifacts(ended) }, "session-collect").start()
+        val endedArch = SessionState.steamClientArch
+        if (ended != null) Thread({ collectSessionArtifacts(ended, endedArch) }, "session-collect").start()
         components.reversed().forEach {
             try {
                 it.stop()
