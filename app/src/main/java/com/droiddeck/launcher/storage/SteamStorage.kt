@@ -46,6 +46,13 @@ object SteamStorage {
         )
     }
 
+    /**
+     * Whether the x86-64 client (droiddeck-steam-x64) was ever installed at [root]: its binary, its
+     * install stamp or a library. The folder alone proves nothing - Decky's marker creates it.
+     */
+    fun x64ClientPresent(root: File): Boolean = File(root, "steamrt64/steam").isFile ||
+        File(root, "package/droiddeck-installed").isFile || File(root, "steamapps").isDirectory
+
     class Listing(val manifests: List<Manifest>, val otherIds: Set<Int>, val complete: Boolean) {
         val ids: Set<Int> get() = manifests.map { it.appId }.toSet() + otherIds
     }

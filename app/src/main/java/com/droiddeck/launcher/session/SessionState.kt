@@ -53,6 +53,9 @@ object SessionState {
     var steamUi: String? = null
     @Volatile
     var steamUrl: String? = null
+    /** The Steam client ("arm64"/"x86_64") this session started; null when it runs no Steam. */
+    @Volatile
+    var steamClientArch: String? = null
     // A Play SteamVR request can arrive while an existing session is visible.
     // Wake the status/launch effect even if no glasses surface has attached yet.
     var steamVr by mutableStateOf(false)

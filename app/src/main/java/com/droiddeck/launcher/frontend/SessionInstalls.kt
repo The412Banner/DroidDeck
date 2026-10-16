@@ -26,7 +26,7 @@ object SessionInstalls {
     }.getOrNull()
 
     internal fun steamappsDirs(context: Context): List<File> = (
-        if (com.droiddeck.launcher.session.SessionPrefs.steamClientArch(context) == "x86_64")
+        if (com.droiddeck.launcher.session.SessionPrefs.activeSteamClientArch(context) == "x86_64")
             listOfNotNull(
                 File(com.droiddeck.launcher.session.SessionPrefs.activeSteamRoot(context), "steamapps"),
                 GameStorage.x64CardLibrary(context)?.let { File(it, "steamapps") },

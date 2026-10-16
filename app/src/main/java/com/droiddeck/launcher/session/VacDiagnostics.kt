@@ -32,14 +32,15 @@ object VacDiagnostics {
 
     /**
      * In the guest's home; the launch wrapper checks for it. Holds the session's start, epoch seconds,
-     * then the Steam client it ran (SessionPrefs.steamClientArch) - the setting can change before the report.
+     * then the Steam client it ran (SessionPrefs.steamClientArch) - the setting can change before the report -
+     * then one line per console.log already there: its length, a tab, its canonical path.
      */
     private const val MARKER = "root/.droiddeck-vac-diagnostics"
 
     /** One line per game launch the wrapper saw: epoch, app id, -condebug added or not, the exe. */
     private const val LAUNCHES = "root/.droiddeck-vac-launches"
 
-    /** The console log grows across launches; the end of it is the session that just ran. */
+    /** The console log grows across launches and sessions; only what this session added is read, at most this much. */
     private const val CONSOLE_TAIL_BYTES = 4L * 1024 * 1024
 
     private const val MAX_QUOTED = 40
@@ -64,8 +65,12 @@ object VacDiagnostics {
         val marker = File(root, MARKER)
         try {
             File(root, LAUNCHES).delete()
-            if (enabled(context)) marker.writeText("${System.currentTimeMillis() / 1000}\n${SessionPrefs.steamClientArch(context)}\n")
-            else marker.delete()
+            if (enabled(context)) {
+                val arch = SessionPrefs.steamClientArch(context)
+                // -condebug appends, so each console.log's length now is where this session's lines start.
+                val sizes = consoleLogs(context, arch).joinToString("") { "${it.length()}\t${canonical(it)}\n" }
+                marker.writeText("${System.currentTimeMillis() / 1000}\n$arch\n$sizes")
+            } else marker.delete()
         } catch (e: Exception) {
             Log.w(TAG, "could not arm VAC diagnostics", e)
         }
@@ -80,6 +85,10 @@ object VacDiagnostics {
             val armed = marker.readLines().map { it.trim() }
             val since = (armed.getOrNull(0)?.toLongOrNull() ?: 0L) * 1000 - 5_000
             val arch = armed.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: SessionPrefs.steamClientArch(context)
+            val armedSizes = armed.drop(2).mapNotNull { line ->
+                val (size, path) = line.split('\t', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+                size.toLongOrNull()?.let { path to it }
+            }.toMap()
             val out = File(dir, "vac").apply { mkdirs() }
             val consoles = consoleLogs(context, arch).filter { it.lastModified() >= since }
             val report = StringBuilder()
@@ -103,7 +112,7 @@ object VacDiagnostics {
             }
             consoles.forEach { log ->
                 val name = consoleName(log)
-                val lines = tail(log)
+                val lines = tail(log, armedSizes[canonical(log)] ?: 0L)
                 File(out, "$name-console.log").bufferedWriter().use { w ->
                     lines.forEach { w.write(LogRedactor.redact(it)); w.newLine() }
                 }
@@ -148,7 +157,7 @@ object VacDiagnostics {
                     File(game, "game").listFiles { f -> f.isDirectory }.orEmpty().toList())
                 for (mod in mods) {
                     val log = File(mod, "console.log")
-                    if (log.isFile) found[runCatching { log.canonicalPath }.getOrDefault(log.path)] = log
+                    if (log.isFile) found[canonical(log)] = log
                 }
             }
         }
@@ -177,13 +186,18 @@ object VacDiagnostics {
         return "${game?.name ?: "game"}-${mod?.name ?: "mod"}".replace(Regex("[^A-Za-z0-9._ +-]+"), "_")
     }
 
-    private fun tail(file: File): List<String> = try {
+    private fun canonical(file: File): String = runCatching { file.canonicalPath }.getOrDefault(file.path)
+
+    /** What was written after [from] (the length at arm; 0 if the file has since shrunk, so was replaced). */
+    internal fun tail(file: File, from: Long = 0L): List<String> = try {
         RandomAccessFile(file, "r").use { raf ->
-            val start = (raf.length() - CONSOLE_TAIL_BYTES).coerceAtLeast(0)
+            val length = raf.length()
+            val since = from.takeIf { it <= length } ?: 0L
+            val start = maxOf(since, length - CONSOLE_TAIL_BYTES)
             raf.seek(start)
-            val bytes = ByteArray((raf.length() - start).toInt())
+            val bytes = ByteArray((length - start).toInt())
             raf.readFully(bytes)
-            String(bytes, Charsets.UTF_8).lines().let { if (start > 0) it.drop(1) else it }
+            String(bytes, Charsets.UTF_8).lines().let { if (start > since) it.drop(1) else it }
         }
     } catch (e: Exception) {
         emptyList()

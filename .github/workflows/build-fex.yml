@@ -32,10 +32,16 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build in Arch Linux ARM
+        # Inputs reach the shell as environment variables, never pasted into the script.
+        env:
+          FEX_EXTRA_CXXFLAGS: ${{ inputs.cxxflags }}
+          FEX_THUNKS: ${{ inputs.thunks == 'true' && '1' || '0' }}
         run: |
           set -euo pipefail
-          docker run --rm -e FEX_EXTRA_CXXFLAGS="${{ inputs.cxxflags }}" -e FEX_THUNKS="${{ inputs.thunks == 'true' && '1' || '0' }}" -v "$PWD:/work" -w /work menci/archlinuxarm:base-devel bash tools/fex/build-in-arch.sh
+          docker run --rm -e FEX_EXTRA_CXXFLAGS="$FEX_EXTRA_CXXFLAGS" -e FEX_THUNKS="$FEX_THUNKS" -v "$PWD:/work" -w /work menci/archlinuxarm:base-devel bash tools/fex/build-in-arch.sh
           sudo chown -R "$(id -u):$(id -g)" .
       - uses: actions/upload-artifact@v4
         with:
@@ -49,9 +55,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.cxxflags == ''
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          gh release create "${{ inputs.tag }}" --latest=false --prerelease=false --title "${{ inputs.tag }}" --notes "FEX for the runtime (tools/fex/build-in-arch.sh); fetched by droiddeck-steam-x64. sha256 $(cut -d' ' -f1 fex.tzst.sha256)" fex.tzst fex.tzst.sha256 || gh release upload "${{ inputs.tag }}" fex.tzst fex.tzst.sha256 --clobber
+          gh release create "$TAG" --latest=false --prerelease=false --title "$TAG" --notes "FEX for the runtime (tools/fex/build-in-arch.sh); fetched by droiddeck-steam-x64. sha256 $(cut -d' ' -f1 fex.tzst.sha256)" fex.tzst fex.tzst.sha256 || gh release upload "$TAG" fex.tzst fex.tzst.sha256 --clobber
           # A component the apk fetches by tag, never something users install: it must not
           # become the repo's Latest release or appear as a pre-release, also when re-uploaded.
-          gh release edit "${{ inputs.tag }}" --latest=false --prerelease=false
+          gh release edit "$TAG" --latest=false --prerelease=false
