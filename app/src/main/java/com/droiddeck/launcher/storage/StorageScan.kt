@@ -98,7 +98,7 @@ object StorageScan {
         val rootfs = LinuxRuntime.rootDir(context)
         val steamRoot = steamRoot(context)
         // Both clients' games take space, whichever is selected.
-        val x64Root = SessionPrefs.steamRoot(context, "x86_64").takeIf { it.isDirectory }
+        val x64Root = SessionPrefs.steamRoot(context, "x86_64").takeIf { SteamStorage.x64ClientPresent(it) }
         val clients = listOfNotNull("arm64", "x86_64".takeIf { x64Root != null })
         fun canonical(f: File) = runCatching { f.canonicalPath }.getOrDefault(f.path)
         val art = clients.associate { arch ->
@@ -116,9 +116,12 @@ object StorageScan {
                 // shader caches privately like any secondary library (SecondaryLibrary.binds).
                 val internal = canonical(root) == primary
                 val data = if (internal) root else SecondaryLibrary.privateRoot(files, root)
-                // The x86-64 card folder appears with that client's first session on the card.
+                // The x86-64 card folder appears with that client's first session on the card, and
+                // its own steamapps with its first library write.
                 val listing = SteamStorage.manifests(root)
-                    ?: SteamStorage.Listing(emptyList(), emptySet(), true).takeIf { x64 && !internal && !root.exists() && root.parentFile?.isDirectory == true }
+                    ?: SteamStorage.Listing(emptyList(), emptySet(), true).takeIf {
+                        x64 && (if (internal) !File(root, "steamapps").exists() else !root.exists() && root.parentFile?.isDirectory == true)
+                    }
                 Lib(root, label, internal, data, listing, x64)
             }
         }

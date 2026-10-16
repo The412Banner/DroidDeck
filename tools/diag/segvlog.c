@@ -1,11 +1,12 @@
-// Diagnostic: on SIGSEGV/SIGBUS/SIGILL, write the faulting address, the instruction pointer and a
-// frame-pointer backtrace (module+offset, symbol) to $SEGVLOG_FILE, then die as before. Later
-// SIGSEGV handlers (the game's breakpad) are refused so this one sees the fault first.
+// Diagnostic: on SIGSEGV/SIGBUS/SIGILL, write the faulting address, the instruction pointer, a
+// frame-pointer backtrace and the stack's words to $SEGVLOG_FILE as raw addresses, then a copy of
+// /proc/self/maps to resolve them (module+offset) afterwards, then die as before. Later SIGSEGV
+// handlers (the game's breakpad) are refused so this one sees the fault first - only once it is set up.
+// The handler calls only async-signal-safe functions: no dladdr or stdio there.
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ucontext.h>
@@ -13,21 +14,56 @@
 
 static int (*real_sigaction)(int, const struct sigaction *, struct sigaction *);
 static int out = -1;
+static int armed;
+
+static void put(const char *s) {
+  if (out >= 0) write(out, s, strlen(s));
+}
+
+static void put_hex(unsigned long v) {
+  char buf[2 + 2 * sizeof v];
+  int n = sizeof buf;
+  do {
+    buf[--n] = "0123456789abcdef"[v & 15];
+    v >>= 4;
+  } while (v && n > 2);
+  buf[--n] = 'x';
+  buf[--n] = '0';
+  if (out >= 0) write(out, buf + n, sizeof buf - n);
+}
+
+static void put_dec(long v) {
+  char buf[24];
+  int n = sizeof buf;
+  unsigned long u = v < 0 ? -(unsigned long)v : (unsigned long)v;
+  do {
+    buf[--n] = '0' + u % 10;
+    u /= 10;
+  } while (u);
+  if (v < 0) buf[--n] = '-';
+  if (out >= 0) write(out, buf + n, sizeof buf - n);
+}
 
 static void line(const char *tag, void *pc) {
-  char buf[512];
-  Dl_info di;
-  if (pc && dladdr(pc, &di) && di.dli_fname)
-    snprintf(buf, sizeof buf, "%s %p %s+0x%lx %s\n", tag, pc, di.dli_fname,
-             (unsigned long)((char *)pc - (char *)di.dli_fbase), di.dli_sname ? di.dli_sname : "?");
-  else
-    snprintf(buf, sizeof buf, "%s %p ?\n", tag, pc);
-  if (out >= 0) write(out, buf, strlen(buf));
+  put(tag);
+  put(" ");
+  put_hex((unsigned long)pc);
+  put("\n");
+}
+
+static void copy_maps(void) {
+  char buf[4096];
+  int fd = open("/proc/self/maps", O_RDONLY);
+  if (fd < 0) return;
+  put("--- /proc/self/maps\n");
+  ssize_t n;
+  while ((n = read(fd, buf, sizeof buf)) > 0)
+    if (out >= 0) write(out, buf, n);
+  close(fd);
 }
 
 static void handler(int sig, siginfo_t *si, void *ctx) {
   ucontext_t *uc = ctx;
-  char buf[160];
 #if defined(__i386__)
   void *pc = (void *)uc->uc_mcontext.gregs[REG_EIP];
   void **fp = (void **)uc->uc_mcontext.gregs[REG_EBP];
@@ -35,8 +71,15 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
   void *pc = (void *)uc->uc_mcontext.gregs[REG_RIP];
   void **fp = (void **)uc->uc_mcontext.gregs[REG_RBP];
 #endif
-  snprintf(buf, sizeof buf, "=== pid %d signal %d code %d fault addr %p\n", getpid(), sig, si->si_code, si->si_addr);
-  if (out >= 0) write(out, buf, strlen(buf));
+  put("=== pid ");
+  put_dec(getpid());
+  put(" signal ");
+  put_dec(sig);
+  put(" code ");
+  put_dec(si->si_code);
+  put(" fault addr ");
+  put_hex((unsigned long)si->si_addr);
+  put("\n");
   line("pc", pc);
   // Leaf functions (strlen, memcpy) keep no frame: the caller's return address is on the stack.
 #if defined(__i386__)
@@ -44,10 +87,8 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
 #else
   void **sp = (void **)uc->uc_mcontext.gregs[REG_RSP];
 #endif
-  for (int i = 0; i < 48 && sp; i++) {
-    Dl_info di;
-    if (sp[i] && dladdr(sp[i], &di) && di.dli_fname) line("  sp", sp[i]);
-  }
+  for (int i = 0; i < 48 && sp; i++)
+    if (sp[i]) line("  sp", sp[i]);
   for (int i = 0; i < 24 && fp && ((unsigned long)fp & 3) == 0; i++) {
     void *ret = fp[1];
     if (!ret) break;
@@ -56,12 +97,19 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
     if (next <= fp) break;
     fp = next;
   }
-  signal(sig, SIG_DFL);
+  copy_maps();
+  // Die as the signal would have: default action, then the signal again (delivered on return, as
+  // it is blocked in here; a hardware fault would also recur on the faulting instruction).
+  struct sigaction dfl;
+  memset(&dfl, 0, sizeof dfl);
+  dfl.sa_handler = SIG_DFL;
+  real_sigaction(sig, &dfl, NULL);
+  raise(sig);
 }
 
 int sigaction(int sig, const struct sigaction *act, struct sigaction *old) {
   if (!real_sigaction) real_sigaction = dlsym(RTLD_NEXT, "sigaction");
-  if (act && (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL) && act->sa_sigaction != handler) {
+  if (armed && act && (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL) && act->sa_sigaction != handler) {
     if (old) real_sigaction(sig, NULL, old);
     return 0;
   }
@@ -71,13 +119,14 @@ int sigaction(int sig, const struct sigaction *act, struct sigaction *old) {
 __attribute__((constructor)) static void init(void) {
   const char *f = getenv("SEGVLOG_FILE");
   if (!f) return;
+  real_sigaction = dlsym(RTLD_NEXT, "sigaction");
+  if (!real_sigaction) return;
   out = open(f, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (out < 0) return;
   struct sigaction sa;
   memset(&sa, 0, sizeof sa);
   sa.sa_sigaction = handler;
   sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
-  real_sigaction = dlsym(RTLD_NEXT, "sigaction");
-  real_sigaction(SIGSEGV, &sa, NULL);
-  real_sigaction(SIGBUS, &sa, NULL);
-  real_sigaction(SIGILL, &sa, NULL);
+  armed = real_sigaction(SIGSEGV, &sa, NULL) == 0 && real_sigaction(SIGBUS, &sa, NULL) == 0 &&
+          real_sigaction(SIGILL, &sa, NULL) == 0;
 }

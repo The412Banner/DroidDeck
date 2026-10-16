@@ -447,6 +447,9 @@ if [ ! -x "$STEAM_X64/steamrt64/steam" ] || [ ! -f "$STEAM_X64/package/droiddeck
     unzip -qo "$work/$file" -d "$STEAM_X64"
     rm -f "$work/$file"
   done < "$work/parts"
+  # Where x64_sync_client and x64_exec read the installed build (channel publicbeta), so the
+  # sync right below and later runs see it current instead of fetching every part again.
+  cp -f "$work/manifest" "$STEAM_X64/package/$MANIFEST.manifest"
   rm -rf "$work"
   echo publicbeta > "$STEAM_X64/package/beta"
   echo "$version" > "$STEAM_X64/package/droiddeck-installed"

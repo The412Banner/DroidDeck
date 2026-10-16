@@ -21,7 +21,8 @@ object SessionArtifacts {
 
     const val SCRUBBED_TREE_MARKER = ".scrubbed-tree"
 
-    fun collect(context: Context, dir: File, reason: String) {
+    /** [steamArch] is the client the stopped session ran; null takes the one in use now. */
+    fun collect(context: Context, dir: File, reason: String, steamArch: String? = null) {
         try {
             val wayland = File(dir, "wayland.log")
             if (!wayland.exists()) {
@@ -31,7 +32,7 @@ object SessionArtifacts {
             }
             LogRedactor.learnFromRuntime(LinuxRuntime.rootDir(context))
             val record = Record(dir)
-            copySteamLogs(context, dir, record)
+            copySteamLogs(context, dir, record, steamArch)
             VacDiagnostics.collect(context, dir)
             SessionLogCapture.dumpCrashBuffer(File(dir, "crash.log"))
             markScrubbed(scrubTree(record))
@@ -150,8 +151,8 @@ object SessionArtifacts {
         return record
     }
 
-    private fun copySteamLogs(context: Context, dir: File, record: Record) {
-        val logs = File(SessionPrefs.activeSteamRoot(context), "logs")
+    private fun copySteamLogs(context: Context, dir: File, record: Record, steamArch: String? = null) {
+        val logs = File(steamArch?.let { SessionPrefs.steamRoot(context, it) } ?: SessionPrefs.activeSteamRoot(context), "logs")
         if (!logs.isDirectory) return
         val out = File(dir, "steam").apply { mkdirs() }
         logs.listFiles { f -> f.isFile && f.length() < 8L * 1024 * 1024 }?.forEach { src ->
