@@ -352,7 +352,8 @@ def main():
                            for e in (os.listdir(tools) if os.path.isdir(tools) else [])}
                 # Its own state: the arm64 client's state.json lists which of that client's titles follow its default.
                 own = {"default": x64_tool,
-                       "directory": os.path.join(os.path.dirname(os.path.abspath(steam_root)), "droiddeck-compat")}
+                       "directory": os.path.join(os.path.dirname(os.path.abspath(steam_root)), "droiddeck-compat"),
+                       "linux_tool": "droiddeck-direct"}
             else:
                 protect = compat.adopt_extras(tools)
             used = compat.register_default(cfg, apps=[str(int(g["appid"]) & 0xFFFFFFFF) for g in games if g.get("exe") and not g.get("native")] + [str(appid) for appid in set(routes.values())],

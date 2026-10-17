@@ -53,18 +53,19 @@ object LogRedactor {
 
     fun learnAccounts(vararg loginUsers: java.io.File) {
         val names = LinkedHashSet<String>()
-        try {
-            val kv = Regex("\"(AccountName|PersonaName)\"\\s+\"([^\"]*)\"")
-            for (file in loginUsers) if (file.isFile) {
-                kv.findAll(file.readText()).map { it.groupValues[2].trim() }.filter { it.length >= 3 }.forEach { names += it }
-            }
-        } catch (e: Exception) {
-            return
+        val kv = Regex("\"(AccountName|PersonaName)\"\\s+\"([^\"]*)\"")
+        var unread = false
+        for (file in loginUsers) {
+            if (!file.isFile) continue
+            val text = try { file.readText() } catch (e: Exception) { unread = true; continue }
+            kv.findAll(text).map { it.groupValues[2].trim() }.filter { it.length >= 3 }.forEach { names += it }
         }
-        accounts = names.map { name ->
+        val learned = names.map { name ->
             val needs = name.lowercase().takeIf { name.all { it.code < 0x80 } }
             Learned(Regex("(?i)(?<![A-Za-z0-9_])" + Regex.escape(name) + "(?![A-Za-z0-9_])"), needs)
         }
+        // A file that could not be read keeps the names learned from it before.
+        accounts = if (unread) (accounts + learned).distinctBy { it.regex.pattern } else learned
     }
 
     fun learnFromRuntime(root: java.io.File) {

@@ -831,7 +831,7 @@ def valve_picks(steam_root):
     return sorted(picks, key=int)
 
 
-def native_targets(steam_root, apps):
+def native_targets(steam_root, apps, linux_tool=FEX_TOOL):
     wanted = {str(app) for app in apps if str(app) not in NOT_GAMES}
     if not wanted:
         return {}
@@ -845,7 +845,7 @@ def native_targets(steam_root, apps):
         if "windows" in oslist:
             targets[app] = NATIVE_CHOICE
             continue
-        targets[app] = FEX_TOOL
+        targets[app] = linux_tool
     return targets
 
 
@@ -1183,7 +1183,8 @@ def live_helper_running(directory=None):
         return False
 
 
-def register_default(config_path, apps=(), protect=(), default=None, catalog=None, directory=None, settle=False, picks=()):
+def register_default(config_path, apps=(), protect=(), default=None, catalog=None, directory=None, settle=False, picks=(),
+                     linux_tool=FEX_TOOL):
     """Writes the mapping: the "0" default and every title that follows it (see plan_mapping).
     With settle, the default itself is decided first (see choose_default): before the client
     starts, config.vdf holds what the client last kept, menu changes included."""
@@ -1209,7 +1210,7 @@ def register_default(config_path, apps=(), protect=(), default=None, catalog=Non
         overrides = requested_games(game_requests(directory), catalog)
         changes, auto = plan_mapping(
             current, apps, names, default, followers(state, current),
-            native_targets(steam_root, set(apps) | set(picks)), picks,
+            native_targets(steam_root, set(apps) | set(picks), linux_tool), picks,
             overrides, state.get("auto", {}).keys() if isinstance(state.get("auto"), dict) else (),
             state.get("native", ()))
         for app, tool in changes.items():
