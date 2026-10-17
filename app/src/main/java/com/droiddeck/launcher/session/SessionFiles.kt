@@ -196,13 +196,18 @@ object SessionFiles {
             Log.e(TAG, "could not write steam-compatibility-label")
         }
 
-        val startupMovieDir = File(root, "root/.local/share/Steam/config/uioverrides/movies")
         val startupMovie = BootMovie.prepare(context)
-        val bigPictureMovieInstalled = startupMovie != null &&
-            stageStartupMovie(startupMovie, startupMovieDir, "bigpicture_startup.webm")
-        if (startupMovie != null) stageStartupMovie(startupMovie, startupMovieDir, "steam_os_startup.webm")
-        if (bigPictureMovieInstalled) {
-            ensureStartupMovieDefault(File(root, "root/.local/share/Steam/config/config.vdf"))
+        // The x86-64 client keeps its own Steam folder; its config is left alone until its first start seeds it.
+        val steamRoots = listOf(File(root, "root/.local/share/Steam"), File(root, "root/.droiddeck-x64/.local/share/Steam"))
+            .filterIndexed { i, steam -> i == 0 || File(steam, "config").isDirectory }
+        for (steam in steamRoots) {
+            val startupMovieDir = File(steam, "config/uioverrides/movies")
+            val bigPictureMovieInstalled = startupMovie != null &&
+                stageStartupMovie(startupMovie, startupMovieDir, "bigpicture_startup.webm")
+            if (startupMovie != null) stageStartupMovie(startupMovie, startupMovieDir, "steam_os_startup.webm")
+            if (bigPictureMovieInstalled) {
+                ensureStartupMovieDefault(File(steam, "config/config.vdf"))
+            }
         }
     }
 
