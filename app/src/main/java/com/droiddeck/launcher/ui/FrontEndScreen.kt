@@ -101,6 +101,7 @@ class FrontEndState(
     val vacDiagnostics: Boolean = false,
     val agentCommands: Boolean = false,
     val steamGames: List<Library.SteamGame>,
+    val steamGamesX64: Boolean = false,
     val emulators: List<Library.Emulator>,
     val running: String?,
     val frameGen: FrameGen.Mode = FrameGen.Mode.OFF,

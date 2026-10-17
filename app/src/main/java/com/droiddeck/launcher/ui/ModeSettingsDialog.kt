@@ -454,7 +454,7 @@ fun ModeSheetRows(s: ModeSettings, a: ModeSettingsActions, tab: String, extras: 
             }
             if (s.steamClientArch != null) ChoiceRow(
                 host, "clientArch", stringResource(R.string.mode_client_arch),
-                clientArchHint(stringResource(R.string.mode_client_arch_hint), x64FexVersion(LocalContext.current)),
+                clientArchHint(stringResource(R.string.common_applies_next_session), x64FexVersion(LocalContext.current)),
                 listOf("arm64" to stringResource(R.string.mode_client_arch_arm64), "x86_64" to stringResource(R.string.mode_client_arch_x64)), s.steamClientArch,
                 onPick = a.onSteamClientArch,
             )
