@@ -89,7 +89,7 @@ object StorageScan {
         fun measure(file: File): Long = size(file).also { known[file.path] = it }
     }
 
-    // The arm64 client's: the Proton tools' files live only there (the x86-64 client wraps them).
+    // Proton tools' files live only in the arm64 client's root; the x86-64 client has wrappers of them.
     fun steamRoot(context: Context) = SessionPrefs.steamRoot(context, "arm64")
 
     fun scan(context: Context): StorageReport {
@@ -97,7 +97,6 @@ object StorageScan {
         val files = context.filesDir
         val rootfs = LinuxRuntime.rootDir(context)
         val steamRoot = steamRoot(context)
-        // Both clients' games take space, whichever is selected.
         val x64Root = SessionPrefs.steamRoot(context, "x86_64").takeIf { SteamStorage.x64ClientPresent(it) }
         val clients = listOfNotNull("arm64", "x86_64".takeIf { x64Root != null })
         fun canonical(f: File) = runCatching { f.canonicalPath }.getOrDefault(f.path)
@@ -112,12 +111,9 @@ object StorageScan {
             val x64 = arch == "x86_64"
             val primary = canonical(SessionPrefs.steamRoot(context, arch))
             Library.steamLibraries(context, arch).map { (root, label) ->
-                // Each client's own root is internal for it; its card library keeps compatdata and
-                // shader caches privately like any secondary library (SecondaryLibrary.binds).
                 val internal = canonical(root) == primary
                 val data = if (internal) root else SecondaryLibrary.privateRoot(files, root)
-                // The x86-64 card folder appears with that client's first session on the card, and
-                // its own steamapps with its first library write.
+                // The x86-64 card folder and its steamapps appear only with that client's first session and library write.
                 val listing = SteamStorage.manifests(root)
                     ?: SteamStorage.Listing(emptyList(), emptySet(), true).takeIf {
                         x64 && (if (internal) !File(root, "steamapps").exists() else !root.exists() && root.parentFile?.isDirectory == true)
@@ -125,7 +121,6 @@ object StorageScan {
                 Lib(root, label, internal, data, listing, x64)
             }
         }
-        // An id either client has is not a leftover of the other.
         val everyLibraryRead = libs.all { it.listing?.complete == true }
         val everyId = libs.flatMap { it.listing?.ids.orEmpty() }.toSet()
         fun installedGames(x64: Boolean) = libs.filter { it.x64 == x64 }.flatMap { it.manifests.orEmpty() }
@@ -152,7 +147,6 @@ object StorageScan {
                     ).filter { it.exists() }
                     val bytes = dirs.sumOf { walker.measure(it) }
                     val kind = SteamStorage.kind(m)
-                    // The x86-64 client runs its Linux games in Valve's runtimes, so its tools stay.
                     val (state, reason) = if (lib.x64) ToolState.REQUIRED to ToolReason.X64_CLIENT else when (kind) {
                         SteamStorage.Kind.OLD_RUNTIME -> ToolState.UNUSED to ToolReason.OLD_RUNTIME
                         SteamStorage.Kind.X86_PROTON -> ToolState.UNUSED to ToolReason.X86_PROTON
@@ -193,7 +187,6 @@ object StorageScan {
             }
         }
 
-        // The x86-64 client's compatibilitytools.d holds only its wrappers of these, measured below.
         File(steamRoot, "compatibilitytools.d").listFiles()?.sortedBy { it.name }?.forEach { dir ->
             if (!dir.isDirectory) return@forEach
             val bytes = walker.measure(dir)

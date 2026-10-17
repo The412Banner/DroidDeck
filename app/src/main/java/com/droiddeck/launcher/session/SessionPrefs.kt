@@ -511,13 +511,12 @@ object SessionPrefs {
         prefs(context).edit().putString("steamClientArch", id).apply()
     }
 
-    /** The running session's client (the setting only applies next session), else the selected one. */
+    /** The running session's client, else the selected one: a changed setting applies from the next session. */
     fun activeSteamClientArch(context: Context): String =
         SessionState.steamClientArch?.takeIf { SessionState.running } ?: steamClientArch(context)
 
     fun activeSteamRoot(context: Context): java.io.File = steamRoot(context, activeSteamClientArch(context))
 
-    /** The Steam root of the client [arch] names ("arm64"/"x86_64"), whichever is selected now. */
     fun steamRoot(context: Context, arch: String): java.io.File = java.io.File(
         com.droiddeck.launcher.runtime.LinuxRuntime.rootDir(context),
         if (arch == "x86_64") "root/.droiddeck-x64/.local/share/Steam" else "root/.local/share/Steam",

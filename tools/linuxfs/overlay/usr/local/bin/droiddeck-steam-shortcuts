@@ -350,8 +350,7 @@ def main():
             if x64_tool:
                 protect = {compat.first_key(os.path.join(tools, e, "compatibilitytool.vdf"), ["compatibilitytools", "compat_tools"]) or e: e
                            for e in (os.listdir(tools) if os.path.isdir(tools) else [])}
-                # The x86-64 client's own default and state, beside its Steam folder: the arm64 client's
-                # state.json lists which of its titles follow its default.
+                # Its own state: the arm64 client's state.json lists which of that client's titles follow its default.
                 own = {"default": x64_tool,
                        "directory": os.path.join(os.path.dirname(os.path.abspath(steam_root)), "droiddeck-compat")}
             else:

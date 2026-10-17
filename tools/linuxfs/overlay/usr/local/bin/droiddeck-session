@@ -79,7 +79,6 @@ run_gamescope() (
 collect_steam_logs() {
   [ -n "${BL_DEBUG_DIR:-}" ] || return 0
   local steam_root=${XDG_DATA_HOME:-$HOME/.local/share}/Steam
-  # The x86-64 client keeps its logs in its own home.
   [ "${steam_x64:-0}" = 1 ] && steam_root=${BL_X64_HOME:-$HOME/.droiddeck-x64}/.local/share/Steam
   mkdir -p "$BL_DEBUG_DIR/steam" 2>/dev/null || return 0
   [ -d "$steam_root/logs" ] && find "$steam_root/logs" -maxdepth 1 -type f -size -8192k \
@@ -351,7 +350,7 @@ case $mode in
     steam_cef_gpu=1
     if [ "$steam_x64" = 1 ]; then
       step "checking the Steam client's arm64 parts (first run downloads them, ~1-2 min)"
-      # Repair Steam covers both clients; droiddeck-steam-install takes the request away when done.
+      # droiddeck-steam-install removes the repair request: read it first so Repair Steam covers both clients.
       _bl_x64_repair=0
       [ -e "$HOME/.bl-steam-repair" ] && _bl_x64_repair=1
       droiddeck-steam-install || exit $?
@@ -399,7 +398,6 @@ case $mode in
         fi
       done < "$HOME/.bl-proton-extra"
       mv -f "$_bl_left" "$HOME/.bl-proton-extra"
-      # The x86-64 client's wrappers are made at --prepare: once more for the new one.
       if [ "$steam_x64" = 1 ] && [ "$_bl_got_proton" = 1 ]; then
         droiddeck-steam-x64 --prepare || true
       fi
@@ -422,7 +420,7 @@ case $mode in
         bl_zram_scan() {
           _bl_game=0 _bl_pids=()
           for _d in /proc/[0-9]*; do
-            # Under FEX (the x86-64 client, its reaper and games) the program is FEX's first argument.
+            # Under FEX the program is FEX's first argument.
             { IFS= read -r -d '' _c && case ${_c##*/} in FEX|FEXInterpreter) IFS= read -r -d '' _c ;; esac; } \
               2>/dev/null < "$_d/cmdline" || continue
             case ${_c##*/} in
@@ -725,8 +723,6 @@ BUSCONF
     export LD_LIBRARY_PATH=$steam_root/steamrtarm64:$steam_root/steamrtarm64/panorama${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
     export SDL_VIDEO_X11_DGAMOUSE=0
     decky_loader=$HOME/homebrew/services/PluginLoader
-    # The x86-64 client's browser is the arm64 client's (droiddeck-x64-arm-webhelper), so the loader
-    # finds it on the same debugging port.
     if [ -f "$HOME/.droiddeck-decky-enabled" ] && [ -x "$decky_loader" ]; then
       decky_arch=$(cat "$HOME/homebrew/services/.droiddeck-decky-arch" 2>/dev/null || echo unknown)
       if [ "$decky_arch" = arm64 ] || { [ "$decky_arch" = x86_64 ] && /usr/local/bin/droiddeck-fex prepare >/dev/null; }; then
@@ -972,8 +968,7 @@ BUSCONF
       compat_restarts=0
       compat_settled() {
         local app m flags r card=/mnt/droiddeck-sd
-        # The x86-64 client's library on the card is its own folder in the arm64 client's, which may hold
-        # the arm64 client's copy of the same title.
+        # The arm64 card library may hold that client's copy of the same title.
         [ "$steam_x64" = 1 ] && card=/mnt/droiddeck-sd/x86-64
         while read -r app; do
           [ -n "$app" ] || continue
@@ -1037,7 +1032,6 @@ BUSCONF
         if [ "$beat" -le 720 ] && [ -n "${BL_CLIENT_CPUS:-}" ]; then
           for _d in /proc/[0-9]*; do
             { IFS= read -r -d '' _c && { IFS= read -r -d '' _c1 || _c1=; }; } < "$_d/cmdline" 2>/dev/null || continue
-            # The x86-64 client and its web helper run as FEX <program>.
             case $_c in FEX|*/FEX) _c=$_c1 ;; esac
             case $_c in *steamwebhelper*|*steamrtarm64/steam|*steamrt64/steam|*gamescope*) ;; *) continue ;; esac
             _t=("$_d"/task/*)
@@ -1091,7 +1085,7 @@ BUSCONF
             lossless_left=0
           elif ! pgrep -x wineserver >/dev/null 2>&1; then
             (
-              # The x86-64 client is asked through the arm64 client's steamclient.so, as the import watcher does.
+              # The probe reaches the x86-64 client through the arm64 client's steamclient.so, as the import watcher does.
               if [ "$steam_x64" = 1 ]; then export BL_STEAMCLIENT=$XDG_DATA_HOME/Steam/steamrtarm64/steamclient.so; fi
               answer=$(droiddeck-steam-games probe "$steam_root" 993090 2>/dev/null) || exit 0
               case $answer in
@@ -1118,7 +1112,6 @@ BUSCONF
         _bl_counted=1
       fi
       if [ -n "${BL_STEAM_LANGUAGE:-}" ]; then
-        # The registry of the client that starts: the x86-64 one has its own home.
         if [ "$steam_x64" = 1 ]; then
           droiddeck-steam-language "${BL_X64_HOME:-$HOME/.droiddeck-x64}" "$BL_STEAM_LANGUAGE" || true
         else
@@ -1152,8 +1145,7 @@ BUSCONF
           BL_COMPAT_TOOL=$_bl_x64_tool droiddeck-steam-shortcuts "$steam_root" "$BL_ADDED_GAMES" || true
         fi
       fi
-      # The x86-64 client wrote its mapping from memory as it exited, over what the live passes set; its
-      # appinfo cache knows the titles bought during the run only now.
+      # The x86-64 client rewrote config.vdf from memory on exit, over the live passes' mapping.
       if [ "$steam_x64" = 1 ]; then
         [ -z "${_bl_x64_tool:-}" ] ||
           BL_COMPAT_TOOL=$_bl_x64_tool steam-compatibility "$steam_root" --x64 >/dev/null 2>&1 || true

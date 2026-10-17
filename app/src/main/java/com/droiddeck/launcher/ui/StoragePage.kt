@@ -500,8 +500,7 @@ private fun GamesView(report: StorageReport, sessionRunning: Boolean, a: FrontEn
     Spacer(Modifier.height(8.dp))
     Note(stringResource(R.string.storage_games_note))
     confirm?.let { g ->
-        // steam://uninstall goes to the session's client, the selected one; the other client's game
-        // is uninstalled from that client.
+        // steam://uninstall reaches only the session's client, the selected one.
         val otherClient = g.x64 != (SessionPrefs.steamClientArch(LocalContext.current) == "x86_64")
         if (otherClient) AlertDialog(
             onDismissRequest = { confirm = null },
@@ -526,7 +525,6 @@ private fun GamesView(report: StorageReport, sessionRunning: Boolean, a: FrontEn
     }
 }
 
-// The same game can be installed in both Steam clients.
 @Composable
 private fun gameName(g: GameUsage): String = if (g.x64) stringResource(R.string.storage_game_x64, g.name) else g.name
 

@@ -4,8 +4,6 @@ import re
 import sys
 
 HOME = os.environ.get("HOME", "/root")
-# The client the app selected (BL_STEAM_CLIENT_ARCH): the x86-64 one (droiddeck-steam-x64) has its own
-# home and its own card library, a folder inside the arm64 one's (GameStorage.X64_CARD_GUEST).
 X64 = os.environ.get("BL_STEAM_CLIENT_ARCH") == "x86_64"
 CLIENT_HOME = (os.environ.get("BL_X64_HOME") or os.path.join(HOME, ".droiddeck-x64")) if X64 else HOME
 STEAM_ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(CLIENT_HOME, ".local/share/Steam")

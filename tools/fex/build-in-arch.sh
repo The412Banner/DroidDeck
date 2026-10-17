@@ -1,24 +1,16 @@
 #!/usr/bin/bash
-# Runs INSIDE an Arch Linux ARM container (menci/archlinuxarm:base-devel) on an arm64 runner.
-# Builds FEX for the runtime, with tools/fex/patches, (Arch Linux ARM ships no package and FEX publishes no Linux
-# binaries), plus the runtime's own unsquashfs to unpack FEX's x86 rootfs image, and packs both
-# as fex.tzst (usr/local/...) for droiddeck-steam-x64 to stage. FEX_THUNKS=1 adds the host
-# thunks (see below).
+# Runs inside an Arch Linux ARM container (menci/archlinuxarm:base-devel) on an arm64 runner. Arch Linux ARM ships
+# no FEX package and FEX publishes no Linux binaries.
 set -euxo pipefail
 VERSION=${FEX_VERSION:-FEX-2610}
 WORK=/work
 cd "$WORK"
-# Same pacman workarounds as tools/gamescope/build-in-arch.sh.
 grep -q '^DisableSandbox' /etc/pacman.conf || sed -i 's/^\[options\]/[options]\nDisableSandbox/' /etc/pacman.conf
 { for m in https://ca.us.mirror.archlinuxarm.org https://fl.us.mirror.archlinuxarm.org https://de3.mirror.archlinuxarm.org https://nl.mirror.archlinuxarm.org; do echo "Server = $m/\$arch/\$repo"; done; cat /etc/pacman.d/mirrorlist; } > /etc/pacman.d/mirrorlist.new
 mv /etc/pacman.d/mirrorlist.new /etc/pacman.d/mirrorlist
 pacman -Syu --noconfirm --needed git zstd binutils cmake ninja clang lld llvm python squashfs-tools file
 
-# FEX_THUNKS=1: host thunks too - an x86 program's libvulkan/libGL/libX11/... calls go to the
-# runtime's own arm64 libraries (Turnip, Mesa), so the x86-64 client draws on the GPU. The host
-# half is arm64 and needs the graphics dev packages; the guest half is cross-compiled with clang
-# against an x86 sysroot: Arch Linux x86_64 (and multilib i686) packages unpacked into a root of
-# their own by pacman - never run, so no scriptlets and no signature checks.
+# The x86 sysroot is Arch x86_64 and multilib i686 packages unpacked by pacman, never run: no scriptlets or signature checks.
 THUNKS=${FEX_THUNKS:-0}
 X86ROOT=$WORK/x86root
 if [ "$THUNKS" = 1 ]; then
@@ -47,14 +39,9 @@ CONF
 fi
 
 rm -rf fex-src out && git clone -q --depth 1 --branch "$VERSION" --recurse-submodules --shallow-submodules https://github.com/FEX-Emu/FEX.git fex-src
-# Our proot answers openat2 with ENOSYS (tools/proot/PATCHES.md, 0008); FEX opened every rootfs
-# path with openat2 and fell through to the arm64 guest's files on anything but EXDEV.
 for p in tools/fex/patches/*.patch; do patch -d fex-src -p1 --no-backup-if-mismatch < "$p"; done
-# FEX's x86 toolchain files assume an x86 build machine: on this arm64 one the guest thunks need the
-# x86 sysroot for their headers, C runtime objects and libgcc too, not just the generator.
-# Arch's clang adds stack protection by default; its canary load in the prologue of each guest
-# thunk's host call took r11, which carries the host function's address, before the thunk read it:
-# a call with 7+ arguments (vkCmdBindDescriptorSets from Team Fortress 2's DXVK) went to the canary.
+# FEX's x86 toolchain files assume an x86 build machine; here the guest thunks need the x86 sysroot too.
+# Arch's clang adds stack protection; its canary load in a guest thunk's prologue clobbered r11 (the host function).
 if [ "$THUNKS" = 1 ]; then
   for t in fex-src/Data/CMake/toolchain_x86_64.cmake fex-src/Data/CMake/toolchain_x86_32.cmake; do
     printf '\nif (X86_DEV_ROOTFS AND NOT X86_DEV_ROOTFS STREQUAL "/")\n  set(CMAKE_SYSROOT "${X86_DEV_ROOTFS}")\nendif()\n' >> "$t"
@@ -73,7 +60,7 @@ cmake -S fex-src -B fex-build -G Ninja \
 ninja -C fex-build
 DESTDIR="$WORK/out" ninja -C fex-build install
 install -Dm755 /usr/bin/unsquashfs out/usr/local/bin/unsquashfs
-# Nothing outside the runtime's own libraries: every needed soname must resolve in a stock guest.
+# Every NEEDED soname must resolve in a stock guest.
 for f in out/usr/local/bin/*; do
   file "$f" | grep -q ELF || continue
   readelf -d "$f" | awk '/NEEDED/ { gsub(/[\[\]]/, "", $5); print $5 }'

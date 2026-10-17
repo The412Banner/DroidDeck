@@ -1,29 +1,18 @@
 #!/bin/bash
-# The x86-64 client's way into the arm64 Proton tools (droiddeck-steam-x64 makes one wrapper per
-# tool in its compatibilitytools.d). The wrapper is an x86 script under FEX; it starts this one
-# through an arm64 binary, which FEX hands straight to the CPU, so from here on everything is native
-# and sees the guest as the arm64 client does: the same Proton, launcher, Components swaps, per-game
-# environment and Steam client library (~/.steam/sdk64) as a launch from the arm64 client.
-#   droiddeck-x64-arm-proton <tool folder> <verb> <command...>
+# Runs natively: droiddeck-steam-x64's x86 wrappers start it through an arm64 binary, which FEX hands to the CPU.
 tool=$1; shift
 x64_home=$HOME
 
-# The x86 client preloads its own (x86) game overlay; the arm64 client's takes its place below. It
-# is what marks the game's windows with the Steam app ID - without it gamescope never shows them
-# (device: FlatOut ran and played sound behind Steam's launch screen, "steam app id: 0").
+# The game overlay tags the game's windows with the Steam app ID; without it gamescope never shows them.
 overlay=0
 case ${LD_PRELOAD:-} in *gameoverlayrenderer.so*) overlay=1 ;; esac
 
-# Drop the x86 side: FEX's settings, the x86 library paths and preloads, the client's software GL.
 for v in $(compgen -e); do
   case $v in FEX_*) unset "$v" ;; esac
 done
 unset LD_LIBRARY_PATH LD_PRELOAD STEAM_RUNTIME_STEAMRT STEAM_STEAMRT_RECURSION_GUARD \
   LIBGL_ALWAYS_SOFTWARE LIBGL_DRI3_DISABLE GALLIUM_DRIVER BL_WEBHELPER_HIDE_TRACER PROOT_FP_OFF
 
-# The arm64 session's environment, saved by droiddeck-steam-x64 before it made the x86 one: HOME,
-# PATH, the GPU (Turnip, Zink), audio, input, the proot fast path. Steam's per-game variables
-# (SteamAppId, STEAM_COMPAT_*) are not in it and stay as the client set them.
 game_display=${DISPLAY:-}
 if [ -f "$x64_home/arm-session.env" ]; then
   . "$x64_home/arm-session.env"
@@ -52,7 +41,6 @@ spec.loader.exec_module(compat)
 compat.adopt_extras(sys.argv[1])
 PY
 fi
-# "commandline" "/droiddeck-proton %verb%": the entry point, relative to the tool's folder.
 cmd=$(sed -n 's/^[[:space:]]*"commandline"[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)
 entry=${cmd%% *}
 exec "$dir/${entry#/}" "$@"
