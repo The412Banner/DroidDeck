@@ -72,11 +72,17 @@ object Library {
     private val LAST_PLAYED = Regex("^\\s*\"LastPlayed\"\\s*\"(\\d+)\"", RegexOption.MULTILINE)
     private val INSTALL_DIR = Regex("^\\s*\"installdir\"\\s*\"([^\"]*)\"", RegexOption.MULTILINE)
 
-    internal fun steamLibraries(context: Context): List<Pair<File, String>> {
-        val root = File(LinuxRuntime.rootDir(context), "root/.local/share/Steam")
+    /** The libraries of the Steam client [arch] names ("arm64"/"x86_64"), the selected one by default. */
+    internal fun steamLibraries(context: Context, arch: String = SessionPrefs.steamClientArch(context)): List<Pair<File, String>> {
+        val root = SessionPrefs.steamRoot(context, arch)
+        // The x86-64 client keeps libraries of its own; the selected library is the arm64 client's,
+        // and the x86-64 client's card library is a folder inside it. The games folders are the
+        // arm64 client's only (the session lists just the card folder to the x86-64 one).
+        val card = GameStorage.effective(context)
+        if (arch == "x86_64") return listOfNotNull(root to "internal", card?.let { File(it.path, GameStorage.X64_CARD_DIR) to it.label })
         return listOfNotNull(
             root to "internal",
-            GameStorage.effective(context)?.let { File(it.path) to it.label },
+            card?.let { File(it.path) to it.label },
         ) + GameStorage.gamesFolderLibraries(context).map { it.host to it.label }
     }
 
@@ -96,10 +102,10 @@ object Library {
             .firstOrNull { it.isDirectory }
     }
 
-    fun steamGames(context: Context, strictRead: Boolean = false): List<SteamGame> {
-        val root = File(LinuxRuntime.rootDir(context), "root/.local/share/Steam")
+    fun steamGames(context: Context, strictRead: Boolean = false, arch: String = SessionPrefs.steamClientArch(context)): List<SteamGame> {
+        val root = SessionPrefs.steamRoot(context, arch)
         val cache = File(root, "appcache/librarycache")
-        val libraries = steamLibraries(context)
+        val libraries = steamLibraries(context, arch)
         val roots = libraries.map { it.first }
         val out = LinkedHashMap<Int, SteamGame>()
         for ((library, label) in libraries) {
@@ -132,7 +138,7 @@ object Library {
     }
 
     fun steamLibraryArt(context: Context): List<Pair<Int, File>> {
-        val cache = File(LinuxRuntime.rootDir(context), "root/.local/share/Steam/appcache/librarycache")
+        val cache = File(SessionPrefs.activeSteamRoot(context), "appcache/librarycache")
         return cache.listFiles().orEmpty().mapNotNull { dir ->
             val appId = dir.name.toIntOrNull()?.takeIf { it !in NOT_GAMES } ?: return@mapNotNull null
             steamCacheImage(cache, appId, STEAM_CAPSULES)?.let { appId to it }

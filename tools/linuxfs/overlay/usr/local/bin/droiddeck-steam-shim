@@ -11,4 +11,6 @@ if [ "${BL_DESKTOP:-}" = 1 ]; then
   done
   exec /usr/local/bin/droiddeck-steam-launch "$ui" ${url:+"$url"}
 fi
+# The client the app selected; the x86-64 one starts through droiddeck-steam-x64, in its own home.
+[ "${BL_STEAM_CLIENT_ARCH:-}" = x86_64 ] && exec /usr/local/bin/droiddeck-steam-x64 --exec "$@"
 exec "${HOME:-/root}/.local/share/Steam/steamrtarm64/steam" "$@"

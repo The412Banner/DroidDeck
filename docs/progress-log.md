@@ -7,6 +7,203 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
+## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
+
+- **SD card library** (`3fc74f3e`): the x86-64 client had internal storage as its only library, so Steam's
+  install dialog never offered a place. It now has `x86-64/` inside the card library
+  (`/mnt/droiddeck-sd/x86-64`; compatdata, shadercache and runtime tools private like the arm64 card
+  library). Before building, FEX was shown to run x86 programs from the noexec exFAT card. Device: the
+  dialog offers Internal Storage and SD card.
+- **Card downloads** (`f77113fb`): `storage.c` (no zero-filled reservation where `fallocate` is refused)
+  and `dircache.c` recognised only `steamrtarm64/steam`; the x86-64 client wrote each download in full as
+  zeros first (Audiosurf: 415 MB written, 0 downloaded). Device: FlatOut, 1.19 GB, to the card in 51 s.
+- **zRAM** (`877c27eb`): the watcher read argv[0], which under FEX is FEX; it now reads FEX's first argument.
+- **ARM parity** (`b0923f05`): touch layouts read the active client's files; Offline Mode is written to
+  both clients' `loginusers.vdf`; the Lossless Scaling ownership check runs for x86-64; Repair Steam repairs
+  the x86-64 client too (and two unshown starts do, like arm64; the app clears its start count). Device: no
+  repair on the stale 31-start count, count cleared once the client was on screen. Switch to Desktop needs
+  no change (Deck mode: an x86 shell under FEX runs `steamos-session-select`).
+- **DroidDeck-Proton default** (`2bd752aa`): newest DroidDeck-Proton before GE-Proton; `default-tool`
+  records the default this script set, and on a change the titles still on it move along (device: 113 off
+  GE-Proton11-7). A default the user chose is kept. FlatOut from the card: in game on DroidDeck-Proton
+  11-9.1, exits on GE-Proton11-7 (no log).
+- **Org main** merged (`714198bf`, 36 commits; strings and `steam_started` conflicts kept both sides).
+  A stale line from the 10-07 sync ran the live compat helper in the foreground on the arm64 restart path:
+  black screen after a Steam import restart (`02e7c503` matches main again).
+- **VAC findings:** x86-64 client + Linux builds secure (TF2, HL, L4D2). x86-64 client + Windows build
+  (TF2 on DroidDeck-Proton) insecure: Proton reaches Steam through the arm64 client's `steamclient.so`.
+  arm64 client + L4D2 blocked on both Protons; arm64 + Half-Life (Windows) joined a vac=1 GoldSrc server.
+  Why the arm64 client fails is not established. Sharing libraries between the clients stays parked.
+- **arm64 `droiddeck-fex`** (`a53b49ef`): Valve's FEX-Emu keeps its server socket in
+  `$STEAM_COMPAT_DATA_PATH/fex-emu/Server` whatever `FEX_APP_DATA_LOCATION`/`FEX_SERVERSOCKETPATH` say;
+  under the app's folder that path passed 108 bytes (Half-Life: 136) and FEXServer never listened. A short
+  path is used now. 32-bit Linux titles through it still fail (not pursued).
+- **Counter-Strike 2** (Linux, newer runtime) hung at 100% of one core before loading its engine. With
+  ptrace taken by proot, `perf_event_open` IP sampling put the loop in FEX's `MemAllocator32Bit`: CS2
+  reserves the low 2 GB with `MAP_32BIT` in shrinking sizes, FEX met `EEXIST`, stepped down one page per
+  retry and restarted from the top for ever. **`fex-2610-r3`** (patch `0003`, `b0d316dc`): such a range is
+  skipped whole and a second exhausted scan returns `-ENOMEM`, as the kernel does. Next, its menu text
+  library failed: CS2 ships an older `libfreetype.so.6` but no HarfBuzz, and the rootfs's needs a newer
+  FreeType; the game flagged its files corrupt (a verify each start) and waited behind an error box that
+  could not open. DroidDeck direct now preloads Valve's runtime HarfBuzz (2.7) for newer-runtime titles
+  (`c9eb7d30`). Device with both done by hand: engine and modules loaded (5 GB) with no error, then Android
+  killed DroidDeck for memory while it was in the background. Not yet seen at the menu.
+- **CS2 on the r3 APK** (`c9eb7d30`, no launch options): no hang, the menu text library loads, the game
+  client and modules load and the window resizes. Every run then ended in Android's low-memory killer:
+  CS2 goes from 3.5 to 5.3 GB in about 15 s and `lmkd` killed DroidDeck (adj 200, in the background
+  while the device was in Termux) with zRAM on and still filling (1.5 to 3.2 GB of 6 GB). This device's
+  `lmkd` runs in minfree mode (`persist.device_config.lmkd_native.use_minfree_levels=true`; background
+  apps go below about 120 MB free), which does not count swap. Proposed, not applied: switch it to the
+  PSI mode (`use_minfree_levels=false`, `lmkd.reinit=1`; reverted with `true`). CS2 has not been seen
+  at its menu yet.
+- **CS2 reached its menu (14:47, DroidDeck in the foreground):** still loading, 11 fps, 11.6 GiB used.
+  Five seconds later `lmkd` killed nearly every app, then DroidDeck itself at adj 0 (foreground), while
+  swap was about 22 of 23 GB free (zRAM 6 GB with 0.9 GB used, `/data/swapfile` 16 GB almost unused).
+  Steam and CS2 died with the app; neither crashed on its own.
+- **Root test without changing Android (lmkd left as is):** DroidDeck's zRAM watcher only pages out
+  `steam` and `steamwebhelper`, never the game. A root tool (`/data/local/tmp/pageout cs2 3000 <log>`)
+  calls `process_madvise(MADV_PAGEOUT)` on CS2's private anonymous memory whenever MemAvailable drops
+  below 3 GB, so free RAM stays above the killer's levels. One call per mapping in 1 GB pieces: a single
+  call with many ranges is capped at about 2 GB in total, and FEX reserves huge ranges, so batched calls
+  silently skipped most of a FEX process. With that fixed, the x86 Steam client moved 223 of 256 MB to
+  swap. If CS2 survives to its menu, the app version is the zRAM watcher also paging out the running
+  game during its load (no root).
+- **Page-out result (14:59):** the tool fired at 2.9 GB available and moved 4.8 GB of CS2 to swap
+  (resident 5.8 → 1.5 GB). CS2 drew its full menu (2–34 fps). 27 s later `lmkd` still killed down to
+  DroidDeck at adj 0. Its kill record: MemFree 111 MB, Cached 6.3 GB, but **Shmem 3.4 GB and
+  Unevictable 3.5 GB** (Mlocked only 120 MB), swap 17 GB free. In minfree mode the "file" figure is
+  Cached minus Shmem, Unevictable and SwapCached, so about 0, and it kills to the foreground. After the
+  session died Shmem fell to 0.3 GB, so the 3.4 GB of pinned shared memory belonged to the CS2 session.
+  MemAvailable counted it as available, which is why the tool saw 3.7 GB of headroom 2 s before the
+  kill. Page-out cannot move unevictable pages.
+- **Next run (15:04):** a root logger (`/data/local/tmp/shmlog.sh` → `shm-cs2.log`, every 3 s) records
+  MemFree / Cached / Shmem / Unevictable / Mlocked / SwapFree and every process holding more than 50 MB
+  of shared (`RssShmem`) or locked (`VmLck`) memory, to find who pins the 3.4 GB (FEX, the X server,
+  Vulkan buffers, a ramfs). No SysV shared memory on the device. Then the trigger moves from
+  MemAvailable to MemFree plus droppable file pages.
+- **Dust II (15:27):** CS2 loaded Dust II "Training Day" (bots) at 78 fps, then was killed at 15:28:05 the
+  same way. From 15:25:30 Shmem and Unevictable rose from 0.25 to 3.9 / 4.0 GB, yet the largest process
+  mapping shared memory (an `exe`) held only about 535 MB, so about 3.3 GB is not mapped by any process.
+- **Open files ruled out (15:32-15:36):** a second logger (`fdlog.sh` → `fd-cs2.log`) listed every memfd,
+  ashmem, deleted or tmpfs file of 20 MB or more held by the app. Only 64 MB PulseAudio memfds showed up
+  while Shmem reached 2.7 GB. The run was killed at 15:36:28 (Shmem 3.4 GB, Unevictable 3.5 GB).
+- **Lead: GPU memory.** `/sys/class/kgsl/kgsl/page_alloc_max` reads 6.07 GB (the peak since boot), and the
+  driver has `max_reclaim_limit` / `page_reclaim_per_call`, i.e. a KGSL build with process reclaim, where
+  GPU pages are shmem-backed and stay unevictable while the process is in the foreground. That fits
+  memory that no process maps, that has no file, and that is freed when the session dies. Not proven.
+- **Low-settings test (15:42):** `cs2_video.txt` in the x86 userdata: `gpu_mem_level` 3 → 0,
+  `cpu_level` 3 → 0, resolution 1024x576 → 854x480 (everything else was already at its lowest; backup
+  `cs2_video.txt.before-low`). A third logger (`gpulog.sh` → `gpu-cs2.log`, every 3 s) records KGSL
+  `page_alloc`, MemFree, Shmem, Unevictable and each process with more than 200 MB of GPU memory. If
+  Shmem rises with `page_alloc`, the GPU memory is what is pinned. Background apps were force-stopped
+  and caches dropped first (about 11 GB free).
+- **GPU memory confirmed (15:47):** with low settings CS2 reached its menu at 94 fps and was killed at
+  15:47:59 the same way. KGSL `page_alloc` followed Shmem within 20-120 MB through the whole load
+  (0.23 GB at 15:44:50, 0.93 GB at 15:46:47, then +2.2 GB in 3 s, about 3.2 GB at the kill), and
+  Unevictable stayed about 100 MB above it. One process (`exe`, pid 23906) held nearly all of it. So the
+  pinned 3.4 GB is the game's GPU memory, and the low settings did not make it smaller. (The negative
+  values in that log were the device shell's 32-bit arithmetic; the logger now divides in awk.)
+- **New page-out trigger (16:23):** the tool now acts on what lmkd's minfree mode looks at, MemFree plus
+  `Cached + Buffers - Shmem - Unevictable`, instead of MemAvailable (which counted the GPU memory as
+  free). Threshold 2500 MB, checked every 0.5 s, page-out at most once a second. The idea: push CS2's
+  swappable memory out early so the 3.2 GB of GPU memory fits beside it. The open-file logger was stopped.
+- **Still to test:** CS2 without the kill; touch layouts, Offline Mode, Switch to Desktop, a Linux game from
+  the card. TF2 on the device is the Windows build after the VAC test.
+
+## 2026-10-14 (evening) - `feat/x86-64-steam-client`: Team Fortress 2 runs (sniper check, FEX thunks)
+
+- **Sniper check:** `tf.sh` reads `VERSION_CODENAME` from `/etc/os-release` and stops unless it is
+  `sniper`. DroidDeck direct cannot use Valve's sniper container (no user namespaces under Android), so
+  for titles in `direct-sniper` it runs such a script through `bash -c` with that line replaced by
+  `VERSION_CODENAME=sniper` (`92d65e3d`). Device: TF2 gets past the check and loads on the rootfs
+  libraries; sniper itself is not needed.
+- **Then a crash at the first frames**, with both launch options (Vulkan and Legacy OpenGL). Strict FEX
+  memory ordering and turning off the Gamescope WSI layer changed nothing. With FEX thunks off (lavapipe,
+  software) TF2 reached its main menu and loaded a match at 17 fps, so the thunks were the cause; with
+  only the Vulkan thunk on it still crashed.
+- **Cause (from a SIGSEGV report taken inside the game):** the main thread was executing Turnip's
+  `vk_common_CmdBindDescriptorSets` as x86 code, an address FEX never linked. FEX-2609's guest
+  `vkGetDeviceProcAddr` passes a lookup of `vkGetDeviceProcAddr` itself to the host and hands back the
+  raw host function; every pointer fetched through it is unlinked. TF2's native DXVK (2.3) makes that
+  lookup; the Windows games through Proton do not. FEX-2610 answers self-lookups in the guest
+  (FEX-Emu/FEX 3397eb9b).
+- **FEX 2610** (`af49e545`): `tools/fex/build-in-arch.sh` builds FEX-2610 with the same openat2 patch and
+  host thunks as `fex-2609-r3`. The container's newer clang has no `FileManager::clearStatCache()`,
+  which the thunk generator called after each run; patch `0002` drops that call (`31d66e67`). Published
+  as `fex-2610-r1` on the personal repo.
+- **2610 alone did not fix it.** An ARM-side signal hook in FEX (wrapping its `syscall(rt_sigaction)`)
+  logged no fault in Turnip, and the guest thunk's disassembly showed why: Arch's clang builds the x86
+  guest thunks with stack protection, and the canary load in `CallHostFunction`'s prologue
+  (`mov %fs:0x28, %r11`) overwrote r11, which carries the host function's address, before the thunk
+  stored it. FEX called the canary. 9 of 521 Vulkan and 66 of 736 GL host calls (those with 7+
+  arguments) were affected, `vkCmdBindDescriptorSets` among them. Windows games never reach these
+  thunks (they run on the arm64 Proton) and 32-bit games pass the host address in mm0.
+- **`fex-2610-r2`** (`56e5a712`): the toolchain files add `-fno-stack-protector` for the guest thunks;
+  no guest thunk library has a canary load. The x86 client fetches it (`9cc0ebcb`). Device, stock
+  settings: TF2 main menu at 358 fps on the GPU, Casual matchmaking onto a VAC-secured Valve server,
+  in game at about 84 fps; Half-Life (32-bit, direct) runs on it. Windows games are not on this FEX:
+  in x86 client mode they still run on the arm64 Proton (Borderlands 2: GE-Proton11-7-aarch64), whose
+  own FEX translates the game.
+- **Which FEX runs what in x86 client mode:** the client (`steamrt64/steam`) and every Linux game on
+  DroidDeck direct run on the runtime's FEX (`fex-2610-r2`); Windows games go to the arm64 Proton and
+  its own FEX. At each start every library game with a Linux build, installed or not, is mapped to
+  DroidDeck direct, so Steam downloads the Linux depots; Windows-only games stay on the default
+  Proton, and a game already installed as its Windows build stays there (Borderlands 2 here:
+  `Binaries/Win32`, depot 49521). A game new to the library mid-session is mapped at the next start.
+- APK run 38670180921 (`9cc0ebcb`), signed and staged as `DroidDeck-x64-fex2610r2-9cc0ebcb.apk`.
+
+## 2026-10-14 - `feat/x86-64-steam-client`: brought up to main; added games run through the x86-64 client
+
+Work lives on The412Banner/DroidDeck only until it runs correctly; the org branch and draft PR #152
+stay as they were (`afa479ee`).
+
+- **Merged main (94 commits).** Main dropped the Steam channel and Deck-mode settings (#546): only the
+  client choice (`steamClientArch`), `activeSteamRoot` and VAC diagnostics remain. Main's web-helper
+  arguments (#566, `bl_webhelper_argv`) are composed with the x86 client's arm64 web-helper redirect in
+  `preload/net.c`. Main's single background loop (#575) now carries the x86 hooks: the client's own
+  compat pass (`--x64 --live`), `steamrt64` in the pinning and stale-tmp patterns, Lossless probe off for
+  x86, and the once-per-title restart after a new mapping. The text-strings merge had dropped three of
+  main's strings; main's files were taken and the six x86 strings added back.
+- **Builds on the personal repo** need the pinned Debian image in a release of their own:
+  `ci-debian-bullseye-r1` was copied (same sha256) as a pre-release. The bullseye compilers come from
+  `deb.debian.org` first; `archive.debian.org` no longer serves `libmpfr6_4.1.0-3`.
+- **Client update before start** (`x64_sync_client`): Valve serves one build to both clients; the x86
+  client is brought to it (changed parts only, 9 of 28 on device) so it can use the arm64 web helper on
+  the GPU from the first frame (device: 144 fps menus).
+- **Web helper loop:** with main's in-process GPU arguments the x86 web helper's GPU crash took the
+  whole helper down (102 restarts). The x86 helper now starts with stock arguments.
+- **Loading screen:** "Starting Steam x86-64", and the x86 setup and update steps reach it.
+- **Added games:** written first, then pointed at the x86 client's Proton (they were mapped to the
+  arm64 client's tool name, which this client ignores). Windows components install into the x86
+  prefix (DiRT Showdown and DiRT 3 needed OpenAL).
+- **Hidden game window, two causes.** The arm64 launcher loaded the saved arm session's `DISPLAY=:0`
+  over the game display Steam chose; it now keeps Steam's. And the game window had no `STEAM_GAME`
+  tag, so gamescope never listed it as focusable; the agent's focus watcher now tags untagged
+  `steam_app_<id>` windows on the game display when the x86 client runs. Device: DiRT 3 (added game)
+  at its title screen at 144 fps.
+- **Parity with the arm64 client:** Steam UI scale and the Steam import watcher run for the x86 client
+  too (the import is untested). An SD-card library stays arm64-only: FEX cannot run Linux games from it.
+- **Later the same day:**
+  - DiRT Showdown's ~7 s exit was the same `DISPLAY=:0` problem; it runs now.
+  - **Tools adopted as arm64 Protons:** main's `droiddeck-steam-shortcuts` calls `adopt_extras` on the
+    client's `compatibilitytools.d`; in the x86 client that rewrote DroidDeck direct as a Windows tool,
+    so Steam installed Half-Life's Windows files. The x86 client no longer adopts its tools, and its
+    preparation removes what an adoption left. The arm64 Proton is adopted on demand at an x86 launch.
+  - **Scout runtime:** shipped as `steam-runtime.tar.xz`; `steam.sh` unpacks it, and the x86 client
+    is started without it. Its preparation unpacks it now. Device: Half-Life's native Linux build at
+    101 fps on the GPU under FEX (32-bit), and a VAC-secured multiplayer server.
+  - **Install scripts:** the evaluator script is looked up in the x86 client's folder. A game's own
+    installers without a `HasRunKey` (Borderlands 2: VC++ 2005/2008/2010, DirectX, .NET 4.0) are now
+    marked under `Software\Valve\Steam\Apps\<appid>` (and the Wow6432Node view); Steam skips them.
+    This applies to the arm64 client too. Device: Borderlands 2 started past its install script, and
+    on the build that marks them itself it went straight into the game.
+  - **Windows components** detection follows the chosen client (in-session install watch and
+    `appinfo.vdf`).
+- **Next:** Counter-Strike: Source, the first game on the newer (sniper) runtime path, where DroidDeck
+  direct runs it on the rootfs instead of the scout runtime.
+- **Open:** newer-runtime Linux games (sniper) untested; the arm64 client untested on this build; the
+  Steam import watcher untested; an SD-card library for the x86 client deferred.
+
 ## 2026-10-10 - `feat/wincomp-auto-sources`: Windows components picked by the game's source
 
 - **Per source** (`WinCompSources`): Steam - Steamworks Shared depots from the appmanifest or the
@@ -87,6 +284,104 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   idempotent, store and steamapps skipped, libraries empty, same-name folders), `GameStorageTest`
   updated. Not yet on a device.
 
+## 2026-10-02 - `feat/x86-64-steam-client`: Valve's x86-64 Linux client under FEX (experiment)
+
+Why: the arm64 Linux client never runs VAC. L4D2 (and TF2 in Bannerlator) are refused by VAC
+servers ("Connection Blocked ... VAC secured server") and no client log mentions VAC; VAC modules
+are x86 code. The question is whether Valve's x86-64 client under FEX gets a VAC module it can run.
+Branched from `feat/vac-diagnostics`. Opt-in: `bannerlator-steam-x64` (desktop menu "Steam x86-64
+(FEX, experimental)") runs the client in its own home (`~/.droiddeck-x64`) with its own rootfs,
+login and library. The arm64 client stays the default and is not touched.
+
+Device-proven on the FIT (Genshin repack): **the x86-64 client runs, self-updates, renders its full
+UI (software GL), logs in, shows friends, and downloads games.** VAC itself is not tested yet.
+
+What it took, in order (each step was the next failure on device):
+- **FEX for the guest** - `tools/fex/build-in-arch.sh` + `build-fex.yml` (FEX-2609, Arch Linux ARM
+  container, no thunks), released as `fex-2609-r2` (not Latest). Rootfs: FEX's Ubuntu 24.04 image.
+- **openat2** - our proot answers it with ENOSYS; FEX opened every rootfs path with
+  `openat2(RESOLVE_IN_ROOT)`, fell through to the arm64 guest on anything but EXDEV, and x86 bash
+  could not find libtinfo. `tools/fex/patches/0001-openat2-enosys-fallback.patch`.
+- **FEXServer owns the rootfs** - a server started before `FEX_ROOTFS` (any earlier FEX run) answers
+  every client with no rootfs. The launcher stops it first.
+- **32-bit x86 died with SIGILL** - libblfastpath (the proot fast path, preloaded into every guest
+  process, FEX itself included) breaks FEX's 32-bit mode. `PROOT_FP_OFF=1` for FEX.
+- **"Steam now requires user namespaces"** - steam-runtime-check-requirements' bwrap probe; the
+  arm64 client has no such probe. The SteamRT3 client (`steamrt64/steam`) is started directly, the
+  way the session starts `steamrtarm64/steam`, with `STEAM_RUNTIME_STEAMRT` pointing at Valve's
+  runtime linked file by file and only the probe replaced.
+- **tier0 assertion "Function not implemented"** - semget: Android has no System V IPC. Traced with
+  a `-DDEBUG_STRACE` FEX (build-fex.yml `cxxflags` input, artifact only). The session shim
+  (`preload/*.c`) is now also built natively as `libblsession-x86_64.so`, staged, and preloaded
+  through the rootfs's own `/etc/ld.so.preload`.
+- **re-exec into pressure-vessel after self-update** - `STEAM_STEAMRT_RECURSION_GUARD=1`.
+- **libgtk-x11-2.0 missing / soname links / old glibc shadowing** - Valve's steamrt3c platform
+  libraries linked into `~/.droiddeck-x64/steamrt-libs`, soname links from the rootfs `ldconfig`,
+  and only libraries the rootfs lacks (LD_LIBRARY_PATH beats system folders whatever its order).
+- **GLX failed** - the desktop exports zink over the arm64 Turnip ICD; cleared, llvmpipe used.
+- **web helper died of SIGTRAP a second after start** - found with pid-tagged traces (FEX AppConfig
+  `OutputLog=server` + a foreground FEXServer, `BL_FEXSERVER_LOG`; file logs overwrite each other):
+  every web helper read `/proc/self/status` from libtier0_s.so, saw proot as a tracer, and tier0 broke
+  into the "debugger" with int3. `preload/tracer.c` exempts the web helper on purpose (Chromium traps
+  on a status fd that is not procfs); with `BL_WEBHELPER_HIDE_TRACER=1` only opens called from
+  libtier0_s.so get the copy.
+- `SessionFiles` stages `bannerlator-steam-x64` and the x86-64 shim (they were missing from the list).
+
+Dead ends worth remembering: headless VAC testing is impossible (current Steam starts the saved
+login from its UI); `-cef-*` switches are not forwarded to the x86 web helper; the KMS
+`CREATE_DUMB` errors are a red herring (40 fast ENOTTY per process); not an address-space problem
+(0 ENOMEM in 618k traced syscalls, although the device is 39-bit VA).
+
+Later the same day (device-proven unless noted):
+- **Controllers**: libfakeinput is now also built for x86-64 and preloaded in the FEX rootfs; the
+  client registers the pad, and **Big Picture works with it** (Xbox prompts, D-pad moves focus).
+- **Online**: the launcher starts the system bus and the NetworkManager stand-in like the session.
+- From an audit of `bannerlator-session`: stale lock cleanup, branch sync before every start, core
+  re-pinning, path cache and `perms.c` for `steamrt64`, the app's FEX preset (PERFORMANCE_TSO).
+- **Play button (built, not yet device-tested)**: Steam settings > Client > "Steam client: ARM64 /
+  x86-64 (FEX, experimental)" (`BL_STEAM_CLIENT_ARCH`). The session then starts the x86 client via
+  `bannerlator-steam-x64 --prepare/--exec` and gives it everything it gives the arm64 one; steps
+  only for the arm64 client (ARM64 Proton, mapping, seeding, Decky, steamclient.so probes) are
+  skipped.
+- L4D2 hard-link reuse does not work: switching platform makes Steam redownload depot 551 anyway.
+
+Evening (device-proven unless noted):
+- **Play button with the x86-64 client works** (Steam settings > Client > Steam client: x86-64).
+  Deck mode is skipped for it: with -steamos3 its SteamOS audio manager aborts on the runtime's
+  PulseAudio 13 (pa_operation_get_state assertion).
+- **Left 4 Dead 2 runs in the x86-64 client and joined a live online game** (Quick Match, Swamp
+  Fever, other players, 138 ms) - the server type that refused the arm64 client with "Connection
+  Blocked ... VAC secured server". Not yet hard proof of VAC (no client log line; -condebug added
+  for the server's secure flag). Software rendering: ~11 fps.
+- What the launch needed: "DroidDeck direct", a compatibility tool running native Linux games with
+  Valve's scout library runtime instead of the Steam Linux Runtime container; a stand-in
+  steam-runtime-launch-client (the client, believing itself inside the SteamRT container, starts
+  every game "alongside Steam" through it, and Valve's needs a launcher service on a session bus);
+  i386 builds of the session shim (the i386 controller reader crashes the game and is left out for
+  now). A steam:// URL written to the launch dir now reaches the running client.
+- **FEX with host thunks** (fex-2609-r3): FEX's Vulkan/GL/EGL/DRM/Wayland/ALSA thunks, 64- and
+  32-bit guests, guest halves cross-compiled against an Arch x86_64/multilib sysroot. The x86 client
+  uses them when installed (GPU mode, the arm64 client's ANGLE-on-Vulkan flags) - built, not yet
+  device-tested.
+- The proot fast path now stands down in FEX only for 32-bit programs (it broke FEX's 32-bit mode).
+- **On the GPU, VAC proven (19:40):** games get FEX's host thunks and the session's Turnip/Zink
+  settings (the client and its browser stay in software: with the thunks the browser's GPU process
+  dies and the client never opens a window). Left 4 Dead 2 in The Passing on an online server:
+  51 fps (was ~11 in software). The server answered the A2S info query as "Valve Left4Dead 2 US
+  East Server", VAC=1 - an official VAC-secured server, which the arm64 client is refused.
+- The crash that held this up was not the GPU: the 32-bit controller reader was still preloaded
+  (FEX falls through to the session's own i386 copy), and the game's SDL2 strdup()s a NULL udev
+  attribute of its fake devices. Found with a SIGSEGV logger (tools/diag/segvlog.c).
+- The Linux FEX as a component file: /sdcard/Download/FEX-2609-r2-x86-64-guest.wcp (type
+  FEX-Guest); the Components section does not know that type yet.
+
+Open:
+- VAC test: L4D2's native Linux build in the x86 client's own library (hard-linked from the arm64
+  copy, same filesystem, so only the Linux depots download). Native Linux games start inside the
+  Steam Linux Runtime container (pressure-vessel) - expected to need the same treatment.
+- No x86 GPU driver: games render with llvmpipe. Playable needs FEX host thunks.
+- Windows games in the x86 client need x86 Proton = pressure-vessel.
+- One client per account: integration would be a per-title hand-off, not side by side.
 ## 2026-10-09 - `feat/games-add-edit`: add games from the Games tab, edit them like Steam's Properties
 
 - **Steam ⚙ settings:** the Games section is gone (it was a feature, not a setting). Games
