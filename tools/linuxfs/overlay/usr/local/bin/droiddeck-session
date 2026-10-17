@@ -834,7 +834,7 @@ BUSCONF
       printf '%s\n' "$1" > "$HOME/.bl-restarted-for"
       echo "== steam: $2; restarting Steam to launch it"
       printf '%s\n' "$1" > "$HOME/.bl-restart-game"
-      "${steam_client[@]}" -shutdown >/dev/null 2>&1
+      "${steam_client[@]:-$steam_root/steamrtarm64/steam}" -shutdown >/dev/null 2>&1
     }
     steam_launch_game() {
       local state=0 tries
@@ -847,7 +847,7 @@ BUSCONF
           return
         fi
       fi
-      "${steam_client[@]}" "steam://rungameid/$1" >/dev/null 2>&1
+      "${steam_client[@]:-$steam_root/steamrtarm64/steam}" "steam://rungameid/$1" >/dev/null 2>&1
       [ "$state" -eq 3 ] && return
       for tries in 1 2 3 4 5 6 7 8; do
         nap 1
@@ -888,7 +888,7 @@ BUSCONF
       pgrep -f 'SteamLaunch AppId=[0-9]' >/dev/null 2>&1 && return 0
       echo "== steam: the client dropped shortcut(s)$lost when they exited; restarting Steam so it lists them again"
       : > "$HOME/.bl-restart-lost"
-      "${steam_client[@]}" -shutdown >/dev/null 2>&1
+      "${steam_client[@]:-$steam_root/steamrtarm64/steam}" -shutdown >/dev/null 2>&1
     }
     steam_bring_forward() {
       local end=$((SECONDS + 600)) behind=0 line name value focused other n
