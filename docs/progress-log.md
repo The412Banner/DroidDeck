@@ -54,6 +54,9 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   launched, restarted and recovered games through `steamrtarm64/steam`, and its added-game shortcut check
   read the arm64 client's Steam folder; both now use the session's client. Added games marked native are
   not given a Proton by either client's shortcuts pass.
+- **FEX hosted by the org**: `fex-2610-r3` is mirrored into Droid-Deck/DroidDeck-Components by its
+  `mirror-release.yml`, checked against a new `fex.json` catalog there (Components PR #2), and
+  `droiddeck-steam-x64` downloads it from there instead of The412Banner/DroidDeck.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
