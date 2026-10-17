@@ -317,6 +317,8 @@ class SessionService : Service() {
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
         killStragglers()
         SessionFiles.stage(this, root)
+        // An abandoned session's report reads the VAC marker and Steam logs that this session is about to replace.
+        SessionArtifacts.finishAbandoned(this)
         VacDiagnostics.arm(this)
         com.droiddeck.launcher.agent.AgentGuest.reset(this)
         com.droiddeck.launcher.stores.gog.GogComet.begin()
