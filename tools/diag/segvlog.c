@@ -1,6 +1,7 @@
 // The handler calls only async-signal-safe functions: no dladdr or stdio there.
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -115,22 +116,23 @@ static void log_fault(int sig, siginfo_t *si, void *ctx) {
 }
 
 static void handler(int sig, siginfo_t *si, void *ctx) {
-  if (logged < 32) {
+  int saved_errno = errno;
+  int i = fault_index(sig);
+  struct sigaction *next = i >= 0 && have_chained[i] ? &chained[i] : NULL;
+  int chains = next && ((next->sa_flags & SA_SIGINFO) ? next->sa_sigaction != NULL
+                                                      : next->sa_handler != SIG_DFL && next->sa_handler != SIG_IGN);
+  // The cap is for faults the program recovers from; one that ends the process here is always logged.
+  if (!chains || logged < 32) {
     logged++;
     log_fault(sig, si, ctx);
   }
-  int i = fault_index(sig);
-  if (i >= 0 && have_chained[i]) {
-    struct sigaction *next = &chained[i];
-    if (next->sa_flags & SA_SIGINFO) {
-      if (next->sa_sigaction) {
-        next->sa_sigaction(sig, si, ctx);
-        return;
-      }
-    } else if (next->sa_handler != SIG_DFL && next->sa_handler != SIG_IGN) {
+  if (chains) {
+    errno = saved_errno;
+    if (next->sa_flags & SA_SIGINFO)
+      next->sa_sigaction(sig, si, ctx);
+    else
       next->sa_handler(sig);
-      return;
-    }
+    return;
   }
   struct sigaction dfl;
   memset(&dfl, 0, sizeof dfl);

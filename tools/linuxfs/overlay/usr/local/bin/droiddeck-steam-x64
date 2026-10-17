@@ -608,13 +608,17 @@ VDF
   x64_sync_login
   # Each client keeps its own libraries; written only while no x86 client runs, as it rewrites these on exit.
   if ! pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then
-    python3 - "$STEAM_X64" "${BL_X64_STEAM_LIBRARIES:-}" "$STEAM_X64/config/libraryfolders.vdf" "$STEAM_X64/steamapps/libraryfolders.vdf" <<'PY' || step "could not check the x86-64 client's library folders"
+    listing_ok=0
+    if python3 - "$STEAM_X64" "${BL_X64_STEAM_LIBRARIES:-}" "$STEAM_X64/config/libraryfolders.vdf" "$STEAM_X64/steamapps/libraryfolders.vdf" <<'PY'; then
 import json, os, re, sys
 keep = {os.path.realpath(sys.argv[1])}
+# Without the session's list nothing is known about the card: leave the folders as they are.
+if not sys.argv[2]:
+    sys.exit(3)
 try:
     keep |= {os.path.realpath(str(e["path"])) for e in json.load(open(sys.argv[2], encoding="utf-8"))}
 except (OSError, ValueError, KeyError, TypeError):
-    pass
+    sys.exit(3)
 for path in sys.argv[3:]:
     if not os.path.isfile(path):
         continue
@@ -640,7 +644,13 @@ for path in sys.argv[3:]:
     open(path, "w", encoding="utf-8", errors="surrogateescape").write("".join(out))
     print("droiddeck-steam-x64: no longer shared with the arm64 client: %s" % ", ".join(removed))
 PY
-    if [ -n "${BL_X64_STEAM_LIBRARIES:-}" ]; then
+      listing_ok=1
+    elif [ $? = 3 ]; then
+      step "no library list from the session: the x86-64 client's library folders are left as they are"
+    else
+      step "could not check the x86-64 client's library folders"
+    fi
+    if [ "$listing_ok" = 1 ]; then
       BL_STEAM_LIBRARIES=$BL_X64_STEAM_LIBRARIES droiddeck-steam-library "$STEAM_X64" ||
         step "could not add the card to the x86-64 client's library folders"
     fi
