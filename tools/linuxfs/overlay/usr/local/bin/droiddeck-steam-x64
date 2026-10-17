@@ -284,11 +284,25 @@ if not block(s, "CompatToolMapping"):
     s = s[:st[1]] + '\n\t\t\t\t"CompatToolMapping"\n\t\t\t\t{\n\t\t\t\t}' + s[st[1]:]
 
 
-def decide(app, inner):
-    """(the tool `app` goes to, or None when its entry stays; its entry's span in `inner`; the tool
-    that entry names, None without one)."""
+def entries(inner):
+    """{app: its entry's span in `inner`, as block() gives it}, read once for the whole mapping."""
+    spans, pos = {}, 0
+    for m in re.finditer(r'"(\d+)"\s*\{', inner):
+        if m.start() < pos:
+            continue
+        depth, k = 1, m.end()
+        while depth and k < len(inner):
+            depth += {"{": 1, "}": -1}.get(inner[k], 0)
+            k += 1
+        spans.setdefault(m.group(1), (m.start(), m.end(), k - 1))
+        pos = k
+    return spans
+
+
+def decide(app, inner, old):
+    """(the tool `app` goes to, or None when its entry stays; its entry's span `old` in `inner`; the
+    tool that entry names, None without one)."""
     on_windows = windows_installed(app)
-    old = block(inner, app)
     name = None
     if old:
         name = re.search(r'"name"\s*"([^"]*)"', inner[old[1]:old[2]])
@@ -309,30 +323,36 @@ def decide(app, inner):
 if mode == "live":
     _, open_, close = block(s, "CompatToolMapping")
     inner = s[open_:close]
+    spans = entries(inner)
     new = []
     for app in sorted(installed_apps(), key=int):
         if app not in games and (app in KNOWN or not new_linux_build(app)):
             continue
-        tool, _, name = decide(app, inner)
+        tool, _, name = decide(app, inner, spans.get(app))
         if tool == "droiddeck-direct" and name != tool:
             new.append(app)
     if new:
         open(pending, "a").write("".join("%s\n" % a for a in new))
         print("droiddeck-steam-x64: installed while the client runs, for DroidDeck direct at its restart: %s" % " ".join(new))
     sys.exit(0)
-mapped, windows = [], []
+# One pass over the mapping: each new entry goes in front of what is there (the last app first, as
+# entries added one by one at the top would end up), replacing the app's old one.
+_, open_, close = block(s, "CompatToolMapping")
+inner = s[open_:close]
+spans = entries(inner)
+mapped, windows, added, dropped = [], [], [], []
 for app in sorted(games, key=int):
-    _, open_, close = block(s, "CompatToolMapping")
-    inner = s[open_:close]
-    tool, old, _ = decide(app, inner)
+    tool, old, _ = decide(app, inner, spans.get(app))
     if tool is None:
         continue
     if old:
-        inner = inner[:old[0]] + inner[old[2] + 1:]
-    entry = ('\n\t\t\t\t\t"%s"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"%s"\n'
-             '\t\t\t\t\t\t"config"\t\t""\n\t\t\t\t\t\t"priority"\t\t"250"\n\t\t\t\t\t}' % (app, tool))
-    s = s[:open_] + entry + inner + s[close:]
+        dropped.append(old)
+    added.append('\n\t\t\t\t\t"%s"\n\t\t\t\t\t{\n\t\t\t\t\t\t"name"\t\t"%s"\n'
+                 '\t\t\t\t\t\t"config"\t\t""\n\t\t\t\t\t\t"priority"\t\t"250"\n\t\t\t\t\t}' % (app, tool))
     (mapped if tool == "droiddeck-direct" else windows).append(app)
+for old in sorted(dropped, reverse=True):
+    inner = inner[:old[0]] + inner[old[2] + 1:]
+s = s[:open_] + "".join(reversed(added)) + inner + s[close:]
 open(path, "w", encoding="utf-8", errors="surrogateescape").write(s)
 json.dump(mapped, open(auto_file, "w"))
 open(sniper_file, "w").write("".join("%s\n" % a for a in mapped if games[a] != "scout"))

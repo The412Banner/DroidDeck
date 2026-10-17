@@ -21,8 +21,47 @@ object SessionArtifacts {
 
     const val SCRUBBED_TREE_MARKER = ".scrubbed-tree"
 
+    private val collectingLock = java.util.concurrent.locks.ReentrantLock()
+    private val collectingDone = collectingLock.newCondition()
+    private val collecting = HashSet<File>()
+
+    /** A stopped session's folder from the stop until [collect] has finished it: recovery leaves it alone. */
+    fun collectionStarted(dir: File) {
+        collectingLock.lock()
+        try { collecting.add(dir) } finally { collectingLock.unlock() }
+    }
+
+    private fun collectionDone(dir: File) {
+        collectingLock.lock()
+        try { collecting.remove(dir); collectingDone.signalAll() } finally { collectingLock.unlock() }
+    }
+
+    private fun inFlight(dir: File): Boolean {
+        collectingLock.lock()
+        try { return dir in collecting } finally { collectingLock.unlock() }
+    }
+
+    /** A new session replaces the VAC marker and Steam's logs that a stopped session's [collect] still reads. */
+    fun awaitCollections(timeoutMs: Long = 30_000) {
+        collectingLock.lock()
+        try {
+            var left = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+            while (collecting.isNotEmpty() && left > 0) left = collectingDone.awaitNanos(left)
+        } finally {
+            collectingLock.unlock()
+        }
+    }
+
     /** [steamArch] is the client the stopped session ran; null takes the one in use now. */
     fun collect(context: Context, dir: File, reason: String, steamArch: String? = null) {
+        try {
+            collectNow(context, dir, reason, steamArch)
+        } finally {
+            collectionDone(dir)
+        }
+    }
+
+    private fun collectNow(context: Context, dir: File, reason: String, steamArch: String?) {
         try {
             val wayland = File(dir, "wayland.log")
             if (!wayland.exists()) {
@@ -173,7 +212,7 @@ object SessionArtifacts {
     fun finishAbandoned(context: Context) {
         val parent = LinuxRuntime.logDir(context)
         val abandoned = parent.listFiles { f ->
-            SessionPaths.isSessionFolder(f) && !File(f, COMPLETE_MARKER).exists()
+            SessionPaths.isSessionFolder(f) && !File(f, COMPLETE_MARKER).exists() && !inFlight(f)
         }?.sortedWith(SessionPaths.chronological) ?: return
         if (abandoned.isEmpty()) return
         val current = SessionPaths.current()
