@@ -236,7 +236,10 @@ class SessionService : Service() {
         SessionState.programArgs = intent?.getStringArrayExtra(EXTRA_PROGRAM_ARGS)?.toList().orEmpty()
         SessionState.steamUi = intent?.getStringExtra(EXTRA_STEAM_UI)
         SessionState.steamUrl = intent?.getStringExtra(EXTRA_STEAM_URL)
-        SessionState.running = true
+        synchronized(stopLock) {
+            SessionState.steamClientArch = null
+            SessionState.running = true
+        }
         if (SessionState.stopRequested) {
             stopSession(0)
             return START_NOT_STICKY
@@ -257,9 +260,9 @@ class SessionService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun collectSessionArtifacts(dir: File) {
+    private fun collectSessionArtifacts(dir: File, steamArch: String?) {
         try {
-            SessionArtifacts.collect(this, dir, "session stopped")
+            SessionArtifacts.collect(this, dir, "session stopped", steamArch)
         } finally {
             SessionLogCapture.stopFor(dir)
             SessionPaths.release(this, dir)
@@ -306,6 +309,11 @@ class SessionService : Service() {
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
         killStragglers()
         SessionFiles.stage(this, root)
+        // Stopped and abandoned sessions' reports read Steam logs this session is about to replace, and an
+        // abandoned one the VAC marker (a stopped one kept its own copy).
+        SessionArtifacts.awaitCollections()
+        SessionArtifacts.finishAbandoned(this)
+        VacDiagnostics.arm(this)
         com.droiddeck.launcher.agent.AgentGuest.reset(this)
         com.droiddeck.launcher.stores.gog.GogComet.begin()
         com.droiddeck.launcher.stores.StoreLaunchRequests.start(this)
@@ -558,6 +566,8 @@ class SessionService : Service() {
         guest.add("MESA_DISK_CACHE_DATABASE=1")
         guest.add("GLIBC_TUNABLES=glibc.pthread.rseq=0:glibc.malloc.top_pad=16777216")
         if (SessionState.mode == MODE_STEAM) guest.add("BL_MANGOAPP=" + (if (SessionPrefs.mangoapp(this)) "1" else "0"))
+        SessionState.steamClientArch = if (steamHere) SessionPrefs.steamClientArch(this) else null
+        SessionState.steamClientArch?.let { guest.add("BL_STEAM_CLIENT_ARCH=$it") }
         if (SessionState.mode == MODE_STEAM) {
             guest.add("BL_GAMESCOPE_STRETCH_16X9=" + (if (SessionPrefs.stretch16x9(this)) "1" else "0"))
         }
@@ -798,6 +808,41 @@ class SessionService : Service() {
                     Log.w(TAG, "steam library: ${games.host} private directories could not be prepared", e)
                 }
             }
+        }
+        val x64Libraries = org.json.JSONArray()
+        // Desktop mode offers the x86-64 client whichever is selected; without its card folder here its
+        // own start would drop the card from its library folders.
+        val x64Here = SessionPrefs.steamClientArch(this) == "x86_64" ||
+            (SessionState.mode == MODE_DESKTOP &&
+                com.droiddeck.launcher.storage.SteamStorage.x64ClientPresent(SessionPrefs.steamRoot(this, "x86_64")))
+        if (storageDiagnosticLibrary != null && library != null && x64Here) {
+            val x64 = File(library.path, GameStorage.X64_CARD_DIR)
+            val problem = GameStorage.prepare(this, x64.path)
+            if (problem != null) {
+                Log.w(TAG, "x86-64 steam library: $problem")
+            } else try {
+                val room = if (ProotFastPath.enabled(this)) {
+                    ProotFastPath.MAX_BINDS - LinuxRuntime.binds(this, sessionRoot, runtimeDir, Environment.getExternalStorageDirectory(), binds).size
+                } else Int.MAX_VALUE
+                val extra = SecondaryLibrary.binds(filesDir, x64, listOf(GameStorage.X64_CARD_GUEST)).drop(1)
+                if (extra.size > room) {
+                    Log.w(TAG, "x86-64 steam library: $x64 needs ${extra.size} binds, $room left for the fast path; not a library this session")
+                } else {
+                    binds.addAll(extra)
+                    x64Libraries.put(org.json.JSONObject().put("path", GameStorage.X64_CARD_GUEST).put("label", library.label.replace('"', ' ').replace('\\', ' ')))
+                    Log.i(TAG, "x86-64 steam library: $x64 -> ${GameStorage.X64_CARD_GUEST} (\"${library.label}\")")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "x86-64 steam library: $x64 private directories could not be prepared", e)
+            }
+        }
+        try {
+            val listing = File(filesDir, "session/steam-libraries-x64.json").apply { parentFile?.mkdirs() }
+            listing.writeText(x64Libraries.toString())
+            val envAt = guest.indexOf(LinuxRuntime.SESSION_SCRIPT).takeIf { it >= 0 } ?: guest.size
+            guest.add(envAt, "BL_X64_STEAM_LIBRARIES=" + listing.path)
+        } catch (e: Exception) {
+            Log.w(TAG, "x86-64 steam library: the list could not be written; internal storage alone this session", e)
         }
         try {
             val listing = File(filesDir, "session/steam-libraries.json").apply { parentFile?.mkdirs() }
@@ -1326,9 +1371,11 @@ class SessionService : Service() {
     private fun stopSession(status: Int) {
         cancelQueuedSteamGame()
         completeNativeSleep()
-        synchronized(stopLock) {
+        // What the stopped session's collection reads is taken with the stop, before a new start can reset it.
+        val (ended, endedArch) = synchronized(stopLock) {
             if (!SessionState.running) return
             SessionState.running = false
+            SessionPaths.take() to SessionState.steamClientArch
         }
         xrActivityVisible = false
         updateDownloadMonitoring()
@@ -1352,8 +1399,11 @@ class SessionService : Service() {
         SessionTerminal.clear(sessionGen)
         val controller = suspendController
         suspendController = null
-        val ended = SessionPaths.take()
-        if (ended != null) Thread({ collectSessionArtifacts(ended) }, "session-collect").start()
+        if (ended != null) {
+            VacDiagnostics.snapshot(this, ended)
+            SessionArtifacts.collectionStarted(ended)
+            Thread({ collectSessionArtifacts(ended, endedArch) }, "session-collect").start()
+        }
         components.reversed().forEach {
             try {
                 it.stop()
