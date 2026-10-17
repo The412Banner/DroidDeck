@@ -269,7 +269,7 @@ def decide(app, inner, old):
     if old:
         name = re.search(r'"name"\s*"([^"]*)"', inner[old[1]:old[2]])
         name = name.group(1) if name else ""
-        automatic = name in ("", "droiddeck-direct", "droiddeck-proton-arm64") or name.startswith("proton_")
+        automatic = name in ("", "droiddeck-direct", "droiddeck-proton-arm64", "droiddeck-fex") or name.startswith("proton_")
         if not automatic and app not in extra:
             return None, old, name
         if on_windows and (name == proton or not proton):
