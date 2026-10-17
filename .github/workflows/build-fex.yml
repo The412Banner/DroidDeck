@@ -24,7 +24,7 @@ on:
         default: ''
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -51,10 +51,22 @@ jobs:
             fex.tzst.sha256
             fex-needed.txt
             fex-files.txt
+
+  # Only this job can write: the build above runs third-party images and toolchains with a read-only token.
+  publish:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.cxxflags == ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fex
       - name: Publish
-        if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.cxxflags == ''
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail

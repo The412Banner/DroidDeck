@@ -44,15 +44,19 @@ object DeckyManager {
     fun loader(context: Context) = File(LinuxRuntime.rootDir(context), PATH)
     fun supervisorEnabled(context: Context) = File(LinuxRuntime.rootDir(context), "root/.droiddeck-decky-enabled").isFile
 
-    private fun cefMarkers(context: Context) = CEF_REMOTE_DEBUG_MARKERS.map { File(LinuxRuntime.rootDir(context), it) }
+    /** With [creating], the x86-64 client's marker only once that client is installed: its root alone reads as installed. */
+    private fun cefMarkers(context: Context, creating: Boolean = false) =
+        CEF_REMOTE_DEBUG_MARKERS.map { File(LinuxRuntime.rootDir(context), it) }.filter { marker ->
+            !creating || !marker.path.contains("/.droiddeck-x64/") ||
+                com.droiddeck.launcher.storage.SteamStorage.x64ClientPresent(marker.parentFile ?: marker)
+        }
 
     fun syncCefMarker(context: Context) {
-        val enabled = supervisorEnabled(context)
-        for (marker in cefMarkers(context)) {
-            if (!enabled) {
-                marker.delete()
-                continue
-            }
+        if (!supervisorEnabled(context)) {
+            cefMarkers(context).forEach { it.delete() }
+            return
+        }
+        for (marker in cefMarkers(context, creating = true)) {
             runCatching {
                 marker.parentFile?.mkdirs()
                 marker.createNewFile()
@@ -65,7 +69,7 @@ object DeckyManager {
         if (enabled) {
             marker.parentFile?.mkdirs()
             marker.writeText("enabled\n")
-            cefMarkers(context).forEach { it.parentFile?.mkdirs(); it.createNewFile() }
+            cefMarkers(context, creating = true).forEach { it.parentFile?.mkdirs(); it.createNewFile() }
         } else {
             marker.delete()
             cefMarkers(context).forEach { it.delete() }
@@ -127,7 +131,7 @@ object DeckyManager {
         if (!validElf(temp, release.machine)) { temp.delete(); return context.getString(R.string.deckymgr_not_elf) }
         if (SessionState.running) { temp.delete(); return context.getString(R.string.deckymgr_session_started_loader) }
         if (!temp.setExecutable(true, false)) { temp.delete(); return context.getString(R.string.deckymgr_loader_not_executable) }
-        val cefReady = !supervisorEnabled(context) || cefMarkers(context).all { cefMarker ->
+        val cefReady = !supervisorEnabled(context) || cefMarkers(context, creating = true).all { cefMarker ->
             cefMarker.isFile || runCatching {
                 cefMarker.parentFile?.mkdirs()
                 cefMarker.createNewFile() || cefMarker.isFile

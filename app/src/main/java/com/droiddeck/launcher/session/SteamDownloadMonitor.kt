@@ -12,6 +12,7 @@ internal class SteamDownloadMonitor {
     private var previous = emptyMap<String, ManifestState>()
     private var lastProgressAt = 0L
     private var contentLogOffset = 0L
+    private var contentLog: File? = null
     private val activeContentUpdates = mutableSetOf<String>()
     private var lastContentActivityAt = 0L
     private var lastReceivedBytes = -1L
@@ -43,6 +44,7 @@ internal class SteamDownloadMonitor {
         previous = emptyMap()
         lastProgressAt = 0L
         contentLogOffset = 0L
+        contentLog = null
         activeContentUpdates.clear()
         lastContentActivityAt = 0L
         lastReceivedBytes = -1L
@@ -53,7 +55,9 @@ internal class SteamDownloadMonitor {
         // Either client's (the x86-64 one keeps its own, droiddeck-steam-x64): the newer log is the one in use.
         val log = STEAM_HOMES.map { File(runtimeRoot, "$it/logs/content_log.txt") }.maxByOrNull { it.lastModified() }!!
         if (!log.isFile) return false
-        if (log.length() < contentLogOffset) {
+        // The offset belongs to the log it was read from: another client's log starts over.
+        if (log != contentLog || log.length() < contentLogOffset) {
+            contentLog = log
             contentLogOffset = 0L
             activeContentUpdates.clear()
             lastContentActivityAt = 0L

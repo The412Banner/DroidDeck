@@ -74,8 +74,8 @@ object Library {
     private val LAST_PLAYED = Regex("^\\s*\"LastPlayed\"\\s*\"(\\d+)\"", RegexOption.MULTILINE)
     private val INSTALL_DIR = Regex("^\\s*\"installdir\"\\s*\"([^\"]*)\"", RegexOption.MULTILINE)
 
-    /** The libraries of the Steam client [arch] names ("arm64"/"x86_64"), the selected one by default. */
-    internal fun steamLibraries(context: Context, arch: String = SessionPrefs.steamClientArch(context)): List<Pair<File, String>> {
+    /** The libraries of the Steam client [arch] names ("arm64"/"x86_64"), the running (else selected) one by default. */
+    internal fun steamLibraries(context: Context, arch: String = SessionPrefs.activeSteamClientArch(context)): List<Pair<File, String>> {
         val root = SessionPrefs.steamRoot(context, arch)
         // The x86-64 client keeps libraries of its own; the selected library is the arm64 client's,
         // and the x86-64 client's card library is a folder inside it. The games folders are the
@@ -104,7 +104,7 @@ object Library {
             .firstOrNull { it.isDirectory }
     }
 
-    fun steamGames(context: Context, strictRead: Boolean = false, arch: String = SessionPrefs.steamClientArch(context)): List<SteamGame> {
+    fun steamGames(context: Context, strictRead: Boolean = false, arch: String = SessionPrefs.activeSteamClientArch(context)): List<SteamGame> {
         val root = SessionPrefs.steamRoot(context, arch)
         val cache = File(root, "appcache/librarycache")
         val libraries = steamLibraries(context, arch)
