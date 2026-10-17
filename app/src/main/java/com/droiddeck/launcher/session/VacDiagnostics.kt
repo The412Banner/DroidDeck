@@ -90,7 +90,7 @@ object VacDiagnostics {
                 size.toLongOrNull()?.let { path to it }
             }.toMap()
             val out = File(dir, "vac").apply { mkdirs() }
-            val consoles = consoleLogs(context, arch).filter { it.lastModified() >= since }
+            val consoles = consoleLogs(context, arch).filter { writtenThisSession(it, since, armedSizes) }
             val report = StringBuilder()
             report.appendLine("VAC diagnostics - ${now()}")
             report.appendLine("Read from the game's own console (-condebug) and the Steam client's logs.")
@@ -187,6 +187,10 @@ object VacDiagnostics {
     }
 
     private fun canonical(file: File): String = runCatching { file.canonicalPath }.getOrDefault(file.path)
+
+    /** A log touched just before arming but not since keeps the length the marker recorded for it. */
+    internal fun writtenThisSession(log: File, since: Long, armedSizes: Map<String, Long>): Boolean =
+        log.lastModified() >= since && log.length() != armedSizes[canonical(log)]
 
     /** What was written after [from] (the length at arm; 0 if the file has since shrunk, so was replaced). */
     internal fun tail(file: File, from: Long = 0L): List<String> = try {

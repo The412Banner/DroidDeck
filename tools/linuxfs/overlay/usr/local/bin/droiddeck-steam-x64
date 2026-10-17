@@ -26,7 +26,9 @@ FEX_URL=https://github.com/The412Banner/DroidDeck/releases/download/$FEX_TAG/fex
 ROOTFS_URL=https://rootfs.fex-emu.gg/Ubuntu_24_04/2026-08-11/Ubuntu_24_04.sqsh
 ROOTFS_SHA256=2854b06d3ff1b8f6e526135bfb6dd5b7b30ab3ab73e79ae933a3d9fed959a178
 CDN=https://client-update.fastly.steamstatic.com
-MANIFEST=steam_client_publicbeta_ubuntu12
+# The session starts this client with -clientbeta steamdeck_publicbeta (droiddeck-session steam_channel).
+X64_CHANNEL=steamdeck_publicbeta
+MANIFEST=steam_client_${X64_CHANNEL}_ubuntu12
 
 REAL_HOME=${HOME:-/root}
 X64_HOME=${BL_X64_HOME:-$REAL_HOME/.droiddeck-x64}
@@ -64,7 +66,7 @@ x64_client_parts() {
 
 x64_sync_client() {
   local chan cur version work total i block file sum old
-  chan=$(cat "$STEAM_X64/package/beta" 2>/dev/null || echo steamdeck_publicbeta)
+  chan=$(cat "$STEAM_X64/package/beta" 2>/dev/null || echo "$X64_CHANNEL")
   old=$STEAM_X64/package/steam_client_${chan}_ubuntu12.manifest
   cur=$(awk -F'"' '$2 == "version" { print $4; exit }' "$old" 2>/dev/null || true)
   work=$(mktemp -d)
@@ -447,11 +449,11 @@ if [ ! -x "$STEAM_X64/steamrt64/steam" ] || [ ! -f "$STEAM_X64/package/droiddeck
     unzip -qo "$work/$file" -d "$STEAM_X64"
     rm -f "$work/$file"
   done < "$work/parts"
-  # Where x64_sync_client and x64_exec read the installed build (channel publicbeta), so the
+  # Where x64_sync_client and x64_exec read the installed build ($X64_CHANNEL), so the
   # sync right below and later runs see it current instead of fetching every part again.
   cp -f "$work/manifest" "$STEAM_X64/package/$MANIFEST.manifest"
   rm -rf "$work"
-  echo publicbeta > "$STEAM_X64/package/beta"
+  echo "$X64_CHANNEL" > "$STEAM_X64/package/beta"
   echo "$version" > "$STEAM_X64/package/droiddeck-installed"
   chmod +x "$STEAM_X64/steam.sh" "$STEAM_X64/steamrt64/steam" "$STEAM_X64/ubuntu12_32/steam" 2>/dev/null || true
 fi
@@ -939,7 +941,7 @@ x64_exec() {
   if [ "${BL_X64_X86_WEBHELPER:-0}" != 1 ] && [ -x /usr/local/bin/droiddeck-x64-arm-webhelper ] &&
      [ -x "$ARM_STEAM/steamrtarm64/steamwebhelper" ]; then
     local chan x86_build arm_build
-    chan=$(cat "$STEAM_X64/package/beta" 2>/dev/null || echo publicbeta)
+    chan=$(cat "$STEAM_X64/package/beta" 2>/dev/null || echo "$X64_CHANNEL")
     x86_build=$(awk -F'"' '$2 == "version" { print $4; exit }' "$STEAM_X64/package/steam_client_${chan}_ubuntu12.manifest" 2>/dev/null || true)
     arm_build=$(awk -F'"' '$2 == "version" { print $4; exit }' "$ARM_STEAM/package/steam_client_${chan}_linuxarm64.manifest" 2>/dev/null || true)
     if [ -n "$x86_build" ] && [ "$x86_build" = "$arm_build" ]; then
@@ -1120,11 +1122,11 @@ fi
 # Restart on request (42, as steam.sh does), at most a few times.
 for attempt in 1 2 3 4 5; do
   # The branch on disk must match -clientbeta before every start, or the client loops on rc=42.
-  echo publicbeta > "$STEAM_X64/package/beta"
+  echo "$X64_CHANNEL" > "$STEAM_X64/package/beta"
   step "starting the x86-64 SteamRT3 client under FEX (attempt $attempt): $*"
   rc=0
   if [ "${BL_X64_X86_WEBHELPER:-0}" != 1 ] || x64_webhelper_gpu; then cef=(-cef-force-gpu -cef-ozone-platform=x11 -cef-use-gl=angle -cef-use-angle=vulkan); else cef=(-cef-disable-gpu); fi
-  ( x64_exec -clientbeta publicbeta -no-cef-sandbox "${cef[@]}" "$@" ) >>"$LOG" 2>&1 || rc=$?
+  ( x64_exec -clientbeta "$X64_CHANNEL" -no-cef-sandbox "${cef[@]}" "$@" ) >>"$LOG" 2>&1 || rc=$?
   step "client exited rc=$rc"
   [ "$rc" = 42 ] || break
 done
