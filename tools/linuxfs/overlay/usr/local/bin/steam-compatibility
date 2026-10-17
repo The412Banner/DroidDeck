@@ -810,7 +810,7 @@ def valve_picks(steam_root):
     return sorted(picks, key=int)
 
 
-def native_targets(steam_root, apps, linux_tool=FEX_TOOL):
+def native_targets(steam_root, apps):
     wanted = {str(app) for app in apps if str(app) not in NOT_GAMES}
     if not wanted:
         return {}
@@ -824,7 +824,7 @@ def native_targets(steam_root, apps, linux_tool=FEX_TOOL):
         if "windows" in oslist:
             targets[app] = NATIVE_CHOICE
             continue
-        targets[app] = linux_tool
+        targets[app] = FEX_TOOL
     return targets
 
 
@@ -1187,9 +1187,12 @@ def register_default(config_path, apps=(), protect=(), default=None, catalog=Non
                 default = state.get("default") if state.get("default") in names else TOOL
         steam_root = os.path.dirname(os.path.dirname(os.path.abspath(config_path)))
         overrides = requested_games(game_requests(directory), catalog)
+        native = native_targets(steam_root, set(apps) | set(picks))
+        if linux_tool != FEX_TOOL:
+            native = {app: linux_tool if tool == FEX_TOOL else tool for app, tool in native.items()}
         changes, auto = plan_mapping(
             current, apps, names, default, followers(state, current),
-            native_targets(steam_root, set(apps) | set(picks), linux_tool), picks,
+            native, picks,
             overrides, state.get("auto", {}).keys() if isinstance(state.get("auto"), dict) else (),
             state.get("native", ()))
         for app, tool in changes.items():
