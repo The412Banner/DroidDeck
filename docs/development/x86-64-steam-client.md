@@ -99,10 +99,7 @@ arm64 client down first.
 - **Diagnostics.** `BL_FEX` runs another FEX build (a `DEBUG_STRACE` one, say). `BL_FEXSERVER_LOG`
   starts a FEXServer in the foreground logging there; every FEX process that logs to "server"
   (`FEX_OUTPUTLOG` or an AppConfig) then has its lines tagged with its pid (file logs overwrite each
-  other). `tools/diag/segvlog.c` (`SEGVLOG_FILE`, built for i386 and x86_64 by `build-diag.yml`) writes
-  the fault address, instruction pointer, a frame-pointer backtrace, the stack's words and
-  `/proc/self/maps` on SIGSEGV, SIGBUS or SIGILL, and refuses later handlers (a game's breakpad) once
-  it is armed.
+  other).
 
 ## Web helper on the GPU, QAM/WSI and flicker
 
@@ -238,7 +235,7 @@ alone would then read as an installed client.
 - Source games (`hl2.sh`, `hl2_linux`, `srcds`) get `-condebug` for the VAC diagnostics.
 - **Controllers.** `libfakeinput` is built for x86-64 and preloaded in the rootfs; Big Picture works
   with it. The 32-bit copy crashed Left 4 Dead 2: its fake devices reach the game's own SDL2 through
-  udev with a missing attribute and SDL `strdup()`s the NULL (segvlog: strlen in libc <- `__strdup`
+  udev with a missing attribute and SDL `strdup()`s the NULL (fault backtrace: strlen in libc <- `__strdup`
   <- libSDL2 <- `udev_device_get_sysattr_value`). 32-bit programs get only the session shim. The
   preload line names the x86_64 copy by full path, since with `$LIB` FEX falls through to the
   session's own `/usr/local/lib/i386-linux-gnu` copy.
