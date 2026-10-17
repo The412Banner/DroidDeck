@@ -57,6 +57,16 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 - **FEX hosted by the org**: `fex-2610-r3` is mirrored into Droid-Deck/DroidDeck-Components by its
   `mirror-release.yml`, checked against a new `fex.json` catalog there (Components PR #2), and
   `droiddeck-steam-x64` downloads it from there instead of The412Banner/DroidDeck.
+- **FEX fex-2610-r4** (PR #71 review): without openat2 (proot) FEX opened rootfs paths with absolute
+  symlinks resolved against the arm64 guest, and `libblsession.so` converted every openat2 the same way
+  before FEX saw ENOSYS. `preload/robust.c` now resolves `RESOLVE_IN_ROOT` paths component by component
+  inside the root (59 cases; 100,000-path differential fuzz; new `test_openat2_preload.py`), and patch
+  0001 does the same in FEX. Patch 0003 marks only the host mappings that overlap a failed MAP_32BIT
+  range (the low-2 GB case: about a million mmap tries before, one now). Built with thunks, tagged at the
+  built commit, mirrored into DroidDeck-Components (PR #3). The Steam client setting names the FEX build.
+  The bring-up crash logger (`tools/diag`) left the branch. Device: FEX r4 downloaded on first start,
+  client UI in 23 s (19-33 s before), TF2 played. The first session on the new build drew no SVG fills
+  in Steam's UI (icons blank, outlines and text fine); a restart drew them, cause not found.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
