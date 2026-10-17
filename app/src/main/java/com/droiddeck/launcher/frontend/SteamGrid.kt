@@ -2,7 +2,6 @@ package com.droiddeck.launcher.frontend
 
 import android.content.Context
 import android.util.Log
-import com.droiddeck.launcher.runtime.LinuxRuntime
 import com.droiddeck.launcher.session.SessionPrefs
 import org.json.JSONObject
 import java.io.File
@@ -28,8 +27,7 @@ object SteamGrid {
     }
 
     internal fun dir(context: Context): File? {
-        val root = File(LinuxRuntime.rootDir(context), "root/.local/share/Steam")
-        return AddedGames.accountConfig(root)?.let { File(it, "grid") }
+        return AddedGames.accountConfig(SessionPrefs.activeSteamRoot(context))?.let { File(it, "grid") }
     }
 
     private fun files(grid: File, id: Long, slot: AddedGameArt.Slot): List<File> =

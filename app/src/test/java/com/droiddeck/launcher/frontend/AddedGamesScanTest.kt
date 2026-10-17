@@ -28,6 +28,19 @@ class AddedGamesScanTest {
         assertEquals(listOf("Example"), AddedGames.scan(app).map { it.name })
     }
 
+    @Test fun theX8664ClientsCardLibraryIsNotAGame() {
+        val games = tmp.newFolder("Card")
+        File(games, "Example").mkdirs()
+        File(games, "Example/Example.exe").writeText("game")
+        File(games, "x86-64/steamapps/common/FlatOut").mkdirs()
+        File(games, "x86-64/steamapps/common/FlatOut/FlatOut.exe").writeText("steam game")
+        SessionPrefs.setGameStorage(app, SessionPrefs.GAME_STORAGE_OFF, "")
+        SessionPrefs.setAddedGamesDirs(app, listOf(games.path))
+        assertEquals(listOf("Example"), AddedGames.scan(app).map { it.name })
+        assertTrue(AddedGames.isSteamLibraryFolder("x86-64"))
+        assertFalse(AddedGames.isSteamLibraryFolder("x86-64 games"))
+    }
+
     @Test fun aStorePackageLaunchesTheExecutableItDeclares() {
         val game = tmp.newFolder("Minecraft Dungeons")
         File(game, "Dungeons.exe").writeText("unreal bootstrap")
