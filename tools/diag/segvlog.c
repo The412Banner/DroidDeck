@@ -15,6 +15,7 @@
 static int (*real_sigaction)(int, const struct sigaction *, struct sigaction *);
 static int out = -1;
 static int armed;
+static int probe[2] = {-1, -1};
 
 static void put(const char *s) {
   if (out >= 0) write(out, s, strlen(s));
@@ -62,6 +63,12 @@ static void copy_maps(void) {
   close(fd);
 }
 
+// A word the fault may have left unmapped: write() answers EFAULT where a load would fault again in here.
+static int safe_word(void *const *addr, void **val) {
+  if (probe[1] < 0 || write(probe[1], addr, sizeof *addr) != (ssize_t)sizeof *addr) return 0;
+  return read(probe[0], val, sizeof *val) == (ssize_t)sizeof *val;
+}
+
 static void handler(int sig, siginfo_t *si, void *ctx) {
   ucontext_t *uc = ctx;
 #if defined(__i386__)
@@ -87,14 +94,16 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
 #else
   void **sp = (void **)uc->uc_mcontext.gregs[REG_RSP];
 #endif
-  for (int i = 0; i < 48 && sp; i++)
-    if (sp[i]) line("  sp", sp[i]);
+  for (int i = 0; i < 48 && sp; i++) {
+    void *word;
+    if (!safe_word(sp + i, &word)) break;
+    if (word) line("  sp", word);
+  }
   for (int i = 0; i < 24 && fp && ((unsigned long)fp & 3) == 0; i++) {
-    void *ret = fp[1];
-    if (!ret) break;
+    void *ret, *next;
+    if (!safe_word(fp + 1, &ret) || !ret) break;
     line("  at", ret);
-    void **next = (void **)fp[0];
-    if (next <= fp) break;
+    if (!safe_word(fp, &next) || (void **)next <= fp) break;
     fp = next;
   }
   copy_maps();
@@ -123,6 +132,7 @@ __attribute__((constructor)) static void init(void) {
   if (!real_sigaction) return;
   out = open(f, O_WRONLY | O_CREAT | O_APPEND, 0644);
   if (out < 0) return;
+  if (pipe2(probe, O_CLOEXEC | O_NONBLOCK) != 0) probe[0] = probe[1] = -1;
   struct sigaction sa;
   memset(&sa, 0, sizeof sa);
   sa.sa_sigaction = handler;
