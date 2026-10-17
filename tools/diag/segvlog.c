@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
 #include <ucontext.h>
 #include <unistd.h>
 
@@ -54,7 +55,7 @@ static void line(const char *tag, void *pc) {
 
 static void copy_maps(void) {
   char buf[4096];
-  int fd = open("/proc/self/maps", O_RDONLY);
+  int fd = (int)syscall(SYS_openat, AT_FDCWD, "/proc/self/maps", O_RDONLY | O_CLOEXEC);
   if (fd < 0) return;
   put("--- /proc/self/maps\n");
   ssize_t n;
@@ -130,7 +131,8 @@ __attribute__((constructor)) static void init(void) {
   if (!f) return;
   real_sigaction = dlsym(RTLD_NEXT, "sigaction");
   if (!real_sigaction) return;
-  out = open(f, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  // Raw syscalls: other preloads interpose open(), and the handler must not run their code.
+  out = (int)syscall(SYS_openat, AT_FDCWD, f, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
   if (out < 0) return;
   if (pipe2(probe, O_CLOEXEC | O_NONBLOCK) != 0) probe[0] = probe[1] = -1;
   struct sigaction sa;

@@ -837,7 +837,8 @@ class SessionService : Service() {
         // Desktop mode offers the x86-64 client whichever is selected; without its card folder here its
         // own start would drop the card from its library folders.
         val x64Here = SessionPrefs.steamClientArch(this) == "x86_64" ||
-            (SessionState.mode == MODE_DESKTOP && SessionPrefs.steamRoot(this, "x86_64").isDirectory)
+            (SessionState.mode == MODE_DESKTOP &&
+                com.droiddeck.launcher.storage.SteamStorage.x64ClientPresent(SessionPrefs.steamRoot(this, "x86_64")))
         if (storageDiagnosticLibrary != null && library != null && x64Here) {
             val x64 = File(library.path, GameStorage.X64_CARD_DIR)
             val problem = GameStorage.prepare(this, x64.path)

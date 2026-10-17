@@ -82,6 +82,29 @@ class SteamDownloadMonitorTest {
         }
     }
 
+    @Test fun theOtherClientsLogIsReadFromItsStart() {
+        val root = Files.createTempDirectory("droiddeck-steam-download-").toFile()
+        try {
+            File(root, "root/.local/share/Steam/logs/content_log.txt").apply {
+                check(parentFile?.mkdirs() != false)
+                writeText("[2026-10-06 14:00:00] Client version: 1\n" + "[2026-10-06 14:00:01] nothing to download\n".repeat(20))
+                setLastModified(10_000L)
+            }
+            val monitor = SteamDownloadMonitor()
+            assertFalse(monitor.poll(root, now = 1_000L))
+
+            File(root, "root/.droiddeck-x64/.local/share/Steam/logs/content_log.txt").apply {
+                check(parentFile?.mkdirs() != false)
+                writeText("[2026-10-06 14:44:17] AppID 44 App update changed : Running Update,Downloading,Staging,\n" +
+                    "[2026-10-06 14:44:18] Current download rate: 0.000 Mbps\n".repeat(30))
+                setLastModified(20_000L)
+            }
+            assertTrue(monitor.poll(root, now = 2_000L))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun receivedTrafficBridgesSteamRateLines() {
         val root = Files.createTempDirectory("droiddeck-steam-download-").toFile()
         try {

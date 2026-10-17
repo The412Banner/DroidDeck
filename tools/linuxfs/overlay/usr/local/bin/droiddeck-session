@@ -971,12 +971,14 @@ BUSCONF
       : > "$compat_restarted"
       compat_restarts=0
       compat_settled() {
-        local app m flags r
+        local app m flags r card=/mnt/droiddeck-sd
+        # The x86-64 client's library on the card is its own folder in the arm64 client's, which may hold
+        # the arm64 client's copy of the same title.
+        [ "$steam_x64" = 1 ] && card=/mnt/droiddeck-sd/x86-64
         while read -r app; do
           [ -n "$app" ] || continue
           m=
-          # The x86-64 client's library on the card is its own folder in the arm64 client's.
-          for r in "$steam_root" /mnt/droiddeck-sd $([ "$steam_x64" = 1 ] && echo /mnt/droiddeck-sd/x86-64); do
+          for r in "$steam_root" "$card"; do
             [ -f "$r/steamapps/appmanifest_$app.acf" ] && { m=$r/steamapps/appmanifest_$app.acf; break; }
           done
           [ -n "$m" ] || return 1
