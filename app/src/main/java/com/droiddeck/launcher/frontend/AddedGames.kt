@@ -139,6 +139,10 @@ object AddedGames {
         "appxmanifest.xml" to Regex("<Application\\b[^>]*?\\bExecutable\\s*=\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE),
     )
 
+    /** The card's Steam libraries: the arm64 client's steamapps and the x86-64 client's own folder beside it. */
+    internal fun isSteamLibraryFolder(name: String): Boolean =
+        name.equals("steamapps", ignoreCase = true) || name == com.droiddeck.launcher.session.GameStorage.X64_CARD_DIR
+
     fun scan(context: Context): List<Game> {
         val out = ArrayList<Game>()
         GamesFolderMigration.run(context)
@@ -151,7 +155,7 @@ object AddedGames {
             if (!dir.isDirectory) { Log.w(TAG, "$dir is not a folder; skipped"); continue }
             val steamInstalls = steamInstallDirs(dir)
             for (folder in dir.listFiles { f -> f.isDirectory }?.sortedBy { it.name.lowercase() } ?: emptyList()) {
-                if (folder.name.lowercase() in steamInstalls || folder.name.equals("steamapps", ignoreCase = true)) continue
+                if (folder.name.lowercase() in steamInstalls || isSteamLibraryFolder(folder.name)) continue
                 if (folder.path in removed) continue
                 if (folder.name == "Games" && StoreInstallRoot.roots(context).any { it.absolutePath == folder.absolutePath }) continue
                 scanGame(context, folder, out)
@@ -211,7 +215,7 @@ object AddedGames {
             val base = canonical(dir)
             if (!inside(path, base)) continue
             val first = path.removePrefix("$base/").substringBefore('/')
-            File(dir, first).takeIf { it.isDirectory && first != "steamapps" }?.let { return it }
+            File(dir, first).takeIf { it.isDirectory && !isSteamLibraryFolder(first) }?.let { return it }
         }
         return null
     }
@@ -271,7 +275,7 @@ object AddedGames {
         )
         for (dir in dirs.distinctBy { it.absolutePath }) {
             for (folder in dir.listFiles { f -> f.isDirectory }.orEmpty()) {
-                if (folder.path in removed || folder.name.equals("steamapps", ignoreCase = true)) continue
+                if (folder.path in removed || isSteamLibraryFolder(folder.name)) continue
                 if (folder.name == "Games" && StoreInstallRoot.roots(context).any { it.absolutePath == folder.absolutePath }) continue
                 out.add(canonical(folder))
             }
