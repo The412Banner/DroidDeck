@@ -236,8 +236,10 @@ class SessionService : Service() {
         SessionState.programArgs = intent?.getStringArrayExtra(EXTRA_PROGRAM_ARGS)?.toList().orEmpty()
         SessionState.steamUi = intent?.getStringExtra(EXTRA_STEAM_UI)
         SessionState.steamUrl = intent?.getStringExtra(EXTRA_STEAM_URL)
-        SessionState.steamClientArch = null
-        SessionState.running = true
+        synchronized(stopLock) {
+            SessionState.steamClientArch = null
+            SessionState.running = true
+        }
         if (SessionState.stopRequested) {
             stopSession(0)
             return START_NOT_STICKY
@@ -1369,9 +1371,11 @@ class SessionService : Service() {
     private fun stopSession(status: Int) {
         cancelQueuedSteamGame()
         completeNativeSleep()
-        synchronized(stopLock) {
+        // What the stopped session's collection reads is taken with the stop, before a new start can reset it.
+        val (ended, endedArch) = synchronized(stopLock) {
             if (!SessionState.running) return
             SessionState.running = false
+            SessionPaths.take() to SessionState.steamClientArch
         }
         xrActivityVisible = false
         updateDownloadMonitoring()
@@ -1395,8 +1399,6 @@ class SessionService : Service() {
         SessionTerminal.clear(sessionGen)
         val controller = suspendController
         suspendController = null
-        val ended = SessionPaths.take()
-        val endedArch = SessionState.steamClientArch
         if (ended != null) {
             VacDiagnostics.snapshot(this, ended)
             SessionArtifacts.collectionStarted(ended)
