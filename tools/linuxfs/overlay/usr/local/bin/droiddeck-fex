@@ -422,6 +422,15 @@ def guest_environment(fex, env):
     result["FEX_APP_CONFIG_LOCATION"] = CONFIG_DIR + "/"
     result["FEX_APP_DATA_LOCATION"] = data + "/"
     result["FEX_APP_CACHE_LOCATION"] = CACHE_DIR + "/"
+    # Valve's FEX-Emu keeps its server socket in $STEAM_COMPAT_DATA_PATH/fex-emu/Server whatever
+    # FEX_APP_DATA_LOCATION or FEX_SERVERSOCKETPATH say. Under the app's data folder a game's
+    # compatdata path is past the 108 bytes a socket path may have (Half-Life: 136), so the server
+    # never listened and the game ended at once. FEX's own data folder in the runtime directory is
+    # short enough; the one under HOME is not, so /tmp/fex stands in for it.
+    if result.get("STEAM_COMPAT_DATA_PATH"):
+        short = data if data != DATA_DIR else "/tmp/fex"
+        os.makedirs(short, exist_ok=True)
+        result["STEAM_COMPAT_DATA_PATH"] = short
     result.setdefault("FEX_SILENTLOG", "0")
     result.setdefault("FEX_OUTPUTLOG", "stderr")
     if fex["portable"]:

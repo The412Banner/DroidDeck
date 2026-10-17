@@ -22,7 +22,12 @@ object DeckyManager {
     private const val RELEASES = "https://api.github.com/repos/$REPOSITORY/releases?per_page=30"
     private const val PATH = "root/homebrew/services/PluginLoader"
     private const val VERSION = "root/homebrew/services/.droiddeck-decky-version"
-    private const val CEF_REMOTE_DEBUG_MARKER = "root/.local/share/Steam/.cef-enable-remote-debugging"
+    // In both clients' roots: the session reads it from the one it runs (droiddeck-session), and the
+    // x86-64 client's browser is the arm64 one's, which the loader finds on the same port.
+    private val CEF_REMOTE_DEBUG_MARKERS = listOf(
+        "root/.local/share/Steam/.cef-enable-remote-debugging",
+        "root/.droiddeck-x64/.local/share/Steam/.cef-enable-remote-debugging",
+    )
 
     @Volatile var downloadingBinary = false
         private set
@@ -39,29 +44,31 @@ object DeckyManager {
     fun loader(context: Context) = File(LinuxRuntime.rootDir(context), PATH)
     fun supervisorEnabled(context: Context) = File(LinuxRuntime.rootDir(context), "root/.droiddeck-decky-enabled").isFile
 
+    private fun cefMarkers(context: Context) = CEF_REMOTE_DEBUG_MARKERS.map { File(LinuxRuntime.rootDir(context), it) }
+
     fun syncCefMarker(context: Context) {
-        val marker = File(LinuxRuntime.rootDir(context), CEF_REMOTE_DEBUG_MARKER)
-        if (!supervisorEnabled(context)) {
-            marker.delete()
-            return
-        }
-        runCatching {
-            marker.parentFile?.mkdirs()
-            marker.createNewFile()
+        val enabled = supervisorEnabled(context)
+        for (marker in cefMarkers(context)) {
+            if (!enabled) {
+                marker.delete()
+                continue
+            }
+            runCatching {
+                marker.parentFile?.mkdirs()
+                marker.createNewFile()
+            }
         }
     }
 
     fun setSupervisorEnabled(context: Context, enabled: Boolean) {
         val marker = File(LinuxRuntime.rootDir(context), "root/.droiddeck-decky-enabled")
-        val cefMarker = File(LinuxRuntime.rootDir(context), CEF_REMOTE_DEBUG_MARKER)
         if (enabled) {
             marker.parentFile?.mkdirs()
             marker.writeText("enabled\n")
-            cefMarker.parentFile?.mkdirs()
-            cefMarker.createNewFile()
+            cefMarkers(context).forEach { it.parentFile?.mkdirs(); it.createNewFile() }
         } else {
             marker.delete()
-            cefMarker.delete()
+            cefMarkers(context).forEach { it.delete() }
         }
     }
 
@@ -120,11 +127,12 @@ object DeckyManager {
         if (!validElf(temp, release.machine)) { temp.delete(); return context.getString(R.string.deckymgr_not_elf) }
         if (SessionState.running) { temp.delete(); return context.getString(R.string.deckymgr_session_started_loader) }
         if (!temp.setExecutable(true, false)) { temp.delete(); return context.getString(R.string.deckymgr_loader_not_executable) }
-        val cefMarker = File(LinuxRuntime.rootDir(context), CEF_REMOTE_DEBUG_MARKER)
-        val cefReady = !supervisorEnabled(context) || cefMarker.isFile || runCatching {
-            cefMarker.parentFile?.mkdirs()
-            cefMarker.createNewFile() || cefMarker.isFile
-        }.getOrDefault(false)
+        val cefReady = !supervisorEnabled(context) || cefMarkers(context).all { cefMarker ->
+            cefMarker.isFile || runCatching {
+                cefMarker.parentFile?.mkdirs()
+                cefMarker.createNewFile() || cefMarker.isFile
+            }.getOrDefault(false)
+        }
         if (!cefReady) { temp.delete(); return context.getString(R.string.deckymgr_cef_failed) }
         val staged = File(target.parentFile, "PluginLoader.new")
         staged.delete()
@@ -140,7 +148,7 @@ object DeckyManager {
         old.delete()
         File(target.parentFile, ".droiddeck-decky-version").writeText(release.tag + "\n")
         File(target.parentFile, ".droiddeck-decky-arch").writeText(if (release.machine == 183) "arm64\n" else "x86_64\n")
-        if (!supervisorEnabled(context)) cefMarker.delete()
+        if (!supervisorEnabled(context)) cefMarkers(context).forEach { it.delete() }
         return null
     }
 
@@ -272,7 +280,7 @@ object DeckyManager {
         File(root, PATH).delete()
         File(root, VERSION).delete()
         File(root, "root/homebrew/services/.droiddeck-decky-arch").delete()
-        File(root, CEF_REMOTE_DEBUG_MARKER).delete()
+        CEF_REMOTE_DEBUG_MARKERS.forEach { File(root, it).delete() }
         if (wipeData) File(root, "root/homebrew").deleteRecursively()
     }
 

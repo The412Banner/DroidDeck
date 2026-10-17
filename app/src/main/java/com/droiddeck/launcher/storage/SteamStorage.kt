@@ -46,6 +46,13 @@ object SteamStorage {
         )
     }
 
+    /**
+     * Whether the x86-64 client (droiddeck-steam-x64) was ever installed at [root]: its binary, its
+     * install stamp or a library. The folder alone proves nothing - Decky's marker creates it.
+     */
+    fun x64ClientPresent(root: File): Boolean = File(root, "steamrt64/steam").isFile ||
+        File(root, "package/droiddeck-installed").isFile || File(root, "steamapps").isDirectory
+
     class Listing(val manifests: List<Manifest>, val otherIds: Set<Int>, val complete: Boolean) {
         val ids: Set<Int> get() = manifests.map { it.appId }.toSet() + otherIds
     }
@@ -115,6 +122,19 @@ object SteamStorage {
     }
 
     fun compatToolName(compatibilityToolVdf: String): String? = COMPAT_NAME.find(compatibilityToolVdf)?.groupValues?.get(1)
+
+    private val ARM_IN_NAME = Regex("arm64|aarch64")
+
+    // The x86-64 client ignores a tool named for arm64, so droiddeck-steam-x64 names its wrapper of
+    // each arm64 client's tool with a64 in its place; its CompatToolMapping uses those names.
+    fun x64ToolName(name: String): String = name.replace(ARM_IN_NAME, "a64")
+
+    /** One client's CompatToolMapping and installed games; [x64] reads arm64 tool names as its wrappers'. */
+    class ToolUse(val mappings: Map<String, String>, val installed: Set<String>, val x64: Boolean = false) {
+        private fun key(tool: String) = if (x64) x64ToolName(tool) else tool
+        fun games(tool: String): Int = mappings.count { (app, name) -> name == key(tool) && app in installed }
+        fun isDefault(tool: String): Boolean = mappings["0"] == key(tool)
+    }
 
     fun leftoverId(name: String): Int? = name.toLongOrNull()?.takeIf { it in 1 until (1L shl 31) }?.toInt()
 
