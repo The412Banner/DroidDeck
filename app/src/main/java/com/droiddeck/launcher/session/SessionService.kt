@@ -306,7 +306,8 @@ class SessionService : Service() {
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
         killStragglers()
         SessionFiles.stage(this, root)
-        // Stopped and abandoned sessions' reports read the VAC marker and Steam logs this session is about to replace.
+        // Stopped and abandoned sessions' reports read Steam logs this session is about to replace, and an
+        // abandoned one the VAC marker (a stopped one kept its own copy).
         SessionArtifacts.awaitCollections()
         SessionArtifacts.finishAbandoned(this)
         VacDiagnostics.arm(this)
@@ -1392,6 +1393,7 @@ class SessionService : Service() {
         val ended = SessionPaths.take()
         val endedArch = SessionState.steamClientArch
         if (ended != null) {
+            VacDiagnostics.snapshot(this, ended)
             SessionArtifacts.collectionStarted(ended)
             Thread({ collectSessionArtifacts(ended, endedArch) }, "session-collect").start()
         }

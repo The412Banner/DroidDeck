@@ -76,10 +76,29 @@ object VacDiagnostics {
         }
     }
 
+    private const val SNAPSHOT_MARKER = ".vac-marker"
+    private const val SNAPSHOT_LAUNCHES = ".vac-launches"
+
+    /**
+     * When a session stops, before the next one can [arm]: its marker and launch list go into its own
+     * folder, which [collect] reads however late it runs.
+     */
+    fun snapshot(context: Context, dir: File) {
+        val root = LinuxRuntime.rootDir(context)
+        try {
+            File(root, MARKER).takeIf { it.isFile }?.copyTo(File(dir, SNAPSHOT_MARKER), overwrite = true) ?: return
+            File(root, LAUNCHES).takeIf { it.isFile }?.copyTo(File(dir, SNAPSHOT_LAUNCHES), overwrite = true)
+        } catch (e: Exception) {
+            Log.w(TAG, "could not keep this session's VAC diagnostics state", e)
+        }
+    }
+
     /** At the end of a session, into its folder. Does nothing unless the session was armed. */
     fun collect(context: Context, dir: File) {
         val root = LinuxRuntime.rootDir(context)
-        val marker = File(root, MARKER)
+        val kept = File(dir, SNAPSHOT_MARKER).takeIf { it.isFile }
+        val marker = kept ?: File(root, MARKER)
+        val launchList = if (kept != null) File(dir, SNAPSHOT_LAUNCHES) else File(root, LAUNCHES)
         if (!marker.isFile) return
         try {
             val armed = marker.readLines().map { it.trim() }
@@ -101,7 +120,7 @@ object VacDiagnostics {
             clientFiles(context, arch).forEach { report.appendLine("    $it") }
             report.appendLine()
             report.appendLine("== Game launches this session (from the launch wrapper)")
-            val launches = File(root, LAUNCHES).takeIf { it.isFile }?.readLines().orEmpty().filter { it.isNotBlank() }
+            val launches = launchList.takeIf { it.isFile }?.readLines().orEmpty().filter { it.isNotBlank() }
             if (launches.isEmpty()) report.appendLine("  none - no Windows game was launched through the client")
             launches.forEach { report.appendLine("  " + LogRedactor.redact(it)) }
             report.appendLine()
@@ -128,6 +147,8 @@ object VacDiagnostics {
             if (steamHits.isEmpty()) report.appendLine("  none - the client logged no VAC activity this session")
             steamHits.takeLast(MAX_QUOTED).forEach { report.appendLine("  $it") }
             File(dir, "vac.txt").writeText(report.toString())
+            File(dir, SNAPSHOT_MARKER).delete()
+            File(dir, SNAPSHOT_LAUNCHES).delete()
             Log.i(TAG, "VAC diagnostics: ${consoles.size} console log(s), ${steamHits.size} client VAC line(s), into $dir")
         } catch (e: Exception) {
             Log.w(TAG, "collecting VAC diagnostics", e)
