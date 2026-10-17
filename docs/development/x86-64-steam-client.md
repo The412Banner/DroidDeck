@@ -188,8 +188,9 @@ alone would then read as an installed client.
   reproducible, so a tag is never rebuilt over. The release is never the repo's Latest nor a
   pre-release: it is a component fetched by tag, not something users install.
 - Releases so far: `fex-2609-r2` (no thunks), `fex-2609-r3` (thunks), `fex-2610-r1`, `fex-2610-r2`,
-  `fex-2610-r3` (current). They were built and published in The412Banner/DroidDeck; their tags point at
-  that repository's `main`, not at the commit each was built from (fixed in the workflow since).
+  `fex-2610-r3`, `fex-2610-r4` (current: in-root resolution when openat2 is missing, exact MAP_32BIT
+  marking). They were built and published in The412Banner/DroidDeck; up to r3 their tags point at that
+  repository's `main`, from r4 at the commit each was built from.
 - **Where the app gets it.** The app downloads FEX from Droid-Deck/DroidDeck-Components, where nothing is
   uploaded by hand: a new tag is published by `build-fex.yml`, recorded in that repository's `fex.json`
   (sha256 and size), and brought in by its `mirror-release.yml`, which refuses an archive that does not
