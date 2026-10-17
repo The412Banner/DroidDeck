@@ -320,8 +320,7 @@ class SessionService : Service() {
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
         killStragglers()
         SessionFiles.stage(this, root)
-        // Stopped and abandoned sessions' reports read Steam logs this session is about to replace, and an
-        // abandoned one the VAC marker (a stopped one kept its own copy).
+        // Earlier sessions' reports still read the Steam logs and VAC marker this session replaces.
         SessionArtifacts.awaitCollections()
         SessionArtifacts.finishAbandoned(this)
         VacDiagnostics.arm(this)
@@ -834,8 +833,7 @@ class SessionService : Service() {
             }
         }
         val x64Libraries = org.json.JSONArray()
-        // Desktop mode offers the x86-64 client whichever is selected; without its card folder here its
-        // own start would drop the card from its library folders.
+        // Desktop mode offers the x86-64 client either way; droiddeck-steam-x64 drops library folders it is not given.
         val x64Here = SessionPrefs.steamClientArch(this) == "x86_64" ||
             (SessionState.mode == MODE_DESKTOP &&
                 com.droiddeck.launcher.storage.SteamStorage.x64ClientPresent(SessionPrefs.steamRoot(this, "x86_64")))
@@ -1401,7 +1399,6 @@ class SessionService : Service() {
     private fun stopSession(status: Int) {
         cancelQueuedSteamGame()
         completeNativeSleep()
-        // What the stopped session's collection reads is taken with the stop, before a new start can reset it.
         val (ended, endedArch) = synchronized(stopLock) {
             if (!SessionState.running) return
             SessionState.running = false

@@ -199,7 +199,7 @@ object SessionFiles {
         }
 
         val startupMovie = BootMovie.prepare(context)
-        // The x86-64 client keeps its own Steam folder; its config is left alone until its first start seeds it.
+        // The x86-64 client's config is left alone until its first start creates it.
         val steamRoots = listOf(File(root, "root/.local/share/Steam"), File(root, "root/.droiddeck-x64/.local/share/Steam"))
             .filterIndexed { i, steam -> i == 0 || File(steam, "config").isDirectory }
         for (steam in steamRoots) {

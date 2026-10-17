@@ -52,10 +52,8 @@ internal class SteamDownloadMonitor {
     }
 
     private fun readContentActivity(runtimeRoot: File, now: Long): Boolean {
-        // Either client's (the x86-64 one keeps its own, droiddeck-steam-x64): the newer log is the one in use.
         val log = STEAM_HOMES.map { File(runtimeRoot, "$it/logs/content_log.txt") }.maxByOrNull { it.lastModified() }!!
         if (!log.isFile) return false
-        // The offset belongs to the log it was read from: another client's log starts over.
         if (log != contentLog || log.length() < contentLogOffset) {
             contentLog = log
             contentLogOffset = 0L
@@ -134,7 +132,6 @@ internal class SteamDownloadMonitor {
         const val CONTENT_ACTIVITY_GRACE_MS = 90_000L
         const val MIN_RECEIVE_BYTES_PER_SEC = 64L * 1024L
         val PATH = Regex("\"path\"\\s+\"([^\"]+)\"")
-        /** The arm64 client's Steam folder and the x86-64 client's (droiddeck-steam-x64). */
         val STEAM_HOMES = listOf("root/.local/share/Steam", "root/.droiddeck-x64/.local/share/Steam")
         val CONTENT_UPDATE = Regex("""AppID (\d+) (App|Workshop|Shader) update changed : (.*)""")
         val CURRENT_RATE = Regex("""Current download rate: ([\d.]+) Mbps""")

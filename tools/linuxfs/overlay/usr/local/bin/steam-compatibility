@@ -210,10 +210,7 @@ bl_idtech3() {
 }
 """
 
-# VAC diagnostics (the app's Setup page): a Source-engine game says whether it started VAC-secure
-# only in its own console, and writes that console to <mod>/console.log only with -condebug. Armed
-# per session by the app (~/.droiddeck-vac-diagnostics); each launch is noted for its summary.
-# Nothing else about the launch changes - this only asks the game to keep its own log.
+# Source games report VAC-secure or insecure only in their console, written to console.log only with -condebug.
 BL_VACDIAG_SETUP = """
 bl_vacdiag() {
   [ -f "${HOME:-/root}/.droiddeck-vac-diagnostics" ] || return 0
@@ -222,8 +219,7 @@ bl_vacdiag() {
   for a in "$@"; do case $a in *.exe|*.EXE) exe=$a ;; esac; done
   [ -n "$exe" ] || return 0
   dir=$(dirname "$exe")
-  # Source: <game>/<mod>/gameinfo.txt beside the exe. Source 2: <game>/game/bin/win64/<exe> with
-  # <game>/game/<mod>/gameinfo.gi.
+  # Source: <mod>/gameinfo.txt beside the exe. Source 2: game/bin/win64/<exe> with game/<mod>/gameinfo.gi.
   if ls "$dir"/*/gameinfo.txt >/dev/null 2>&1 || ls "$dir"/../../*/gameinfo.gi >/dev/null 2>&1; then
     case " $* " in
       *" -condebug "*) echo "droiddeck-proton: vac-diag: app $app already has -condebug" >&2 ;;
@@ -1319,9 +1315,7 @@ def x64_repoint(steam_root, tool, live=False):
         set_mapping(tokens, mapping, "0", tool)
     for app, name in current.items():
         named = name.lower()
-        # droiddeck-proton-arm64: the arm64 client's name for its Proton, which this client ignores
-        # (its wrapper is -a64), left by an arm64 compat pass that once ran against it. Repointed even
-        # when that pass also left its tool folder here: a tool named arm64 is never this client's.
+        # A tool named arm64 is never this client's (its wrappers are -a64), so this legacy name is always repointed.
         legacy = named == "droiddeck-proton-arm64"
         if (named.startswith("proton") or legacy) and named != tool.lower() \
                 and (legacy or named not in keep):
@@ -1332,8 +1326,7 @@ def x64_repoint(steam_root, tool, live=False):
     if text != serialize(tokenize(original)):
         write_changed(config, text)
     print("steam-compatibility: x86-64 client's Proton entries point at %s" % tool)
-    # An entry changed while the client runs counts from its next start: the session restarts the
-    # client once the title has installed (droiddeck-session, .bl-compat-pending).
+    # Steam reads a mapping changed while it runs only at its next start; the session restarts it (.bl-compat-pending).
     if moved and live:
         with open(os.path.join(os.path.expanduser("~"), ".bl-compat-pending"), "a") as f:
             f.write("".join("%s\n" % a for a in moved))

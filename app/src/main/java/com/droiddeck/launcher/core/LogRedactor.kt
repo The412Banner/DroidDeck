@@ -69,7 +69,6 @@ object LogRedactor {
 
     fun learnFromRuntime(root: java.io.File) {
         learnOwnAddresses(java.io.File(root, "etc/droiddeck-net"))
-        // Both clients' copies at once (the x86-64 one is droiddeck-steam-x64's), so a missing one drops no names.
         learnAccounts(
             java.io.File(root, "root/.local/share/Steam/config/loginusers.vdf"),
             java.io.File(root, "root/.droiddeck-x64/.local/share/Steam/config/loginusers.vdf"),

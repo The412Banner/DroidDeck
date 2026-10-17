@@ -1,7 +1,3 @@
-// Diagnostic: on SIGSEGV/SIGBUS/SIGILL, write the faulting address, the instruction pointer, a
-// frame-pointer backtrace and the stack's words to $SEGVLOG_FILE as raw addresses, then a copy of
-// /proc/self/maps to resolve them (module+offset) afterwards, then die as before. Later SIGSEGV
-// handlers (the game's breakpad) are refused so this one sees the fault first - only once it is set up.
 // The handler calls only async-signal-safe functions: no dladdr or stdio there.
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -108,8 +104,6 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
     fp = next;
   }
   copy_maps();
-  // Die as the signal would have: default action, then the signal again (delivered on return, as
-  // it is blocked in here; a hardware fault would also recur on the faulting instruction).
   struct sigaction dfl;
   memset(&dfl, 0, sizeof dfl);
   dfl.sa_handler = SIG_DFL;

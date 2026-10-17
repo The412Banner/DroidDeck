@@ -1,15 +1,6 @@
 #!/bin/bash
-# Runs the x86-64 client's own web helper on the GPU (droiddeck-steam-x64 x64_webhelper_gpu; the session
-# shim execs this in place of steamrt64/steamwebhelper via BL_X64_ARM_WEBHELPER).
-#
-# Steam's compositor in the helper draws each browser window (main UI, Quick Access Menu) from that
-# window's X pixmap, so the helper's frames have to reach the X server:
-# - gamescope's WSI layer took the helper's zink swapchains and sent the frames to gamescope instead
-#   (QAM blank until redrawn, black behind it), so it is off here; games keep it.
-# - gamescope sets vk_xwayland_wait_ready=false for its children because its layer does the waiting;
-#   without the layer that let unfinished frames through as black flashes.
-# - zink's kopper swapchain still flashed black on about 1 in 20 menu opens even with the wait; without
-#   kopper none did in 60 opens, at 60 fps instead of ~140.
+# Steam's compositor draws each browser window from its X pixmap: frames must reach X, not gamescope's WSI layer.
+# gamescope sets vk_xwayland_wait_ready=false for its children; kopper swapchains flashed black even with the wait.
 unset BL_X64_ARM_WEBHELPER
 # The shim already added the GPU flags (preload/webhelper.c) to these arguments.
 export BL_WEBHELPER_ARGS=stock DISABLE_GAMESCOPE_WSI=1 vk_xwayland_wait_ready=true LIBGL_KOPPER_DISABLE=true

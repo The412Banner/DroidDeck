@@ -1,10 +1,5 @@
-/* PulseAudio operations that never started, for the x86-64 Steam client.
- *
- * In Deck mode (-steamos3) the x86-64 client's SteamOS audio manager passes libpulse the operation a
- * failed request returned - none - and libpulse aborts the client on it: "Assertion 'o' failed at
- * ../src/pulse/operation.c:136 pa_operation_get_state()" right after start (device, 2026-10-02).
- * A missing operation is answered as cancelled and its unref/cancel ignored; every real one goes
- * to libpulse. Built into the x86 libraries only: the arm64 client does not hit it. */
+/* In Deck mode (-steamos3) the x86-64 client's SteamOS audio manager passes libpulse the NULL operation of a
+ * failed request, and libpulse aborts on it ("Assertion 'o' failed ... pa_operation_get_state()"). */
 #if defined(__x86_64__) || defined(__i386__)
 #define _GNU_SOURCE
 #include <dlfcn.h>
