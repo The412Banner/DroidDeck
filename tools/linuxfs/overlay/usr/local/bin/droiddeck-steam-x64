@@ -521,12 +521,15 @@ VDF
   "commandline" "/run %verb%"
 }
 VDF
+  printf '%s\n' "$REAL_HOME/.droiddeck-vac-diagnostics" > "$tool/vac-marker"
   cat > "$tool/run" <<'RUN'
 #!/bin/sh
 verb=$1; shift
 rt=$HOME/.local/share/Steam/ubuntu12_32/steam-runtime.old
 [ -x "$rt/run.sh" ] || rt=$HOME/.local/share/Steam/ubuntu12_32/steam-runtime
-case "$*" in *hl2.sh*|*hl2_linux*|*srcds*) set -- "$@" -condebug ;; esac
+# -condebug only while VAC diagnostics are on (the marker is in the real home, not this client's).
+marker=$(cat "${0%/*}/vac-marker" 2>/dev/null)
+case "$*" in *hl2.sh*|*hl2_linux*|*srcds*) [ -n "$marker" ] && [ -f "$marker" ] && set -- "$@" -condebug ;; esac
 # game-gpu.env is rewritten whenever the launcher runs; game-gpu.local is the user's and is read after it.
 gpu=$HOME/game-gpu.env
 if [ -f "$gpu" ] && [ "${BL_X64_GAME_SOFTWARE:-0}" != 1 ]; then
