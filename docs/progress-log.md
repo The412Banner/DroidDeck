@@ -67,6 +67,18 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   The bring-up crash logger (`tools/diag`) left the branch. Device: FEX r4 downloaded on first start,
   client UI in 23 s (19-33 s before), TF2 played. The first session on the new build drew no SVG fills
   in Steam's UI (icons blank, outlines and text fine); a restart drew them, cause not found.
+- **Added games**: the scan treated every folder of the card library as a game folder except
+  `steamapps`, so the x86-64 client's `x86-64/` library showed up as a custom game named "x86-64"
+  with the exe of a Steam title installed there (FlatOut). `AddedGames.isSteamLibraryFolder` skips it
+  like `steamapps` in the scan, the exe-to-folder lookup and the folder list (`AddedGamesScanTest`).
+- Rebased onto org main 45513c90; squashed again for a full automated review (personal PR #72,
+  replacing #71).
+- **PR #72 review**: grid art, the content-log monitor, the repair marker, storage leftovers and the
+  VAC diagnostics files are kept per client (the x86-64 client's first art sync was deleting chosen
+  art as "removed in Steam"); the old games-folder migration skips the x86-64 library too.
+- **Which client**: the Games header shows a plain "x86-64" chip while the x86-64 client's list is
+  shown (on its own line in a narrow pane); nothing changes for arm64. The setting reads "Applies next
+  session. FEX 2610 r4" with the choices ARM64 and x86-64 (`GamesClientTagTest`).
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 

@@ -122,7 +122,7 @@ object StorageScan {
             }
         }
         val everyLibraryRead = libs.all { it.listing?.complete == true }
-        val everyId = libs.flatMap { it.listing?.ids.orEmpty() }.toSet()
+        val clientIds = libs.groupBy { it.x64 }.mapValues { (_, own) -> own.flatMap { it.listing?.ids.orEmpty() }.toSet() }
         fun installedGames(x64: Boolean) = libs.filter { it.x64 == x64 }.flatMap { it.manifests.orEmpty() }
             .filter { !SteamStorage.isTool(it) && it.installed }.map { it.appId.toString() }.toSet()
         val armUse = runCatching { SteamStorage.compatMappings(File(steamRoot, "config/config.vdf").readText()) }.getOrNull()
@@ -209,6 +209,7 @@ object StorageScan {
         val leftovers = ArrayList<Leftover>()
         for (lib in libs) {
             if (!everyLibraryRead) break
+            val everyId = clientIds[lib.x64].orEmpty()
             val prefixes = File(lib.data, "steamapps/compatdata").listFiles().orEmpty()
                 .mapNotNull { f -> SteamStorage.leftoverId(f.name)?.takeIf { it !in everyId && f.isDirectory }?.let { it to f } }.toMap()
             val caches = File(lib.data, "steamapps/shadercache").listFiles().orEmpty()

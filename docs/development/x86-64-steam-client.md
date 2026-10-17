@@ -1,9 +1,10 @@
 # x86-64 Steam client
 
 Valve's x86-64 Linux Steam client, run unchanged under FEX beside the default arm64 client. It is
-opt-in: Steam settings, **Steam client: x86-64 (FEX, experimental)** (`steamClientArch`, passed to the
+opt-in: Steam settings, **Steam client: x86-64** (`steamClientArch`, passed to the
 session as `BL_STEAM_CLIENT_ARCH=x86_64`, applies from the next session), or the desktop menu entry
-**Steam x86-64 (FEX, experimental)**. This page records why each workaround exists and what was seen
+**Steam x86-64 (FEX, experimental)**. The Games tab lists the active client's games and tags its
+header "x86-64" while that client's list is shown. This page records why each workaround exists and what was seen
 on devices. The timeline is in `docs/progress-log.md`.
 
 **Why.** The arm64 Linux client never runs VAC: Left 4 Dead 2 and Team Fortress 2 are refused by

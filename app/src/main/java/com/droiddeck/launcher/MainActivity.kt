@@ -400,6 +400,7 @@ class MainActivity : ComponentActivity() {
     }
     private var romsDir by mutableStateOf<String?>(null)
     private var steamGames by mutableStateOf<List<Library.SteamGame>>(emptyList())
+    private var steamGamesX64 by mutableStateOf(false)
     @Volatile private var componentSweepDone = false
     @Volatile private var componentSweepSession: String? = null
     private var emulatorList by mutableStateOf<List<Library.Emulator>>(emptyList())
@@ -727,6 +728,7 @@ class MainActivity : ComponentActivity() {
         frameGenLabel = getString(R.string.frame_gen_off)
         appScale = com.droiddeck.launcher.core.AppUiPrefs.scale(this)
         steamGames = if (shortcutPicker) emptyList() else com.droiddeck.launcher.frontend.LibraryCache.load(this)
+        steamGamesX64 = SessionPrefs.activeSteamClientArch(this) == "x86_64"
         backActionsInverted = SessionPrefs.backActionsInverted(this)
         orientation = SessionPrefs.orientation(this)
         requestedOrientation = orientation
@@ -765,7 +767,7 @@ class MainActivity : ComponentActivity() {
                         offlineAccount = offlineAccount, offline = offline,
                         frameGenLabel = frameGenLabel, romsDir = romsDir, logsEnabled = logsEnabled,
                         vacDiagnostics = vacDiagnostics, agentCommands = agentCommands,
-                        steamGames = steamGames, emulators = emulatorList, running = runningLabel,
+                        steamGames = steamGames, steamGamesX64 = steamGamesX64, emulators = emulatorList, running = runningLabel,
                         frameGen = FrameGen.mode(this),
                         lossless = lossless,
                         pageKey = if (showPerformance) "performance" else if (showComponents) "components" else if (showMapping) "controller-mapping" else null,
@@ -1913,6 +1915,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            val listX64 = SessionPrefs.activeSteamClientArch(this) == "x86_64"
             val games = if (ready) Library.launchableGames(this) else emptyList()
             val all = games.distinctBy { it.gameId }
             if (ready) com.droiddeck.launcher.frontend.LibraryCache.save(this, all)
@@ -1925,6 +1928,7 @@ class MainActivity : ComponentActivity() {
             ui.post {
                 if (scanGeneration == libraryScanGeneration) {
                     val current = steamGames.filter { it.library != Library.ADDED }.associateBy { it.appId }
+                    steamGamesX64 = listX64
                     steamGames = all.map { g ->
                         val newer = current[g.appId]
                         if (newer != null && g.library != Library.ADDED && steamArtRefreshes[g.appId] != artRefreshesAtStart[g.appId]) g.withArt(newer.art, newer.hero, newer.icon) else g

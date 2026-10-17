@@ -211,9 +211,10 @@ bl_idtech3() {
 """
 
 # Source games report VAC-secure or insecure only in their console, written to console.log only with -condebug.
+# The app keeps the switch and the records in /root: the x86-64 client runs games with its own HOME.
 BL_VACDIAG_SETUP = """
 bl_vacdiag() {
-  [ -f "${HOME:-/root}/.droiddeck-vac-diagnostics" ] || return 0
+  [ -f /root/.droiddeck-vac-diagnostics ] || return 0
   [ "${verb:-}" = waitforexitandrun ] || return 0
   local exe= a dir added=no app=${SteamAppId:-${STEAM_COMPAT_APP_ID:-0}}
   for a in "$@"; do case $a in *.exe|*.EXE) exe=$a ;; esac; done
@@ -233,7 +234,7 @@ bl_vacdiag() {
   case " $* " in
     *" -insecure "*) echo "droiddeck-proton: vac-diag: app $app has -insecure in its launch options - it can never be VAC-secure this way" >&2 ;;
   esac
-  printf '%s\tapp %s\tcondebug %s\t%s\n' "$(date +%s)" "$app" "$added" "${exe##*/}" >> "${HOME:-/root}/.droiddeck-vac-launches"
+  printf '%s\tapp %s\tcondebug %s\t%s\n' "$(date +%s)" "$app" "$added" "${exe##*/}" >> /root/.droiddeck-vac-launches
 }
 """
 

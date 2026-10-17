@@ -17,7 +17,6 @@ object SteamRepair {
     }.isSuccess
 
     fun clientShown(context: Context) {
-        unconfirmed(context).delete()
-        x64Unconfirmed(context).delete()
+        (if (SessionPrefs.activeSteamClientArch(context) == "x86_64") x64Unconfirmed(context) else unconfirmed(context)).delete()
     }
 }
