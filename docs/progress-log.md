@@ -50,6 +50,10 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   RTLD_LOCAL (Wine's winepulse.so); segvlog passes faults on to the program's own handlers after logging;
   Lossless's DLL search includes the x86-64 card folder; the log scrubber keeps account names when a
   `loginusers.vdf` cannot be read; build-diag runs with a read-only token.
+- **Org main 97f976ef** (Epic Games Launcher for Linux, #928): rebased onto it. Its new session code
+  launched, restarted and recovered games through `steamrtarm64/steam`, and its added-game shortcut check
+  read the arm64 client's Steam folder; both now use the session's client. Added games marked native are
+  not given a Proton by either client's shortcuts pass.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 

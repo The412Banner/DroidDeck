@@ -348,7 +348,7 @@ object AddedGames {
     }.getOrNull()
 
     fun inSteam(context: Context, appId: Long): Boolean =
-        accountConfig(File(LinuxRuntime.rootDir(context), "root/.local/share/Steam"))?.let { shortcutRecord(it, appId) } != null
+        accountConfig(SessionPrefs.activeSteamRoot(context))?.let { shortcutRecord(it, appId) } != null
 
     private fun shortcutRecord(config: File, appId: Long): JSONObject? = runCatching {
         JSONObject(File(config, ".droiddeck-shortcuts.json").readText()).optJSONObject("games")?.optJSONObject(appId.toString())
