@@ -1658,7 +1658,17 @@ class MainActivity : ComponentActivity() {
                     syncFallback = SessionPrefs.syncFallback(this)
                 },
                 onSteamRepair = { steamRepairQueued = SteamRepair.queue(this) },
-                onSteamClientArch = { id -> SessionPrefs.setSteamClientArch(this, id); steamClientArch = id; refresh() },
+                onSteamClientArch = { id ->
+                    SessionPrefs.setSteamClientArch(this, id)
+                    steamClientArch = id
+                    // Until the scan finishes, the other client's games would launch in this one.
+                    val x64 = SessionPrefs.activeSteamClientArch(this) == "x86_64"
+                    if (x64 != steamGamesX64) {
+                        steamGamesX64 = x64
+                        steamGames = steamGames.filterNot(Library::fromSteamClient)
+                    }
+                    refresh()
+                },
                 onMangoapp = { on -> SessionPrefs.setMangoapp(this, on); mangoapp = on },
                 onSteamController = { id -> SessionPrefs.setSteamController(this, id); steamController = id },
                 onRunSteamAtStartup = { on ->
