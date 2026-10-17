@@ -7,6 +7,40 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 
 ---
 
+## 2026-10-16/17 - `feat/x86-64-steam-client`: web helper on the GPU, org main, review rounds
+
+- **x86-64 web helper on the GPU** (`f603a085`): the client's own steamwebhelper runs ANGLE's GL backend
+  through FEX's GL thunk to zink/Turnip (ANGLE-Vulkan was CPU-bound at 16 fps). No arm64 helper needed.
+- **Quick Access Menu** (`26d80895`): the QAM opened blank until a d-pad press and the screen behind it went
+  black. Steam's compositor draws each browser window from its X pixmap; gamescope's WSI layer took the
+  helper's zink swapchains, so the pixmaps never got frames. The helper now runs with
+  `DISABLE_GAMESCOPE_WSI=1` (games keep the layer). Not FEX: a texture-from-pixmap test behaved the same
+  under FEX and native, so no fex-2610-r4.
+- **Black flashes** (`1b52df77`): gamescope sets `vk_xwayland_wait_ready=false` for its children; without
+  its layer, unfinished frames reached the compositor (3 flashes in 10 QAM opens, screen-recorded and
+  counted frame by frame). The helper waits for frames and presents without kopper: 0 flashes in 60 opens.
+  The x86-64 menus run at 60 fps on that path (Xwayland's per-window timing for child windows); the user
+  chose no flashes over ~140 fps.
+- **Org main**: rebased twice (522e755b, then e95a4226), linear, each final tree checked equal to a plain
+  merge. Main's art picker, grid sync and boot movie follow the selected client (`32bbf79a`).
+- **CodeRabbit** on personal PRs #68 and #69 (full review of 76 files on #69). Fixed: one Steam channel for
+  the x86-64 client; VAC report reads only console logs this session wrote, and a stopped session keeps its
+  own marker; segvlog reads stack words without faulting and opens files with raw syscalls; the x86-64
+  shortcuts pass no longer writes the arm64 client's compat `state.json`; DroidDeck direct mapping in one
+  pass (2000-title fixture: same output, 16.5 s -> 0.2 s); session stop/start handoff under one lock;
+  desktop sessions prepare the x86-64 card library; Decky's x86-64 marker only for an installed client;
+  library follows the running client; download monitor restarts on the other client's log; compat
+  restart reads the x86-64 card folder; CPU pinning sees FEX processes; build-fex has a read-only build
+  job, a separate publish job, never republishes a tag, requires thunks and tags the built commit
+  (`8e2751f9`..`f9de849c`). Skipped with evidence: IPC home for the probes (device: ownership probe
+  succeeds in x86-64 sessions); shortened `STEAM_COMPAT_DATA_PATH` (read before the override).
+- **Device** (5004cf4e): TF2, Half-Life, Borderlands 2 and DiRT Showdown launch and play on the x86-64
+  client; the arm64 client starts. BL2/Half-Life "downloads" were Steam shader pre-caching (6.1 GB Deck
+  `steam_pipeline_cache.foz` for BL2), not game updates. Half-Life is the Windows build in the arm64 client
+  and the Linux build in the x86-64 one, in separate folders.
+- **Next for an org PR**: comments to `AGENTS.md`'s rule (device history moves to
+  `docs/development/x86-64-steam-client.md`), rebase onto 83eda433, fresh squash and review.
+
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
 - **SD card library** (`3fc74f3e`): the x86-64 client had internal storage as its only library, so Steam's
