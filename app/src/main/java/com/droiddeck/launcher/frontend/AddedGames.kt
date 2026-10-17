@@ -312,7 +312,7 @@ object AddedGames {
             val autoName = sidecar?.title ?: identifiedName(folder, found) ?: folder.name
             val crc = CRC32().apply { update(("\"${foundGuest.replaceFirst(Regex("^$LIBRARY/"), "$LEGACY_LIBRARY/")}\"" + autoName).toByteArray()) }.value
             val appId = SessionPrefs.addedGameAppId(context, folder.path, crc or 0x80000000L)
-            val config = accountConfig(File(LinuxRuntime.rootDir(context), "root/.local/share/Steam"))
+            val config = accountConfig(SessionPrefs.activeSteamRoot(context))
             val record = config?.let { shortcutRecord(it, appId) }
             val rev = record?.optInt("rev", 0) ?: 0
             if (sidecar == null && record != null) adoptSteamEdits(context, folder, record)
@@ -348,7 +348,7 @@ object AddedGames {
     }.getOrNull()
 
     fun inSteam(context: Context, appId: Long): Boolean =
-        accountConfig(File(LinuxRuntime.rootDir(context), "root/.local/share/Steam"))?.let { shortcutRecord(it, appId) } != null
+        accountConfig(SessionPrefs.activeSteamRoot(context))?.let { shortcutRecord(it, appId) } != null
 
     private fun shortcutRecord(config: File, appId: Long): JSONObject? = runCatching {
         JSONObject(File(config, ".droiddeck-shortcuts.json").readText()).optJSONObject("games")?.optJSONObject(appId.toString())
