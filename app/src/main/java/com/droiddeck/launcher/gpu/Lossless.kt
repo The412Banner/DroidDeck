@@ -156,6 +156,7 @@ object Lossless {
             File(LinuxRuntime.rootDir(context), "root/.local/share/Steam"),
             File(LinuxRuntime.rootDir(context), "root/.droiddeck-x64/.local/share/Steam"),
             GameStorage.effective(context)?.path?.let(::File),
+            GameStorage.x64CardLibrary(context),
         ) + com.droiddeck.launcher.frontend.AddedGames.roots(context).map { it.host }
         return libraries.map { File(it, STEAM_DLL) }.filter { it.isFile }.maxByOrNull { it.lastModified() }
     }

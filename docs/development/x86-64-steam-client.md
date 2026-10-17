@@ -385,7 +385,9 @@ alone would then read as an installed client.
   session's game detection, CPU pinning and the zRAM watcher read that argument. Steam pins itself and
   its web helper to a few cores, so the session's CPU set is applied again every 5 s.
 - **Live mapping and restarts.** While the client runs, the session's background loop runs
-  `steam-compatibility --x64 --live` and `droiddeck-steam-x64 --map-direct --live`. Steam reads a
+  `steam-compatibility --x64 --live` and `droiddeck-steam-x64 --map-direct --live`, every 15 s and
+  only in the session's first hour (720 beats of 5 s). A title installed after that is mapped when the
+  client exits and takes effect from the next session. Steam reads a
   mapping changed while it runs only at its next start, so changed titles go to `.bl-compat-pending`.
   Once they have installed (`StateFlags` 4 in the client's root or its card folder) and no game runs,
   the client is restarted once per title, at most 3 times a session.

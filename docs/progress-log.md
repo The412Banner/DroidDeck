@@ -38,8 +38,18 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   client; the arm64 client starts. BL2/Half-Life "downloads" were Steam shader pre-caching (6.1 GB Deck
   `steam_pipeline_cache.foz` for BL2), not game updates. Half-Life is the Windows build in the arm64 client
   and the Linux build in the x86-64 one, in separate folders.
-- **Next for an org PR**: comments to `AGENTS.md`'s rule (device history moves to
-  `docs/development/x86-64-steam-client.md`), rebase onto 83eda433, fresh squash and review.
+- **Org readiness** (2026-10-17): org main's rules are a PR with the `Build APK` check (ruleset "Protect main")
+  and `AGENTS.md`'s one line on comments. Comments added by the branch went from about 440 lines to under
+  100, each a non-obvious external constraint; the device history and reasons moved to
+  `docs/development/x86-64-steam-client.md` (code unchanged, checked by stripping comments from both sides).
+  The Steam client setting now says the library is the client's own and the sign-in is shared. Rebased
+  onto 83eda433 (VITURE XR); squashed as personal PR #70, `feat:` title. FEX tags r1-r3 point at personal
+  main, not their build commits; build-fex now tags the built commit and needs thunks to publish.
+- **PR #70 review**: added Linux-only titles in the x86-64 client went to `droiddeck-fex`, a tool that
+  client lacks (now DroidDeck direct, and `droiddeck-fex` is retaken); pulseguard finds a libpulse loaded
+  RTLD_LOCAL (Wine's winepulse.so); segvlog passes faults on to the program's own handlers after logging;
+  Lossless's DLL search includes the x86-64 card folder; the log scrubber keeps account names when a
+  `loginusers.vdf` cannot be read; build-diag runs with a read-only token.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 

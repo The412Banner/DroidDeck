@@ -13,6 +13,14 @@ static int (*real_sigaction)(int, const struct sigaction *, struct sigaction *);
 static int out = -1;
 static int armed;
 static int probe[2] = {-1, -1};
+static int logged;
+// Handlers the program installs run after the log: Wine and JIT runtimes recover from these faults.
+static struct sigaction chained[3];
+static int have_chained[3];
+
+static int fault_index(int sig) {
+  return sig == SIGSEGV ? 0 : sig == SIGBUS ? 1 : sig == SIGILL ? 2 : -1;
+}
 
 static void put(const char *s) {
   if (out >= 0) write(out, s, strlen(s));
@@ -66,7 +74,7 @@ static int safe_word(void *const *addr, void **val) {
   return read(probe[0], val, sizeof *val) == (ssize_t)sizeof *val;
 }
 
-static void handler(int sig, siginfo_t *si, void *ctx) {
+static void log_fault(int sig, siginfo_t *si, void *ctx) {
   ucontext_t *uc = ctx;
 #if defined(__i386__)
   void *pc = (void *)uc->uc_mcontext.gregs[REG_EIP];
@@ -104,6 +112,26 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
     fp = next;
   }
   copy_maps();
+}
+
+static void handler(int sig, siginfo_t *si, void *ctx) {
+  if (logged < 32) {
+    logged++;
+    log_fault(sig, si, ctx);
+  }
+  int i = fault_index(sig);
+  if (i >= 0 && have_chained[i]) {
+    struct sigaction *next = &chained[i];
+    if (next->sa_flags & SA_SIGINFO) {
+      if (next->sa_sigaction) {
+        next->sa_sigaction(sig, si, ctx);
+        return;
+      }
+    } else if (next->sa_handler != SIG_DFL && next->sa_handler != SIG_IGN) {
+      next->sa_handler(sig);
+      return;
+    }
+  }
   struct sigaction dfl;
   memset(&dfl, 0, sizeof dfl);
   dfl.sa_handler = SIG_DFL;
@@ -113,8 +141,18 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
 
 int sigaction(int sig, const struct sigaction *act, struct sigaction *old) {
   if (!real_sigaction) real_sigaction = dlsym(RTLD_NEXT, "sigaction");
-  if (armed && act && (sig == SIGSEGV || sig == SIGBUS || sig == SIGILL) && act->sa_sigaction != handler) {
-    if (old) real_sigaction(sig, NULL, old);
+  int i = fault_index(sig);
+  if (armed && i >= 0 && act && act->sa_sigaction != handler) {
+    if (old) {
+      if (have_chained[i]) *old = chained[i];
+      else real_sigaction(sig, NULL, old);
+    }
+    chained[i] = *act;
+    have_chained[i] = 1;
+    return 0;
+  }
+  if (armed && i >= 0 && !act && old && have_chained[i]) {
+    *old = chained[i];
     return 0;
   }
   return real_sigaction(sig, act, old);
