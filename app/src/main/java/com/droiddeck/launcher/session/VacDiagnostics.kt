@@ -11,44 +11,26 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * VAC diagnostics: what a session can show about whether a game ran VAC-secure, from the files
- * Valve's own software writes - nothing is inferred from our side of the launch.
- *
- * The verdict is the game's to give. A Source-engine game decides secure or insecure once, as it
- * starts, and says so only in its own console ("You are in insecure mode. You must restart before
- * you can connect to secure servers."). That console reaches a file only when the game runs with
- * -condebug, as console.log in the game's mod folder. With this on, the launch wrapper
- * (droiddeck-proton, bl_vacdiag) adds -condebug to Source titles and notes each launch; at the end
- * of the session this copies each console.log written during it into vac/, scrubbed, and writes
- * vac.txt: the game's own secure/insecure lines, any VAC lines in the client's logs, and which
- * client files are present.
- *
- * The SteamLite lesson applies: its "INSECURE - VAC may kick" warning was our own parser reading the
- * wrong log while the client was secure all along. So vac.txt quotes the lines it found and says
- * "inconclusive" when the game never reached a server, rather than guessing either way.
+ * Source games state VAC-secure or insecure only in their console, which reaches a file (console.log in the
+ * mod folder) only with -condebug. The report quotes the lines it found and says inconclusive rather than guessing.
  */
 object VacDiagnostics {
     private const val TAG = "VacDiagnostics"
 
     /**
-     * In the guest's home; the launch wrapper checks for it. Holds the session's start, epoch seconds,
-     * then the Steam client it ran (SessionPrefs.steamClientArch) - the setting can change before the report -
-     * then one line per console.log already there: its length, a tab, its canonical path.
+     * Checked by the launch wrapper. Lines: session start (epoch seconds), the Steam client it ran, then
+     * "length<tab>canonical path" for each console.log already there.
      */
     private const val MARKER = "root/.droiddeck-vac-diagnostics"
 
-    /** One line per game launch the wrapper saw: epoch, app id, -condebug added or not, the exe. */
     private const val LAUNCHES = "root/.droiddeck-vac-launches"
 
-    /** The console log grows across launches and sessions; only what this session added is read, at most this much. */
     private const val CONSOLE_TAIL_BYTES = 4L * 1024 * 1024
 
     private const val MAX_QUOTED = 40
 
     private val INSECURE = Regex("insecure mode", RegexOption.IGNORE_CASE)
-    // "Connecting to" is only an attempt: L4D2 logs it, retries, and then refuses a VAC server with a
-    // dialog ("Connection Blocked: Please remove plug-ins before attempting to connect to a VAC
-    // secured server") that never reaches the console. Only "Connected to" means the game got in.
+    // "Connecting to" is only an attempt: L4D2 refuses a VAC server with a dialog that never reaches the console.
     private val CONNECTED = Regex("^Connected to", RegexOption.IGNORE_CASE)
     private val ATTEMPTED = Regex("^Connecting to", RegexOption.IGNORE_CASE)
     private val NOTABLE = Regex("\\bVAC\\b|secure|Connected to|Connecting to|Disconnect|challenge|game coordinator", RegexOption.IGNORE_CASE)
@@ -56,10 +38,6 @@ object VacDiagnostics {
 
     fun enabled(context: Context): Boolean = SessionPrefs.vacDiagnostics(context)
 
-    /**
-     * At session start, after the scripts are staged: arms the wrapper for this session (or disarms
-     * it) and starts a fresh launch list, so the summary names only games this session ran.
-     */
     fun arm(context: Context) {
         val root = LinuxRuntime.rootDir(context)
         val marker = File(root, MARKER)
@@ -79,10 +57,7 @@ object VacDiagnostics {
     private const val SNAPSHOT_MARKER = ".vac-marker"
     private const val SNAPSHOT_LAUNCHES = ".vac-launches"
 
-    /**
-     * When a session stops, before the next one can [arm]: its marker and launch list go into its own
-     * folder, which [collect] reads however late it runs.
-     */
+    /** Call when a session stops, before the next [arm] replaces its marker and launch list. */
     fun snapshot(context: Context, dir: File) {
         val root = LinuxRuntime.rootDir(context)
         try {
@@ -93,7 +68,6 @@ object VacDiagnostics {
         }
     }
 
-    /** At the end of a session, into its folder. Does nothing unless the session was armed. */
     fun collect(context: Context, dir: File) {
         val root = LinuxRuntime.rootDir(context)
         val kept = File(dir, SNAPSHOT_MARKER).takeIf { it.isFile }
@@ -168,7 +142,7 @@ object VacDiagnostics {
             "Inconclusive - the game never connected to a server. Join a VAC-secured server, then check again."
     }
 
-    /** Every console.log in a Steam library: <game>/<mod>/console.log (Source) and <game>/game/<mod>/console.log (Source 2). */
+    /** Source writes <game>/<mod>/console.log, Source 2 <game>/game/<mod>/console.log. */
     private fun consoleLogs(context: Context, arch: String): List<File> {
         val found = LinkedHashMap<String, File>()
         for (library in libraryRoots(context, arch)) {
@@ -189,7 +163,6 @@ object VacDiagnostics {
         val root = LinuxRuntime.rootDir(context)
         val steam = SessionPrefs.steamRoot(context, arch)
         val roots = mutableListOf(steam)
-        // The x86-64 client's card library is a folder inside the arm64 one's (GameStorage.X64_CARD_DIR).
         (if (arch == "x86_64") GameStorage.x64CardLibrary(context) else GameStorage.effective(context)?.let { File(it.path) })
             ?.let { roots.add(it) }
         runCatching {
@@ -200,7 +173,6 @@ object VacDiagnostics {
         return roots.filter { it.isDirectory }.distinctBy { runCatching { it.canonicalPath }.getOrDefault(it.path) }
     }
 
-    /** "Team Fortress 2-tf": the game folder and the mod, safe as a file name. */
     private fun consoleName(log: File): String {
         val mod = log.parentFile
         val game = mod?.parentFile?.let { if (it.name == "game") it.parentFile else it }
@@ -209,11 +181,9 @@ object VacDiagnostics {
 
     private fun canonical(file: File): String = runCatching { file.canonicalPath }.getOrDefault(file.path)
 
-    /** A log touched just before arming but not since keeps the length the marker recorded for it. */
     internal fun writtenThisSession(log: File, since: Long, armedSizes: Map<String, Long>): Boolean =
         log.lastModified() >= since && log.length() != armedSizes[canonical(log)]
 
-    /** What was written after [from] (the length at arm; 0 if the file has since shrunk, so was replaced). */
     internal fun tail(file: File, from: Long = 0L): List<String> = try {
         RandomAccessFile(file, "r").use { raf ->
             val length = raf.length()
@@ -229,7 +199,6 @@ object VacDiagnostics {
         emptyList()
     }
 
-    /** Which Steam client builds are in the session's client folder - the arm64 one has no VAC module of its own to run. */
     private fun clientFiles(context: Context, arch: String): List<String> {
         val steam = SessionPrefs.steamRoot(context, arch)
         return listOf(

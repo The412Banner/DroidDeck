@@ -22,8 +22,7 @@ object DeckyManager {
     private const val RELEASES = "https://api.github.com/repos/$REPOSITORY/releases?per_page=30"
     private const val PATH = "root/homebrew/services/PluginLoader"
     private const val VERSION = "root/homebrew/services/.droiddeck-decky-version"
-    // In both clients' roots: the session reads it from the one it runs (droiddeck-session), and the
-    // x86-64 client's browser is the arm64 one's, which the loader finds on the same port.
+    // droiddeck-session reads the marker from the root of the client it runs.
     private val CEF_REMOTE_DEBUG_MARKERS = listOf(
         "root/.local/share/Steam/.cef-enable-remote-debugging",
         "root/.droiddeck-x64/.local/share/Steam/.cef-enable-remote-debugging",
@@ -44,7 +43,6 @@ object DeckyManager {
     fun loader(context: Context) = File(LinuxRuntime.rootDir(context), PATH)
     fun supervisorEnabled(context: Context) = File(LinuxRuntime.rootDir(context), "root/.droiddeck-decky-enabled").isFile
 
-    /** With [creating], the x86-64 client's marker only once that client is installed: its root alone reads as installed. */
     private fun cefMarkers(context: Context, creating: Boolean = false) =
         CEF_REMOTE_DEBUG_MARKERS.map { File(LinuxRuntime.rootDir(context), it) }.filter { marker ->
             !creating || !marker.path.contains("/.droiddeck-x64/") ||

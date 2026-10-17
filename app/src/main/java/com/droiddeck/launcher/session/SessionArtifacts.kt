@@ -25,7 +25,7 @@ object SessionArtifacts {
     private val collectingDone = collectingLock.newCondition()
     private val collecting = HashSet<File>()
 
-    /** A stopped session's folder from the stop until [collect] has finished it: recovery leaves it alone. */
+    /** Recovery leaves [dir] alone from the stop until [collect] has finished it. */
     fun collectionStarted(dir: File) {
         collectingLock.lock()
         try { collecting.add(dir) } finally { collectingLock.unlock() }
@@ -41,7 +41,6 @@ object SessionArtifacts {
         try { return dir in collecting } finally { collectingLock.unlock() }
     }
 
-    /** A new session replaces the VAC marker and Steam's logs that a stopped session's [collect] still reads. */
     fun awaitCollections(timeoutMs: Long = 30_000) {
         collectingLock.lock()
         try {
@@ -52,7 +51,6 @@ object SessionArtifacts {
         }
     }
 
-    /** [steamArch] is the client the stopped session ran; null takes the one in use now. */
     fun collect(context: Context, dir: File, reason: String, steamArch: String? = null) {
         try {
             collectNow(context, dir, reason, steamArch)

@@ -72,12 +72,9 @@ object Library {
     private val LAST_PLAYED = Regex("^\\s*\"LastPlayed\"\\s*\"(\\d+)\"", RegexOption.MULTILINE)
     private val INSTALL_DIR = Regex("^\\s*\"installdir\"\\s*\"([^\"]*)\"", RegexOption.MULTILINE)
 
-    /** The libraries of the Steam client [arch] names ("arm64"/"x86_64"), the running (else selected) one by default. */
     internal fun steamLibraries(context: Context, arch: String = SessionPrefs.activeSteamClientArch(context)): List<Pair<File, String>> {
         val root = SessionPrefs.steamRoot(context, arch)
-        // The x86-64 client keeps libraries of its own; the selected library is the arm64 client's,
-        // and the x86-64 client's card library is a folder inside it. The games folders are the
-        // arm64 client's only (the session lists just the card folder to the x86-64 one).
+        // The session gives the x86-64 client only its card folder; the games folders stay the arm64 client's.
         val card = GameStorage.effective(context)
         if (arch == "x86_64") return listOfNotNull(root to "internal", card?.let { File(it.path, GameStorage.X64_CARD_DIR) to it.label })
         return listOfNotNull(
