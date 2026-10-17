@@ -201,6 +201,7 @@ object SessionPrefs {
 
     const val GPU_DRIVERS_AUTO = "auto"
     const val GPU_DRIVERS_MANUAL = "manual"
+    const val GPU_DRIVERS_MIX = "mix"
 
     fun gpuDriverMode(context: Context): String =
         prefs(context).getString("gpuDriverMode", GPU_DRIVERS_AUTO) ?: GPU_DRIVERS_AUTO
@@ -358,6 +359,9 @@ object SessionPrefs {
         prefs(context).edit().putBoolean("gpuClockPin", on).apply()
     }
 
+    /** Whether the game's busiest threads are named to the power HAL for a boost (GameThreadHints). */
+    fun gameThreadHints(context: Context): Boolean = prefs(context).getBoolean("gameThreadHints", true)
+
     fun prootNoSeccomp(context: Context): Boolean = prefs(context).getBoolean("prootNoSeccomp", false)
 
     fun setProotNoSeccomp(context: Context, on: Boolean) {
@@ -493,6 +497,16 @@ object SessionPrefs {
         prefs(context).edit().putString("fexPreset", id).apply()
         runCatching { GameEnvironmentStore.publish(context) }
             .onFailure { android.util.Log.e("GameEnvironment", "Could not update game environment", it) }
+    }
+
+    fun bootMovie(context: Context): String =
+        prefs(context).getString("bootMovie", BootMovie.DROIDDECK_30) ?: BootMovie.DROIDDECK_30
+    fun setBootMovie(context: Context, id: String) { prefs(context).edit().putString("bootMovie", id).apply() }
+    fun bootMovieSound(context: Context): Boolean = prefs(context).getBoolean("bootMovieSound", true)
+    fun setBootMovieSound(context: Context, on: Boolean) { prefs(context).edit().putBoolean("bootMovieSound", on).apply() }
+    fun bootMovieCustomName(context: Context): String? = prefs(context).getString("bootMovieCustomName", null)
+    fun setBootMovieCustomName(context: Context, name: String?) {
+        prefs(context).edit().apply { if (name == null) remove("bootMovieCustomName") else putString("bootMovieCustomName", name) }.apply()
     }
 
     fun runSteamAtStartup(context: Context): Boolean = prefs(context).getBoolean("runSteamAtStartup", false)

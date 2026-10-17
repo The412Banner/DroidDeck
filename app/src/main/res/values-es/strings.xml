@@ -58,7 +58,7 @@
     <string name="game_env_save">Guardar</string>
     <string name="game_env_remove">Quitar</string>
     <string name="game_env_restore">Heredar de nuevo</string>
-    <string name="game_env_reset">Restablecer este perfil</string>
+    <string name="game_env_reset">Borrar los ajustes propios del entorno</string>
     <string name="game_env_unset">Quitar valor en este perfil</string>
     <string name="game_env_empty">Sin variables definidas.</string>
     <string name="game_env_inherited">Heredada</string>
@@ -266,7 +266,7 @@
     <string name="mode_controller_ds4">DualShock 4</string>
     <string name="mode_controller_dualsense">DualSense</string>
     <string name="mode_controller_x360">Mando Xbox 360</string>
-    <string name="mode_controller_note">Deck: botón de Quick Access y giroscopio. Xbox 360: abre Quick Access con Guide+A.</string>
+    <string name="mode_controller_note">Deck: botón de Quick Access y giroscopio. Steam Controller: lo mismo, con detección de agarre en los botones traseros. DualShock 4 y DualSense: giroscopio, y los trackpads como su panel táctil. Xbox 360: abre Quick Access con Guide+A.</string>
     <string name="mode_back">Atrás</string>
     <string name="back_menu_then_qam">Menú → QAM</string>
     <string name="back_qam_then_menu">QAM → Menú</string>
@@ -471,7 +471,7 @@
     <string name="comp_applies_next_game">Se aplica la próxima vez que se inicie un juego</string>
     <string name="comp_import_zip">Importar .zip</string>
     <string name="comp_reading">Leyendo Protons…</string>
-    <string name="comp_no_proton">Aún no hay ningún Proton instalado. Inicia Steam una vez para descargar su Proton ARM64, o añade GE-Proton o CachyOS desde Configuración.</string>
+    <string name="comp_no_proton">Aún no hay ningún Proton instalado. Inicia Steam una vez para descargar su Proton ARM64, o añade GE-Proton, CachyOS o DroidDeck-Proton desde Configuración.</string>
     <string name="comp_original">Original · %1$s</string>
     <string name="comp_this_build">%1$s · esta versión</string>
     <string name="comp_earlier_build">%1$s · versión anterior</string>
@@ -857,7 +857,7 @@
     <string name="gate_eyebrow">Steam</string>
     <string name="gate_lede">Android detiene las apps que inician muchos procesos en segundo plano, y Steam inicia decenas. Hasta que esto cambie, los juegos se cierran sin mostrar ningún error.</string>
     <string name="gate_fix_for_me">Solucionarlo por mí</string>
-    <string name="gate_toggle_steps">Activa “Desactivar restricciones de procesos secundarios” y vuelve. Deja activadas las Opciones de desarrollador o el interruptor se desactivará de nuevo.</string>
+    <string name="gate_toggle_steps">Activa “Inhabilitar restricciones de procesos secundarios” y vuelve. Deja activadas las Opciones de desarrollador o el interruptor se desactivará de nuevo.</string>
     <string name="gate_open_dev">Abrir Opciones de desarrollador</string>
     <string name="gate_no_toggle">Esta versión de Android no tiene un interruptor para ello, así que DroidDeck lo cambia mediante la Depuración inalámbrica. Tarda un minuto y no necesitas ordenador.</string>
     <string name="gate_needs_wifi">La Depuración inalámbrica necesita Wi-Fi. Sirve cualquier red; no necesita internet.</string>
@@ -1023,7 +1023,6 @@
     <string name="gpu_set_with_runtime">Se define junto con el controlador de runtime: %1$s incluye ambos.</string>
     <string name="gpu_runtime_hint">Lo usan los juegos y el escritorio.</string>
     <string name="gpu_runtime_default">Predeterminado del runtime</string>
-    <string name="gpu_display_hint">Dibuja los fotogramas en pantalla. Se aplica al reiniciar DroidDeck.</string>
     <string name="gpu_auto_by_gpu">Auto - elegido según la GPU</string>
     <string name="gpu_manage">Descargar, importar o eliminar…</string>
     <string name="gpu_in_use_caps">EN USO</string>
@@ -1693,7 +1692,6 @@
     <string name="adbpair_done_text">Toca para volver a DroidDeck. Ya puedes desactivar la Depuración inalámbrica.</string>
     <string name="adbpair_title_failed">Se detuvo la configuración de la Depuración inalámbrica</string>
 
-    <string name="selfinst_http">La descarga respondió HTTP %1$d</string>
     <string name="selfinst_size_mismatch">El tamaño de la descarga no coincidía con el APK publicado y se descartó - inténtalo de nuevo</string>
     <string name="selfinst_checksum_mismatch">La descarga no coincidía con su suma de verificación y se descartó - inténtalo de nuevo</string>
     <string name="selfinst_wrong_package">La actualización es para el paquete de Android %1$s, no %2$s</string>
@@ -1791,7 +1789,6 @@
 
     <string name="turnip_rate_limited">Se alcanzó el límite de solicitudes de GitHub - inténtalo más tarde</string>
     <string name="turnip_github_http">GitHub respondió HTTP %1$d</string>
-    <string name="turnip_download_http">la descarga respondió HTTP %1$d</string>
     <string name="turnip_list_predates_checksums">Esta lista de controladores es anterior a las sumas de verificación - actualízala e inténtalo de nuevo</string>
     <string name="turnip_checksum_mismatch">La suma de verificación no coincide - se descartó la descarga</string>
     <string name="turnip_not_adrenotools">No es un controlador de AdrenoTools: %1$s</string>
@@ -1828,7 +1825,7 @@
     <string name="phantom_instructions_fix">%1$s Si no es posible, conecta este dispositivo a un ordenador con ADB y ejecuta el comando de abajo. Después vuelve aquí y comprueba de nuevo.</string>
     <string name="phantom_instructions_off">Ya se pueden iniciar sesiones de Steam.</string>
     <string name="phantom_instructions_not_applicable">Esta versión de Android no usa este límite.</string>
-    <string name="phantom_fix_toggle">Activa “Desactivar restricciones de procesos secundarios” en Opciones de desarrollador y deja activadas las Opciones de desarrollador después.</string>
+    <string name="phantom_fix_toggle">Activa “Inhabilitar restricciones de procesos secundarios” en Opciones de desarrollador y deja activadas las Opciones de desarrollador después.</string>
     <string name="phantom_fix_no_toggle">Esta versión de Android no tiene un interruptor para ello. Usa la Depuración inalámbrica para cambiarlo desde este dispositivo.</string>
     <string name="upd_block_no_apk">Esta versión no tiene descarga para esta copia de DroidDeck.</string>
     <string name="upd_block_version_code">Android no la instalará sobre esta versión porque su versionCode %1$d es inferior al %2$d instalado.</string>
@@ -2264,12 +2261,9 @@
     <string name="cardboard_recenter_button">Recentrar</string>
     <string name="cardboard_steamvr">SteamVR (experimental)</string>
     <string name="cardboard_steamvr_install">Instalar</string>
-    <string name="cardboard_steamvr_install_hint">Descarga SteamVR para ARM64 de Valve (571 MB).</string>
     <string name="cardboard_steamvr_installing">Descargando y descomprimiendo SteamVR…</string>
     <string name="cardboard_steamvr_start">Iniciar</string>
-    <string name="cardboard_steamvr_ready_hint">Ejecuta SteamVR usando tu cabeza como visor; la imagen cambia a 3D lado a lado.</string>
     <string name="cardboard_steamvr_stop">Detener</string>
-    <string name="cardboard_steamvr_running_hint">SteamVR está en ejecución.</string>
     <string name="cardboard_steamvr_unavailable">No disponible en esta sesión.</string>
     <string name="cardboard_steamvr_failed">SteamVR no respondió; revisa el registro de la sesión.</string>
     <string name="drawer_component_downloads">Descargar componentes</string>
@@ -2281,4 +2275,21 @@
     <string name="stores_storage_insufficient">No hay suficiente espacio libre: se necesitan %1$s y solo hay %2$s libres</string>
     <string name="stores_storage_low">Espacio insuficiente (%1$s libres, se necesitan %2$s)</string>
     <string name="stores_target_free_unknown">Espacio libre desconocido</string>
+    <string name="boot_movie">Vídeo de arranque</string>
+    <string name="boot_movie_video">Vídeo</string>
+    <string name="boot_movie_droiddeck">DroidDeck · %1$d fps</string>
+    <string name="boot_movie_note">60 fps se ve más fluido pero usa más CPU mientras Steam se inicia. Un vídeo de inicio elegido en los ajustes de Steam tiene prioridad.</string>
+    <string name="boot_movie_sound">Sonido</string>
+    <string name="boot_movie_custom">Tu propio vídeo</string>
+    <string name="boot_movie_custom_hint">MP4, MOV, MKV o WebM. Otros formatos y archivos de más de %1$d MB se convierten a WebM 720p en el dispositivo, hasta %2$d segundos.</string>
+    <string name="boot_movie_import">Importar</string>
+    <string name="boot_movie_remove">Quitar</string>
+    <string name="boot_movie_pick">Elige un vídeo de arranque</string>
+    <string name="boot_movie_imported">%1$s es ahora el vídeo de arranque</string>
+    <string name="boot_movie_imported_silent">%1$s es ahora el vídeo de arranque, sin sonido</string>
+    <string name="boot_movie_too_long">Los vídeos que hay que convertir deben durar %1$d segundos o menos</string>
+    <string name="boot_movie_converting">Convirtiendo %1$d %%</string>
+    <string name="boot_movie_converting_started">Convirtiendo %1$s para Steam. Mantén DroidDeck abierto.</string>
+    <string name="boot_movie_unsupported">Este dispositivo no puede decodificar ese vídeo.</string>
+    <string name="boot_movie_import_failed">No se pudo importar ese vídeo</string>
 </resources>
