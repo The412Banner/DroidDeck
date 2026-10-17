@@ -18,7 +18,7 @@ internal class SteamDownloadMonitor {
     private var lastReceivedBytes = -1L
     private var lastReceivedAt = 0L
 
-    fun poll(runtimeRoot: File, now: Long = System.currentTimeMillis(), receivedBytes: Long = -1L): Boolean {
+    fun poll(runtimeRoot: File, now: Long = System.currentTimeMillis(), receivedBytes: Long = -1L, client: String? = null): Boolean {
         val current = manifests(runtimeRoot).associate { it.path to read(it) }
         val progressed = current.any { (path, state) ->
             state.incomplete && state.bytesDownloaded > (previous[path]?.bytesDownloaded ?: state.bytesDownloaded)
@@ -28,7 +28,7 @@ internal class SteamDownloadMonitor {
         val manifestActive = progressed || lastProgressAt > 0L && now - lastProgressAt <= MANIFEST_PROGRESS_GRACE_MS &&
             current.values.any { it.incomplete }
         if (receiving(receivedBytes, now)) lastContentActivityAt = now
-        return manifestActive || readContentActivity(runtimeRoot, now)
+        return manifestActive || readContentActivity(runtimeRoot, now, client)
     }
 
     private fun receiving(receivedBytes: Long, now: Long): Boolean {
@@ -51,8 +51,9 @@ internal class SteamDownloadMonitor {
         lastReceivedAt = 0L
     }
 
-    private fun readContentActivity(runtimeRoot: File, now: Long): Boolean {
-        val log = STEAM_HOMES.map { File(runtimeRoot, "$it/logs/content_log.txt") }.maxByOrNull { it.lastModified() }!!
+    private fun readContentActivity(runtimeRoot: File, now: Long, client: String?): Boolean {
+        val homes = client?.let { listOf(if (it == "x86_64") STEAM_HOMES[1] else STEAM_HOMES[0]) } ?: STEAM_HOMES
+        val log = homes.map { File(runtimeRoot, "$it/logs/content_log.txt") }.maxByOrNull { it.lastModified() }!!
         if (!log.isFile) return false
         if (log != contentLog || log.length() < contentLogOffset) {
             contentLog = log

@@ -1631,6 +1631,7 @@ class SessionService : Service() {
                 downloadActive = steamDownloadMonitor.poll(
                     LinuxRuntime.rootDir(this@SessionService),
                     receivedBytes = TrafficStats.getUidRxBytes(android.os.Process.myUid()),
+                    client = SessionState.steamClientArch,
                 )
                 if (wasActive != downloadActive) refreshNotification()
                 updateSuspendPolicy()
