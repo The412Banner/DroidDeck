@@ -11,8 +11,9 @@ VAC-secured servers ("Connection Blocked ... VAC secured server") and no client 
 modules are x86 code. Under FEX the x86-64 client has a module it can run, as SteamLite does in Wine.
 
 **Layout.** Everything lives in its own home, `$X64_HOME` (`BL_X64_HOME`, default `~/.droiddeck-x64`):
-its own `~/.steam` links, config, libraries, x86 rootfs and log (`steam-x64.log`). Only the sign-in is
-shared. One client runs at a time, since both use the same account; the standalone launcher shuts the
+its own `~/.steam` links, config, libraries, x86 rootfs and log (`steam-x64.log`). Shared with the arm64
+client: the sign-in, and its `config/uioverrides` (Steam's startup movie overrides), which the x86 client
+links. One client runs at a time, since both use the same account; the standalone launcher shuts the
 arm64 client down first.
 
 | Command | Does |
@@ -380,7 +381,8 @@ alone would then read as an installed client.
   failed at ../src/pulse/operation.c:136 pa_operation_get_state()", the runtime's PulseAudio 13).
   `preload/pulseguard.c` (x86 builds only; the arm64 client does not hit it) answers a missing operation
   as cancelled and ignores its unref and cancel. The session passes `-steamdeck -steamos3` unless
-  `BL_X64_DECK=0`. Switch to Desktop works: an x86 shell under FEX runs `steamos-session-select`.
+  `BL_X64_DECK=0`. Switch to Desktop is expected to need no change (an x86 shell under FEX runs
+  `steamos-session-select`); the full switch has not been tested on a device.
 - **Process names.** Under FEX a process's argv[0] is FEX and the program is its first argument. The
   session's game detection, CPU pinning and the zRAM watcher read that argument. Steam pins itself and
   its web helper to a few cores, so the session's CPU set is applied again every 5 s.
