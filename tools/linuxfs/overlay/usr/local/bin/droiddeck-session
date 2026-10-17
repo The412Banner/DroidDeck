@@ -1034,7 +1034,9 @@ BUSCONF
         steam_check_exits
         if [ "$beat" -le 720 ] && [ -n "${BL_CLIENT_CPUS:-}" ]; then
           for _d in /proc/[0-9]*; do
-            IFS= read -r -d '' _c < "$_d/cmdline" 2>/dev/null || continue
+            { IFS= read -r -d '' _c && { IFS= read -r -d '' _c1 || _c1=; }; } < "$_d/cmdline" 2>/dev/null || continue
+            # The x86-64 client and its web helper run as FEX <program>.
+            case $_c in FEX|*/FEX) _c=$_c1 ;; esac
             case $_c in *steamwebhelper*|*steamrtarm64/steam|*steamrt64/steam|*gamescope*) ;; *) continue ;; esac
             _t=("$_d"/task/*)
             _p=${_d#/proc/}
