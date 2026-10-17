@@ -225,6 +225,7 @@ object VacDiagnostics {
             String(bytes, Charsets.UTF_8).lines().let { if (start > since) it.drop(1) else it }
         }
     } catch (e: Exception) {
+        Log.w(TAG, "could not read ${file.name}", e)
         emptyList()
     }
 
