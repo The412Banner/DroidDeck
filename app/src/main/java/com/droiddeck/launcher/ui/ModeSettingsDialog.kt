@@ -150,6 +150,21 @@ class ModeSettingsActions(
     val onDismiss: () -> Unit,
 )
 
+/** "2610 r3" from droiddeck-steam-x64's FEX_TAG line (fex-2610-r3), the build the x86-64 client downloads. */
+internal fun fexVersionOf(script: String): String? =
+    Regex("""(?m)^FEX_TAG=fex-(\d+)-r(\d+)\s*$""").find(script)?.let { "${it.groupValues[1]} r${it.groupValues[2]}" }
+
+@Composable
+private fun x64FexVersion(context: android.content.Context): String? = remember {
+    runCatching {
+        context.assets.open("linuxfs/usr/local/bin/droiddeck-steam-x64").bufferedReader().use { fexVersionOf(it.readText()) }
+    }.getOrNull()
+}
+
+@Composable
+private fun clientArchHint(hint: String, fex: String?): String =
+    if (fex == null) hint else hint + " " + stringResource(R.string.mode_client_arch_fex, fex)
+
 internal fun modeSheetTabs(steam: Boolean): List<String> =
     if (steam) listOf(SheetTab.STEAM, SheetTab.DISPLAY, SheetTab.CONTROLS, SheetTab.AUDIO, SheetTab.SESSION, SheetTab.LIBRARY)
     else listOf(SheetTab.DISPLAY, SheetTab.CONTROLS, SheetTab.SESSION)
@@ -438,7 +453,8 @@ fun ModeSheetRows(s: ModeSettings, a: ModeSettingsActions, tab: String, extras: 
                 SecondaryButton(stringResource(R.string.mode_steam_repair_button), enabled = !s.steamRepairQueued, onClick = a.onSteamRepair)
             }
             if (s.steamClientArch != null) ChoiceRow(
-                host, "clientArch", stringResource(R.string.mode_client_arch), stringResource(R.string.mode_client_arch_hint),
+                host, "clientArch", stringResource(R.string.mode_client_arch),
+                clientArchHint(stringResource(R.string.mode_client_arch_hint), x64FexVersion(LocalContext.current)),
                 listOf("arm64" to stringResource(R.string.mode_client_arch_arm64), "x86_64" to stringResource(R.string.mode_client_arch_x64)), s.steamClientArch,
                 onPick = a.onSteamClientArch,
             )
