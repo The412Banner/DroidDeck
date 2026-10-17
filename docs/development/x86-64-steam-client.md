@@ -173,7 +173,11 @@ alone would then read as an installed client.
 - Patches in `tools/fex/patches`:
   - `0001-openat2-enosys-fallback`: our proot answers `openat2` with ENOSYS (`tools/proot/PATCHES.md`,
     0008). FEX opened every rootfs path with `openat2(RESOLVE_IN_ROOT)` and fell through to the arm64
-    guest on anything but EXDEV; x86 bash could not find libtinfo.
+    guest on anything but EXDEV; x86 bash could not find libtinfo. Since r4 the fallback resolves the
+    path inside the rootfs itself (absolute symlinks restart at the rootfs, as `RESOLVE_IN_ROOT` does);
+    before, they resolved against the arm64 guest. `libblsession.so` (`preload/robust.c`) answers
+    `openat2` first in practice and does the same walk for `RESOLVE_IN_ROOT` callers, so Valve's FEX-Emu
+    on the arm64 client gets it too. Each path component is then its own system call.
   - `0002-thunkgen-newer-clang`: the container's newer clang has no `FileManager::clearStatCache()`,
     which the thunk generator called after each run.
   - `0003-allocator32-map32bit-exhaustion`: Counter-Strike 2 reserves the low 2 GB with `MAP_32BIT`
