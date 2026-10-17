@@ -306,7 +306,8 @@ class SessionService : Service() {
         val runtimeDir = File(filesDir, ".wayland-rt").apply { mkdirs() }
         killStragglers()
         SessionFiles.stage(this, root)
-        // An abandoned session's report reads the VAC marker and Steam logs that this session is about to replace.
+        // Stopped and abandoned sessions' reports read the VAC marker and Steam logs this session is about to replace.
+        SessionArtifacts.awaitCollections()
         SessionArtifacts.finishAbandoned(this)
         VacDiagnostics.arm(this)
         com.droiddeck.launcher.agent.AgentGuest.reset(this)
@@ -1390,7 +1391,10 @@ class SessionService : Service() {
         suspendController = null
         val ended = SessionPaths.take()
         val endedArch = SessionState.steamClientArch
-        if (ended != null) Thread({ collectSessionArtifacts(ended, endedArch) }, "session-collect").start()
+        if (ended != null) {
+            SessionArtifacts.collectionStarted(ended)
+            Thread({ collectSessionArtifacts(ended, endedArch) }, "session-collect").start()
+        }
         components.reversed().forEach {
             try {
                 it.stop()
