@@ -2320,8 +2320,8 @@
     <string name="load_starting_steam_x64">Steam x86-64 시작 중</string>
     <string name="storage_game_x64">%1$s · x86-64</string>
     <string name="storage_tool_x64_client">x86-64 Steam 클라이언트에서 사용</string>
-    <string name="storage_uninstall_in_x64">이 사본은 x86-64 Steam 클라이언트에 있습니다. Steam 클라이언트에서 x86-64을(를) 선택한 다음 여기에서 제거하세요.</string>
-    <string name="storage_uninstall_in_arm64">이 사본은 ARM64 Steam 클라이언트에 있습니다. Steam 클라이언트에서 ARM64을(를) 선택한 다음 여기에서 제거하세요.</string>
+    <string name="storage_uninstall_in_x64">이 사본은 x86-64 Steam 클라이언트에 있습니다. Steam 클라이언트에서 x86-64를 선택한 다음 여기에서 제거하세요.</string>
+    <string name="storage_uninstall_in_arm64">이 사본은 ARM64 Steam 클라이언트에 있습니다. Steam 클라이언트에서 ARM64를 선택한 다음 여기에서 제거하세요.</string>
     <string name="drawer_page_glasses">안경</string>
     <string name="glasses_open">VITURE 안경</string>
     <string name="glasses_control">안경 제어</string>
