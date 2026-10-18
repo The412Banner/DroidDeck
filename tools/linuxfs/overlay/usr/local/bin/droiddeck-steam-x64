@@ -3,7 +3,7 @@ set -eu
 FEX_TAG=fex-2610-r4
 FEX_SHA256=0b8b55b663390e35a85871bbd32985bf5ee4f9fbf3a70906255d914ad0257cdf
 FEX_URL=https://github.com/Droid-Deck/DroidDeck-Components/releases/download/$FEX_TAG/fex.tzst
-ROOTFS_URL=https://rootfs.fex-emu.gg/Ubuntu_24_04/2026-08-11/Ubuntu_24_04.sqsh
+ROOTFS_URL=https://github.com/Droid-Deck/DroidDeck-Components/releases/download/fex-rootfs-ubuntu-24.04-2026-08-11/Ubuntu_24_04.sqsh
 ROOTFS_SHA256=2854b06d3ff1b8f6e526135bfb6dd5b7b30ab3ab73e79ae933a3d9fed959a178
 CDN=https://client-update.fastly.steamstatic.com
 # Must match the -clientbeta droiddeck-session starts this client with (steam_channel).
