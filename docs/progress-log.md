@@ -106,6 +106,11 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   Team Fortress 2 launched from the Games tab with the x86-64 client selected: the session started
   the client, handed it app 440 and the Linux build (`tf_linux64` under FEX) took focus about 60 s
   after the tap.
+- **Translations**: the branch's 11 strings (the Steam client setting and its values, VAC diagnostics,
+  the x86-64 loading title and the Storage labels) are in all 31 other locales, after
+  `stores_registering` as in the English file, reusing each locale's wording for "Steam client",
+  "Session logs" and "Uninstall" and its formal or informal address. Every file parses, every
+  translation keeps its English placeholders, and no locale has a key the English file lacks.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
