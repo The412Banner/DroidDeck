@@ -97,6 +97,8 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 - A scan reads the client it tagged the cache with (`Library.launchableGames(arch = ...)`), so a switch
   during a scan cannot pair one client's games with the other's tag; a failed rename drops the cache
   instead of leaving the previous list behind (`LibraryArchTest`).
+- The next review of PR #72 (a2552c58) had no findings; every review thread is resolved. Device: 43f9a8a8
+  installed.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
