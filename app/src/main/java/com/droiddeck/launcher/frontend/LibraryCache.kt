@@ -9,6 +9,10 @@ import java.io.File
 object LibraryCache {
     private const val TAG = "LibraryCache"
     private fun file(context: Context) = File(context.filesDir, "library-cache.json")
+    private fun clientFile(context: Context) = File(context.filesDir, "library-cache-client")
+
+    /** Whether the cached Steam games are the x86-64 client's; caches written before it existed are arm64's. */
+    fun listedX64(context: Context): Boolean = runCatching { clientFile(context).readText().trim() == "x86_64" }.getOrDefault(false)
 
     fun load(context: Context): List<Library.SteamGame> = runCatching {
         val f = file(context)
@@ -27,7 +31,7 @@ object LibraryCache {
         }
     }.getOrElse { e -> Log.w(TAG, "unreadable, ignored: ${e.message}"); emptyList() }
 
-    fun save(context: Context, games: List<Library.SteamGame>) {
+    fun save(context: Context, games: List<Library.SteamGame>, x64: Boolean? = null) {
         runCatching {
             val array = JSONArray()
             for (g in games) array.put(
@@ -40,6 +44,7 @@ object LibraryCache {
             val tmp = File(f.path + ".tmp")
             tmp.writeText(array.toString())
             tmp.renameTo(f)
+            x64?.let { clientFile(context).writeText(if (it) "x86_64" else "arm64") }
         }.onFailure { e -> Log.w(TAG, "not saved: ${e.message}") }
     }
 

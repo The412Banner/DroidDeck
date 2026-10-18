@@ -728,7 +728,7 @@ class MainActivity : ComponentActivity() {
         frameGenLabel = getString(R.string.frame_gen_off)
         appScale = com.droiddeck.launcher.core.AppUiPrefs.scale(this)
         steamGames = if (shortcutPicker) emptyList() else com.droiddeck.launcher.frontend.LibraryCache.load(this)
-        steamGamesX64 = SessionPrefs.activeSteamClientArch(this) == "x86_64"
+        steamGamesX64 = com.droiddeck.launcher.frontend.LibraryCache.listedX64(this)
         backActionsInverted = SessionPrefs.backActionsInverted(this)
         orientation = SessionPrefs.orientation(this)
         requestedOrientation = orientation
@@ -1658,17 +1658,7 @@ class MainActivity : ComponentActivity() {
                     syncFallback = SessionPrefs.syncFallback(this)
                 },
                 onSteamRepair = { steamRepairQueued = SteamRepair.queue(this) },
-                onSteamClientArch = { id ->
-                    SessionPrefs.setSteamClientArch(this, id)
-                    steamClientArch = id
-                    // Until the scan finishes, the other client's games would launch in this one.
-                    val x64 = SessionPrefs.activeSteamClientArch(this) == "x86_64"
-                    if (x64 != steamGamesX64) {
-                        steamGamesX64 = x64
-                        steamGames = steamGames.filterNot(Library::fromSteamClient)
-                    }
-                    refresh()
-                },
+                onSteamClientArch = { id -> SessionPrefs.setSteamClientArch(this, id); steamClientArch = id; refresh() },
                 onMangoapp = { on -> SessionPrefs.setMangoapp(this, on); mangoapp = on },
                 onSteamController = { id -> SessionPrefs.setSteamController(this, id); steamController = id },
                 onRunSteamAtStartup = { on ->
@@ -1885,6 +1875,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refresh() {
+        // Until the scan finishes, the other client's games would launch in this one.
+        val listX64 = SessionPrefs.activeSteamClientArch(this) == "x86_64"
+        if (listX64 != steamGamesX64) {
+            steamGamesX64 = listX64
+            steamGames = steamGames.filterNot(Library::fromSteamClient)
+        }
         if (!busy && LinuxRuntimeInstaller.isBusy()) followRuntimeOperation { LinuxRuntimeInstaller.attach(it) }
         if (showComponents) drivers.refreshDrivers()
         addedGamesArt = SessionPrefs.addedGamesArt(this)
@@ -1925,10 +1921,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            val listX64 = SessionPrefs.activeSteamClientArch(this) == "x86_64"
+            val scannedX64 = SessionPrefs.activeSteamClientArch(this) == "x86_64"
             val games = if (ready) Library.launchableGames(this) else emptyList()
             val all = games.distinctBy { it.gameId }
-            if (ready) com.droiddeck.launcher.frontend.LibraryCache.save(this, all)
+            if (ready) com.droiddeck.launcher.frontend.LibraryCache.save(this, all, scannedX64)
             val endedSession = SessionState.sessionId.takeIf { !SessionState.running && it != null && it != componentSweepSession }
             if (ready && (!componentSweepDone || endedSession != null)) {
                 componentSweepDone = true
@@ -1938,7 +1934,7 @@ class MainActivity : ComponentActivity() {
             ui.post {
                 if (scanGeneration == libraryScanGeneration) {
                     val current = steamGames.filter { it.library != Library.ADDED }.associateBy { it.appId }
-                    steamGamesX64 = listX64
+                    steamGamesX64 = scannedX64
                     steamGames = all.map { g ->
                         val newer = current[g.appId]
                         if (newer != null && g.library != Library.ADDED && steamArtRefreshes[g.appId] != artRefreshesAtStart[g.appId]) g.withArt(newer.art, newer.hero, newer.icon) else g
