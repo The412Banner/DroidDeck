@@ -727,8 +727,9 @@ class MainActivity : ComponentActivity() {
         theme = SessionPrefs.theme(this)
         frameGenLabel = getString(R.string.frame_gen_off)
         appScale = com.droiddeck.launcher.core.AppUiPrefs.scale(this)
-        steamGames = if (shortcutPicker) emptyList() else com.droiddeck.launcher.frontend.LibraryCache.load(this)
-        steamGamesX64 = com.droiddeck.launcher.frontend.LibraryCache.listedX64(this)
+        val (cached, cachedX64) = com.droiddeck.launcher.frontend.LibraryCache.snapshot(this)
+        steamGames = if (shortcutPicker) emptyList() else cached
+        steamGamesX64 = cachedX64
         backActionsInverted = SessionPrefs.backActionsInverted(this)
         orientation = SessionPrefs.orientation(this)
         requestedOrientation = orientation
