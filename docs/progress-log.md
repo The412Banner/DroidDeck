@@ -113,6 +113,9 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   translation keeps its English placeholders, and no locale has a key the English file lacks.
 - The translations went to PR #72 (a43217c4) for review; org main is still 45513c90, so the branch
   needs no rebase before the org PR. Device: 9afb9bd5 installed.
+- **Org PR**: the draft #152 from 2026-10-02 (same branch name, 12 commits, conflicting with main) is
+  refreshed as one commit on org main 45513c90 and marked ready, once the review of the translations
+  is clean. Its old head is kept at `refs/backup/20261018/x86-64-steam-client-afa479ee`.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
