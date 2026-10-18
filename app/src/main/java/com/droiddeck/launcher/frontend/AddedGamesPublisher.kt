@@ -26,7 +26,7 @@ object AddedGamesPublisher {
     fun republish(context: Context) {
         val games = AddedGames.scan(context)
         AddedGames.writeListing(context, games)
-        val x64 = com.droiddeck.launcher.session.SessionPrefs.activeSteamClientArch(context) == "x86_64"
-        LibraryCache.save(context, Library.launchableGames(context, added = games), x64)
+        val arch = com.droiddeck.launcher.session.SessionPrefs.activeSteamClientArch(context)
+        LibraryCache.save(context, Library.launchableGames(context, added = games, arch = arch), arch == "x86_64")
     }
 }

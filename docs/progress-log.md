@@ -89,6 +89,14 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   `fex-rootfs.json` and `mirror-upstream.yml` (fetches a catalog's upstream link, refuses it unless
   sha256 and size match, checks the digest GitHub stored); its run 39084452789 brought the file in.
   The sha256 the app pins is unchanged, so an unpacked rootfs is kept.
+- **One cache file**: the review of that change found the list and its client marker written as two
+  files, so concurrent saves could pair one client's list with the other's marker. `library-cache.json`
+  is now one object (`client`, `games`) written by one rename under a lock; a bare list from earlier
+  builds reads as arm64's. Device (73e2a80b): the first start after install read the old list,
+  rescanned and wrote `{"client":"x86_64","games":[...]}` with the same 23 games.
+- A scan reads the client it tagged the cache with (`Library.launchableGames(arch = ...)`), so a switch
+  during a scan cannot pair one client's games with the other's tag; a failed rename drops the cache
+  instead of leaving the previous list behind (`LibraryArchTest`).
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
