@@ -99,6 +99,13 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   instead of leaving the previous list behind (`LibraryArchTest`).
 - The next review of PR #72 (a2552c58) had no findings; every review thread is resolved. Device: 43f9a8a8
   installed.
+- Device checks on 43f9a8a8: the setting reads "Applies next session. FEX 2610 r4" with the choices
+  ARM64 and x86-64; picking ARM64 drops the chip and the Games tab showed the arm64 list on first
+  look, and back on x86-64 the chip and the x86-64 list return (the cache records each client). Two
+  custom games' chosen background art is kept, with the same file in both clients' grid folders.
+  Team Fortress 2 launched from the Games tab with the x86-64 client selected: the session started
+  the client, handed it app 440 and the Linux build (`tf_linux64` under FEX) took focus about 60 s
+  after the tap.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
