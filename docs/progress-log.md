@@ -79,6 +79,10 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 - **Which client**: the Games header shows a plain "x86-64" chip while the x86-64 client's list is
   shown (on its own line in a narrow pane); nothing changes for arm64. The setting reads "Applies next
   session. FEX 2610 r4" with the choices ARM64 and x86-64 (`GamesClientTagTest`).
+- **Stale list**: every refresh drops the Steam-client games when they belong to another client than
+  the active one (a setting change, the end of a session, a resume), keeping added and store games;
+  the cached list records its client (`library-cache-client`). The next review of PR #72 had no
+  findings. Device: the header chip and the removed "x86-64" entry seen on 04568806.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
