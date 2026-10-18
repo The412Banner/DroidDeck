@@ -50,7 +50,11 @@ object LibraryCache {
             val f = file(context)
             val tmp = File(f.path + ".tmp")
             tmp.writeText(JSONObject().put("client", if (client) "x86_64" else "arm64").put("games", array).toString())
-            tmp.renameTo(f)
+            if (!tmp.renameTo(f)) {
+                tmp.delete()
+                f.delete()
+                Log.w(TAG, "not saved: rename failed; cache dropped so the next start scans")
+            }
         }.onFailure { e -> Log.w(TAG, "not saved: ${e.message}") }
     }
 

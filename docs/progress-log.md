@@ -94,6 +94,9 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   is now one object (`client`, `games`) written by one rename under a lock; a bare list from earlier
   builds reads as arm64's. Device (73e2a80b): the first start after install read the old list,
   rescanned and wrote `{"client":"x86_64","games":[...]}` with the same 23 games.
+- A scan reads the client it tagged the cache with (`Library.launchableGames(arch = ...)`), so a switch
+  during a scan cannot pair one client's games with the other's tag; a failed rename drops the cache
+  instead of leaving the previous list behind (`LibraryArchTest`).
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 

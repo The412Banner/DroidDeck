@@ -58,8 +58,8 @@ object StoreInstalls {
         try {
             val games = AddedGames.scan(app)
             AddedGames.writeListing(app, games)
-            val x64 = SessionPrefs.activeSteamClientArch(app) == "x86_64"
-            LibraryCache.save(app, Library.launchableGames(app, added = games), x64)
+            val arch = SessionPrefs.activeSteamClientArch(app)
+            LibraryCache.save(app, Library.launchableGames(app, added = games, arch = arch), arch == "x86_64")
             SteamLiveShortcuts.sync(app, games)
         } catch (e: Exception) {
             Log.w(TAG, "registration: ${e.message}")
