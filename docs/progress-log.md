@@ -81,7 +81,7 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
   session. FEX 2610 r4" with the choices ARM64 and x86-64 (`GamesClientTagTest`).
 - **Stale list**: every refresh drops the Steam-client games when they belong to another client than
   the active one (a setting change, the end of a session, a resume), keeping added and store games;
-  the cached list records its client (`library-cache-client`). The next review of PR #72 had no
+  the cached list records its client in the same file (`library-cache.json`, saved under one lock). The next review of PR #72 had no
   findings. Device: the header chip and the removed "x86-64" entry seen on 04568806.
 - **x86-64 rootfs in DroidDeck-Components**: FEX-Emu's Ubuntu 24.04 image (2026-08-11, 525,615,104
   bytes, unmodified) is now fetched from Droid-Deck/DroidDeck-Components release

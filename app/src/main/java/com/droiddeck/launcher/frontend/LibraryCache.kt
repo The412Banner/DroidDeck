@@ -9,15 +9,15 @@ import java.io.File
 object LibraryCache {
     private const val TAG = "LibraryCache"
     private fun file(context: Context) = File(context.filesDir, "library-cache.json")
-    private fun clientFile(context: Context) = File(context.filesDir, "library-cache-client")
 
-    /** Whether the cached Steam games are the x86-64 client's; caches written before it existed are arm64's. */
-    fun listedX64(context: Context): Boolean = runCatching { clientFile(context).readText().trim() == "x86_64" }.getOrDefault(false)
-
-    fun load(context: Context): List<Library.SteamGame> = runCatching {
+    /** The cached games and whether they are the x86-64 client's; a cache written as a bare list is arm64's. */
+    @Synchronized
+    fun snapshot(context: Context): Pair<List<Library.SteamGame>, Boolean> = runCatching {
         val f = file(context)
-        if (!f.isFile) return emptyList()
-        val array = JSONArray(f.readText())
+        if (!f.isFile) return Pair(emptyList(), false)
+        val text = f.readText().trim()
+        val (array, x64) = if (text.startsWith("{")) JSONObject(text).let { it.getJSONArray("games") to (it.optString("client") == "x86_64") }
+            else JSONArray(text) to false
         List(array.length()) { i ->
             val o = array.getJSONObject(i)
             Library.SteamGame(
@@ -28,11 +28,18 @@ object LibraryCache {
                 source = o.optString("source").ifEmpty { if (o.getString("library") == Library.ADDED) Library.ADDED else Library.SOURCE_STEAM },
                 storeId = o.optString("storeId").ifEmpty { null },
             )
-        }
-    }.getOrElse { e -> Log.w(TAG, "unreadable, ignored: ${e.message}"); emptyList() }
+        } to x64
+    }.getOrElse { e -> Log.w(TAG, "unreadable, ignored: ${e.message}"); Pair(emptyList(), false) }
 
+    fun load(context: Context): List<Library.SteamGame> = snapshot(context).first
+
+    fun listedX64(context: Context): Boolean = snapshot(context).second
+
+    /** Without [x64] the list keeps the client already recorded. */
+    @Synchronized
     fun save(context: Context, games: List<Library.SteamGame>, x64: Boolean? = null) {
         runCatching {
+            val client = x64 ?: listedX64(context)
             val array = JSONArray()
             for (g in games) array.put(
                 JSONObject().put("appId", g.appId).put("name", g.name).put("library", g.library).put("gameId", g.gameId)
@@ -42,9 +49,8 @@ object LibraryCache {
             )
             val f = file(context)
             val tmp = File(f.path + ".tmp")
-            tmp.writeText(array.toString())
+            tmp.writeText(JSONObject().put("client", if (client) "x86_64" else "arm64").put("games", array).toString())
             tmp.renameTo(f)
-            x64?.let { clientFile(context).writeText(if (it) "x86_64" else "arm64") }
         }.onFailure { e -> Log.w(TAG, "not saved: ${e.message}") }
     }
 
