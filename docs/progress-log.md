@@ -79,6 +79,16 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 - **Which client**: the Games header shows a plain "x86-64" chip while the x86-64 client's list is
   shown (on its own line in a narrow pane); nothing changes for arm64. The setting reads "Applies next
   session. FEX 2610 r4" with the choices ARM64 and x86-64 (`GamesClientTagTest`).
+- **Stale list**: every refresh drops the Steam-client games when they belong to another client than
+  the active one (a setting change, the end of a session, a resume), keeping added and store games;
+  the cached list records its client (`library-cache-client`). The next review of PR #72 had no
+  findings. Device: the header chip and the removed "x86-64" entry seen on 04568806.
+- **x86-64 rootfs in DroidDeck-Components**: FEX-Emu's Ubuntu 24.04 image (2026-08-11, 525,615,104
+  bytes, unmodified) is now fetched from Droid-Deck/DroidDeck-Components release
+  `fex-rootfs-ubuntu-24.04-2026-08-11` instead of rootfs.fex-emu.gg. Components PR #4 added
+  `fex-rootfs.json` and `mirror-upstream.yml` (fetches a catalog's upstream link, refuses it unless
+  sha256 and size match, checks the digest GitHub stored); its run 39084452789 brought the file in.
+  The sha256 the app pins is unchanged, so an unpacked rootfs is kept.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 

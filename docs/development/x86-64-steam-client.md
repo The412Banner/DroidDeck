@@ -30,7 +30,7 @@ arm64 client down first.
 ## Client install and update
 
 - The first run downloads FEX (release `FEX_TAG` in Droid-Deck/DroidDeck-Components, sha256-pinned), FEX's Ubuntu 24.04 x86
-  rootfs (about 525 MB, 1.5 GB unpacked, sha256-pinned) and the client (about 600 MB) from Valve's CDN,
+  rootfs (about 525 MB, 1.5 GB unpacked, sha256-pinned; the same repository's copy of FEX-Emu's 2026-08-11 image) and the client (about 600 MB) from Valve's CDN,
   part by part with sha256 checks. A part-done rootfs download resumes; a finished one answers 416,
   which is not a failure. `unsquashfs -no-xattrs -ignore-errors`: ownership and xattrs mean nothing in
   the guest, and device nodes cannot be made and are not needed (FEX passes `/dev` through).
@@ -199,7 +199,11 @@ alone would then read as an installed client.
 - **Where the app gets it.** The app downloads FEX from Droid-Deck/DroidDeck-Components, where nothing is
   uploaded by hand: a new tag is published by `build-fex.yml`, recorded in that repository's `fex.json`
   (sha256 and size), and brought in by its `mirror-release.yml`, which refuses an archive that does not
-  match. `FEX_TAG` and `FEX_SHA256` in `droiddeck-steam-x64` then move to the new tag.
+  match. `FEX_TAG` and `FEX_SHA256` in `droiddeck-steam-x64` then move to the new tag. The rootfs is
+  FEX-Emu's own image, unmodified: `fex-rootfs.json` there names its rootfs.fex-emu.gg link, sha256 and
+  size, and `mirror-upstream.yml` fetches it into the catalog's release only when both match. A newer
+  image is a new catalog release; `ROOTFS_URL` and `ROOTFS_SHA256` then move to it, and a device that
+  already unpacked one keeps it.
 
 ## DroidDeck direct for Linux games and runtimes
 
