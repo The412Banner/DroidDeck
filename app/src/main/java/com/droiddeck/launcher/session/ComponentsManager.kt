@@ -25,6 +25,8 @@ import java.io.FileOutputStream
 object ComponentsManager {
     private const val TAG = "Components"
     private const val NIGHTLIES = "The412Banner/Nightlies"
+    private const val DD_COMPONENTS = "Droid-Deck/DroidDeck-Components"
+    internal const val DD_NIGHTLY = "linux-nightly"
     private val RELEASES = linkedMapOf(
         "FexCore-Linux" to "fex",
         "Dxvk-Linux" to "dxvk",
@@ -32,6 +34,10 @@ object ComponentsManager {
         "Dxvk-gplasync-Linux" to "dxvk",
         "Vkd3d-proton-Linux" to "vkd3d",
     )
+    // DD_NIGHTLY holds every component in one release; the file name says which.
+    private val NIGHTLY_PREFIXES = linkedMapOf("DD-dxvk-" to "dxvk", "DD-vkd3d-proton-" to "vkd3d", "DD-FEXCore-" to "fex")
+    private val SOURCES = RELEASES.keys.map { NIGHTLIES to it } + (DD_COMPONENTS to DD_NIGHTLY)
+    private val DOWNLOAD_REPOS = listOf(NIGHTLIES, DD_COMPONENTS)
     private val TYPES = mapOf("FEXCore-Linux" to "fex", "DXVK-Linux" to "dxvk", "VKD3D-Linux" to "vkd3d")
     private val TYPE_OF = mapOf("fex" to "FEXCore-Linux", "dxvk" to "DXVK-Linux", "vkd3d" to "VKD3D-Linux")
     val COMPONENTS = listOf("fex", "dxvk", "vkd3d")
@@ -715,13 +721,19 @@ object ComponentsManager {
     class StoredOriginal(val protonId: String, val protonName: String?, val comp: String, val protonVersion: String, val size: Long, val kept: Boolean)
     class Stored(val packages: List<StoredPackage>, val originals: List<StoredOriginal>)
 
-    private fun packagesInUse(state: JSONObject): Set<String> {
+    internal fun liveSelection(key: String, entry: JSONObject, proton: Proton?): Boolean =
+        proton != null && (key == "queued" || entry.optString("protonVersion") == proton.version)
+
+    private fun packagesInUse(state: JSONObject, installed: Map<String, Proton>): Set<String> {
         val names = HashSet<String>()
         for (key in listOf("active", "queued")) {
             val byProton = state.optJSONObject(key) ?: continue
             for (pid in byProton.keys()) {
                 val comps = byProton.optJSONObject(pid) ?: continue
-                for (comp in comps.keys()) comps.optJSONObject(comp)?.optString("file")?.takeIf { it.isNotEmpty() }?.let(names::add)
+                for (comp in comps.keys()) {
+                    val entry = comps.optJSONObject(comp) ?: continue
+                    if (liveSelection(key, entry, installed[pid])) entry.optString("file").takeIf { it.isNotEmpty() }?.let(names::add)
+                }
             }
         }
         val profiles = state.optJSONObject("profiles")
@@ -741,8 +753,8 @@ object ComponentsManager {
 
     fun stored(context: Context): Stored = synchronized(lock) {
         val state = loadState(context)
-        val used = packagesInUse(state)
-        val installed = protons(context).associateBy { it.id }
+        val installed = protons(context).distinctBy { it.id }.associateBy { it.id }
+        val used = packagesInUse(state, installed)
         val originals = originalsDir(context).listFiles()?.filter { it.isDirectory }?.flatMap { proton ->
             proton.listFiles()?.filter { it.isDirectory }?.flatMap { version ->
                 COMPONENTS.mapNotNull { comp ->
@@ -768,27 +780,135 @@ object ComponentsManager {
         true
     }
 
-    fun deletePackage(context: Context, file: String): String = synchronized(lock) {
-        val name = safeName(file)
-        val state = loadState(context)
-        val queued = state.sub("queued")
-        for (pid in queued.keys()) {
-            val comps = queued.optJSONObject(pid) ?: continue
-            for (comp in comps.keys()) check(comps.optJSONObject(comp)?.optString("file") != name) { context.getString(R.string.cmgr_package_in_use, name, pid) }
-        }
-        val active = state.sub("active")
-        for (pid in active.keys()) {
-            val comps = active.optJSONObject(pid) ?: continue
-            for (comp in comps.keys()) check(comps.optJSONObject(comp)?.optString("file") != name) { context.getString(R.string.cmgr_package_in_use, name, pid) }
+    private fun checkPackageUnused(context: Context, state: JSONObject, name: String) {
+        val installed = protons(context).distinctBy { it.id }.associateBy { it.id }
+        for (key in listOf("queued", "active")) {
+            val byProton = state.sub(key)
+            for (pid in byProton.keys()) {
+                val comps = byProton.optJSONObject(pid) ?: continue
+                for (comp in comps.keys()) {
+                    val entry = comps.optJSONObject(comp) ?: continue
+                    check(entry.optString("file") != name || !liveSelection(key, entry, installed[pid])) {
+                        context.getString(R.string.cmgr_package_in_use, name, installed[pid]?.name ?: pid)
+                    }
+                }
+            }
         }
         val profiles = state.sub("profiles")
         for (scope in profiles.keys()) {
             val profile = profiles.optJSONObject(scope) ?: continue
             check(COMPONENTS.none { profile.optString(it) == name }) { context.getString(R.string.cmgr_package_in_use, name, scope) }
         }
+    }
+
+    fun carryOver(context: Context, fromDir: String, toDir: String) {
+        synchronized(lock) {
+            val target = protons(context).firstOrNull { it.id == safeName(toDir) } ?: return
+            val state = loadState(context)
+            val wanted = carried(state, safeName(fromDir)) { File(packagesDir(context), it).isFile }
+            val active = state.sub("active").optJSONObject(target.id)
+            val queued = state.sub("queued").sub(target.id)
+            var changed = false
+            wanted.forEach { (comp, entry) ->
+                if (active?.has(comp) != true && !queued.has(comp)) {
+                    queued.put(comp, entry)
+                    changed = true
+                }
+            }
+            if (queued.length() == 0) state.sub("queued").remove(target.id)
+            if (changed) saveState(context, state)
+        }
+    }
+
+    internal fun carried(state: JSONObject, from: String, present: (String) -> Boolean): Map<String, JSONObject> = buildMap {
+        state.optJSONObject("active")?.optJSONObject(from)?.let { active ->
+            active.keys().forEach { comp ->
+                val entry = active.optJSONObject(comp) ?: return@forEach
+                val file = entry.optString("file")
+                if (comp in COMPONENTS && file.endsWith(".wcp") && present(file)) {
+                    put(comp, JSONObject().put("kind", "package").put("file", file).put("label", entry.optString("label")))
+                }
+            }
+        }
+        state.optJSONObject("queued")?.optJSONObject(from)?.let { queued ->
+            queued.keys().forEach { comp ->
+                val entry = queued.optJSONObject(comp) ?: return@forEach
+                if (comp in COMPONENTS && entry.optString("kind") == "package" && present(entry.optString("file"))) put(comp, entry)
+            }
+        }
+    }
+
+    fun forgetProton(context: Context, dirName: String) {
+        synchronized(lock) {
+            val id = safeName(dirName)
+            if (protons(context).any { it.id == id }) return
+            val state = loadState(context)
+            val selected = listOf("active", "queued").map { state.sub(it).remove(id) != null }.any { it }
+            if (selected && runCatching { saveState(context, state) }.onFailure { Log.w(TAG, "forget $id", it) }.isFailure) return
+            File(originalsDir(context), id).deleteRecursively()
+        }
+    }
+
+    private fun storePackage(context: Context, part: File, dest: File) {
+        try {
+            if (dest.isFile && runCatching { Hashes.sha256(dest) }.getOrNull()?.equals(Hashes.sha256(part), true) == true) return
+            if (dest.exists()) checkPackageUnused(context, loadState(context), dest.name)
+            val store = File(launchDir(context), "store").canonicalFile
+            val cacheKey = unpackedCacheKey(dest.name)
+            val unpacked = File(store, cacheKey).canonicalFile
+            check(unpacked.parentFile == store) { "Invalid unpacked component cache path for ${dest.name}" }
+            val complete = File(unpacked, ".complete")
+            if (complete.exists()) check(complete.delete()) { "Could not invalidate unpacked component ${dest.name}" }
+            if (!part.renameTo(dest)) {
+                dest.delete()
+                check(part.renameTo(dest)) { "Could not store ${dest.name}" }
+            }
+            if (!unpacked.deleteRecursively() && unpacked.exists()) {
+                check(!complete.exists()) { "Could not invalidate unpacked component ${dest.name}" }
+                Log.w(TAG, "Could not remove stale unpacked files for ${dest.name}; cache marker is invalidated")
+            }
+        } finally {
+            part.delete()
+        }
+    }
+
+    internal fun unpackedCacheKey(filename: String): String = safeName(filename.removeSuffix(".wcp")).also {
+        require(it != "." && it != "..") { "Invalid component cache name" }
+    }
+
+    fun deletePackage(context: Context, file: String): String = synchronized(lock) {
+        val name = safeName(file)
+        val state = loadState(context)
+        val installed = protons(context).distinctBy { it.id }.associateBy { it.id }
+        var changed = false
+        for (key in listOf("queued", "active")) {
+            val byProton = state.sub(key)
+            for (pid in byProton.keys().asSequence().toList()) {
+                val comps = byProton.optJSONObject(pid) ?: continue
+                for (comp in comps.keys().asSequence().toList()) {
+                    val entry = comps.optJSONObject(comp) ?: continue
+                    if (entry.optString("file") != name) continue
+                    check(!liveSelection(key, entry, installed[pid])) { context.getString(R.string.cmgr_package_in_use, name, installed[pid]?.name ?: pid) }
+                    comps.remove(comp)
+                    changed = true
+                }
+                if (comps.length() == 0) byProton.remove(pid)
+            }
+        }
         val f = File(packagesDir(context), name)
         check(f.isFile) { context.getString(R.string.cmgr_package_not_stored, name) }
-        f.delete()
+        val profiles = state.sub("profiles")
+        for (scope in profiles.keys().asSequence().toList()) {
+            val profile = profiles.optJSONObject(scope) ?: continue
+            for (comp in COMPONENTS.filter { profile.optString(it) == name }) {
+                rememberProfiledComponent(state, comp)
+                profile.remove(comp)
+                changed = true
+            }
+            if (profile.length() == 0) profiles.remove(scope)
+        }
+        check(f.delete()) { name }
+        if (changed) saveState(context, state)
         context.getString(R.string.cmgr_deleted, name)
     }
 
@@ -805,7 +925,7 @@ object ComponentsManager {
     fun importPackage(context: Context, source: File, name: String): Package = synchronized(lock) {
         val info = packageInfo(context, source)
         val dest = File(packagesDir(context), safeName(name).let { if (it.endsWith(".wcp")) it else "$it.wcp" })
-        source.copyTo(File(dest.parentFile, dest.name + ".part"), overwrite = true).renameTo(dest)
+        storePackage(context, source.copyTo(File(dest.parentFile, dest.name + ".part"), overwrite = true), dest)
         info.copy(file = dest.name)
     }
 
@@ -815,18 +935,20 @@ object ComponentsManager {
         if (!force && cache.isFile) runCatching { return parseCatalog(JSONObject(cache.readText())) }
         if (!force) return Catalog(emptyList(), 0)
         val items = JSONArray()
-        for ((tag, comp) in RELEASES) {
-            val body = Downloader.downloadString("https://api.github.com/repos/$NIGHTLIES/releases/tags/$tag") ?: continue
+        for ((repo, tag) in SOURCES) {
+            val body = Downloader.downloadString("https://api.github.com/repos/$repo/releases/tags/$tag") ?: continue
             val assets = runCatching { JSONObject(body).optJSONArray("assets") }.getOrNull() ?: continue
             for (i in 0 until assets.length()) {
                 val a = assets.getJSONObject(i)
                 val name = a.optString("name")
                 if (!name.endsWith(".wcp")) continue
                 if (!Hashes.isGithubSha256(a.optString("digest"))) continue
+                val comp = assetComp(tag, name) ?: continue
                 items.put(JSONObject().put("file", name).put("comp", comp).put("release", tag)
                     .put("url", a.optString("browser_download_url")).put("size", a.optLong("size")).put("digest", a.optString("digest")))
             }
         }
+        if (items.length() == 0 && cache.isFile) runCatching { return parseCatalog(JSONObject(cache.readText())) }
         val out = JSONObject().put("items", items).put("fetchedAt", System.currentTimeMillis() / 1000)
         val tmp = File(cache.parentFile, cache.name + ".tmp")
         tmp.writeText(out.toString()); tmp.renameTo(cache)
@@ -837,9 +959,31 @@ object ComponentsManager {
         val arr = o.optJSONArray("items") ?: JSONArray()
         val items = (0 until arr.length()).map { arr.getJSONObject(it) }.map {
             CatalogItem(it.optString("file"), it.optString("comp"), it.optString("release"), it.optString("url"), it.optLong("size"), it.optString("digest"))
-        }.sortedWith(compareBy<CatalogItem> { it.comp }.then(newestFirst { it.file }))
+        }.sortedWith(CATALOG_ORDER)
         return Catalog(items, o.optLong("fetchedAt"))
     }
+
+    internal fun assetComp(release: String, name: String): String? =
+        RELEASES[release] ?: if (release == DD_NIGHTLY) NIGHTLY_PREFIXES.entries.firstOrNull { name.startsWith(it.key) }?.value else null
+
+    // Per component: the stable packages newest first, then the nightlies.
+    internal val CATALOG_ORDER: Comparator<CatalogItem> =
+        compareBy<CatalogItem> { it.comp }.thenBy { it.release == DD_NIGHTLY }.then(newestFirst { it.file })
+
+    // A nightly DD-<flavor>-<version>[+N]-nightly.wcp pairs with the newest stable <flavor>-<version>[-<rev>]-linux.wcp
+    // in the same list, so the stable row can offer it behind a Stable/Nightly switch. Unpaired nightlies keep their own row.
+    internal fun nightlyPairs(items: List<CatalogItem>): Map<CatalogItem, CatalogItem> {
+        val stable = items.filter { it.release != DD_NIGHTLY }
+        return items.filter { it.release == DD_NIGHTLY }.mapNotNull { n ->
+            val base = n.file.removePrefix("DD-").removeSuffix("-nightly.wcp").substringBefore('+')
+            val rev = Regex(Regex.escape(base) + "(-\\d+)?-linux\\.wcp")
+            stable.filter { it.comp == n.comp && rev.matches(it.file) }
+                .maxWithOrNull { a, b -> ProtonExtras.compareVersions(a.file, b.file) }?.let { it to n }
+        }.groupBy({ it.first }, { it.second })
+            .mapValues { (_, ns) -> ns.maxWith { a, b -> ProtonExtras.compareVersions(a.file, b.file) } }
+    }
+
+    internal fun allowedDownload(url: String) = DOWNLOAD_REPOS.any { url.startsWith("https://github.com/$it/releases/download/") }
 
     private fun <T> newestFirst(of: (T) -> String): Comparator<T> =
         Comparator { a, b -> ProtonExtras.compareVersions(of(b), of(a)) }
@@ -925,14 +1069,16 @@ object ComponentsManager {
     ): CatalogItem? = catalogMatch(cached(), file, release) ?: catalogMatch(refresh(), file, release)
 
     fun download(context: Context, item: CatalogItem, progress: (Int) -> Unit): Package {
-        require(item.url.startsWith("https://github.com/$NIGHTLIES/releases/download/")) { context.getString(R.string.cmgr_nightlies_only) }
+        require(allowedDownload(item.url)) { context.getString(R.string.cmgr_nightlies_only) }
         require(Hashes.isGithubSha256(item.digest)) { context.getString(R.string.cmgr_list_predates_checksums) }
         val dest = File(packagesDir(context), safeName(item.file))
         val part = File(dest.parentFile, dest.name + ".part")
-        check(Downloader.downloadFile(item.url, part, true, item.digest.substringAfter(':')) { f -> progress(if (f < 0) -1 else (f * 100).toInt().coerceIn(0, 100)) }) { context.getString(R.string.user_apps_download_failed) }
+        check(Downloader.downloadFile(item.url, part, true, item.digest.substringAfter(':')) { f -> progress(if (f < 0) -1 else (f * 100).toInt().coerceIn(0, 100)) }) {
+            context.getString(if (item.release == DD_NIGHTLY) R.string.cmgr_nightly_replaced else R.string.user_apps_download_failed)
+        }
         if (!Hashes.sha256(part).equals(item.digest.substringAfter(':'), true)) { part.delete(); error(context.getString(R.string.cmgr_checksum_mismatch)) }
         val info = runCatching { packageInfo(context, part) }.getOrElse { part.delete(); throw it }
-        synchronized(lock) { part.renameTo(dest) }
+        synchronized(lock) { storePackage(context, part, dest) }
         return info.copy(file = dest.name)
     }
 }

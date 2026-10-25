@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import struct
 import subprocess
@@ -77,6 +78,79 @@ class FakeDevTools(threading.Thread):
         conn.close()
 
 
+class FakeSteamClient(threading.Thread):
+
+    def __init__(self, showing):
+        super().__init__(daemon=True)
+        self.showing = showing
+        self.server = socket.socket()
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(4)
+        self.port = self.server.getsockname()[1]
+        self.seen = []
+        self.conn = None
+        self.lock = threading.Lock()
+
+    def run(self):
+        while True:
+            try:
+                conn, _ = self.server.accept()
+            except OSError:
+                return
+            threading.Thread(target=self.serve, args=(conn,), daemon=True).start()
+
+    def send(self, conn, message):
+        payload = json.dumps(message).encode()
+        header = bytes([0x81, 126]) + struct.pack(">H", len(payload)) if len(payload) > 125 else bytes([0x81, len(payload)])
+        with self.lock:
+            conn.sendall(header + payload)
+
+    def push(self, payload, name=None):
+        self.send(self.conn, {"method": "Runtime.bindingCalled",
+                              "params": {"name": name or agent.KEYBOARD_BINDING, "payload": payload}})
+
+    def drop(self):
+        self.conn.shutdown(socket.SHUT_RDWR)
+        self.conn.close()
+
+    def serve(self, conn):
+        stream = conn.makefile("rb")
+        head = b""
+        while not head.endswith(b"\r\n\r\n"):
+            head += stream.read(1)
+        request = head.decode()
+        if request.startswith("GET /json"):
+            body = json.dumps([{"title": "Steam Big Picture Mode", "url": "https://steamloopback.host/routes/",
+                                "webSocketDebuggerUrl": "ws://127.0.0.1:%d/devtools/page/2" % self.port},
+                               {"title": "SharedJSContext", "url": "https://steamloopback.host/",
+                                "webSocketDebuggerUrl": "ws://127.0.0.1:%d/devtools/page/1" % self.port}]).encode()
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
+            conn.close()
+            return
+        key = [l.split(":", 1)[1].strip() for l in request.split("\r\n") if l.lower().startswith("sec-websocket-key")][0]
+        accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        conn.sendall(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                      "Sec-WebSocket-Accept: %s\r\n\r\n" % accept).encode())
+        self.conn = conn
+        try:
+            while True:
+                b0, b1 = stream.read(2)
+                n = b1 & 0x7F
+                if n == 126:
+                    n = struct.unpack(">H", stream.read(2))[0]
+                elif n == 127:
+                    n = struct.unpack(">Q", stream.read(8))[0]
+                mask = stream.read(4)
+                data = stream.read(n)
+                message = json.loads(bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+                self.seen.append(message)
+                self.push("true", name="unrelated")
+                result = {"result": {"type": "boolean", "value": self.showing}} if message["method"] == "Runtime.evaluate" else {}
+                self.send(conn, {"id": message["id"], "result": result})
+        except (OSError, ValueError):
+            conn.close()
+
+
 class AgentTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -121,6 +195,63 @@ class AgentTest(unittest.TestCase):
         self.addCleanup(os.environ.pop, "DROIDDECK_VR_HELPER")
         answer = self.ask({"kind": "vr", "action": "status"})
         self.assertEqual("UNAVAILABLE", answer["error"]["code"])
+
+    def fake_proc(self, pid, parent, comm, env):
+        root = self.dir / "proc" / str(pid)
+        root.mkdir(parents=True)
+        (root / "comm").write_text(comm + "\n")
+        (root / "stat").write_text("%d (%s) S %d 0 0" % (pid, comm, parent))
+        (root / "environ").write_bytes(b"\0".join(b"%s=%s" % (k.encode(), v.encode()) for k, v in env.items()) + b"\0")
+
+    def tag(self, wins, arch="arm64"):
+        snap = {"displays": {":0": [], ":1": wins}}
+        with patch.dict(os.environ, {"DISPLAY": ":0", "BL_STEAM_CLIENT_ARCH": arch}), \
+                patch.object(agent.subprocess, "run") as run, patch.object(agent, "log"):
+            run.return_value.returncode = 0
+            tagged = agent.tag_game_windows(snap, proc=self.dir / "proc")
+        return tagged, [call.args[0][-1] for call in run.call_args_list]
+
+    def test_a_sandboxed_flatpak_window_is_tagged_with_its_shortcut(self):
+        self.fake_proc(40, 1, "gjs", {"FLATPAK_ID": "com.github.tchx84.Flatseal", "SteamAppId": "2166984148"})
+        win = {"window": 7, "map": "viewable", "class": "com.github.tchx84.Flatseal", "pid": None}
+        self.assertEqual(self.tag([win]), (True, ["2166984148"]))
+
+    def test_a_flatpak_window_named_after_the_app_is_matched(self):
+        self.fake_proc(40, 1, "vacuumtube", {"FLATPAK_ID": "rocks.shy.VacuumTube", "SteamAppId": "3000000001"})
+        win = {"window": 7, "map": "viewable", "class": "VacuumTube", "pid": None}
+        self.assertEqual(self.tag([win]), (True, ["3000000001"]))
+
+    def test_a_window_whose_process_has_no_app_id_falls_back_to_its_flatpak(self):
+        self.fake_proc(40, 1, "bwrap", {"FLATPAK_ID": "com.github.tchx84.Flatseal", "SteamAppId": "2166984148"})
+        self.fake_proc(41, 1, "gjs", {})
+        win = {"window": 7, "map": "viewable", "class": "com.github.tchx84.Flatseal", "pid": 41}
+        self.assertEqual(self.tag([win]), (True, ["2166984148"]))
+
+    def test_a_flatpak_shared_by_two_shortcuts_is_not_guessed(self):
+        self.fake_proc(40, 1, "gjs", {"FLATPAK_ID": "com.github.tchx84.Flatseal", "SteamAppId": "2166984148"})
+        self.fake_proc(42, 1, "gjs", {"FLATPAK_ID": "com.github.tchx84.Flatseal", "SteamAppId": "3000000003"})
+        win = {"window": 7, "map": "viewable", "class": "com.github.tchx84.Flatseal", "pid": None}
+        self.assertEqual(self.tag([win]), (False, []))
+
+    def test_a_window_outside_the_reaper_takes_its_process_app_id(self):
+        self.fake_proc(30, 1, "proot", {})
+        self.fake_proc(31, 30, "electron", {"SteamAppId": "3000000002"})
+        win = {"window": 8, "map": "viewable", "class": "electron", "pid": 31}
+        self.assertEqual(self.tag([win]), (True, ["3000000002"]))
+
+    def test_windows_gamescope_already_resolves_are_left_alone(self):
+        self.fake_proc(20, 1, "reaper", {})
+        self.fake_proc(21, 20, "game", {"SteamAppId": "413150"})
+        wins = [{"window": 9, "map": "viewable", "class": "game", "pid": 21},
+                {"window": 10, "map": "viewable", "class": "tagged", "pid": None, "appId": 5},
+                {"window": 11, "map": "viewable", "class": "other", "pid": None},
+                {"window": 12, "map": "unmapped", "class": "game", "pid": 21},
+                {"window": 13, "map": "viewable", "class": "steam_app_550", "pid": None}]
+        self.assertEqual(self.tag(wins), (False, []))
+
+    def test_the_x86_client_still_tags_its_game_classes(self):
+        win = {"window": 13, "map": "viewable", "class": "steam_app_550", "pid": None}
+        self.assertEqual(self.tag([win], arch="x86_64"), (True, ["550"]))
 
     def test_exec_output_and_status(self):
         answer = self.ask({"kind": "exec", "argv": ["sh", "-c", "echo out; echo err >&2; exit 3"], "env": {"X": "1"}})
@@ -338,6 +469,45 @@ class AgentTest(unittest.TestCase):
             with patch.object(agent, "cdp_eval", side_effect=agent.AgentError("NO_DEVTOOLS", "down")):
                 self.assertEqual(1, agent.main(["--steam-asleep"]))
 
+    def test_supports_vr_command_separates_vr_flat_and_unknown_apps(self):
+        with patch.dict(os.environ, {"BL_LAUNCH_DIR": str(self.dir.parent)}):
+            for value, code in ((True, 0), (False, 5), (None, 1)):
+                with self.subTest(value=value), patch.object(agent, "cdp_eval", return_value={"value": value}) as ask:
+                    self.assertEqual(code, agent.main(["--steam-supports-vr", "204360"]))
+                self.assertIn('GetAppOverviewByGameID?.("204360")', ask.call_args.args[1])
+                self.assertIn("vr_supported", ask.call_args.args[1])
+            with patch.object(agent, "cdp_eval", side_effect=agent.AgentError("NO_DEVTOOLS", "down")):
+                self.assertEqual(1, agent.main(["--steam-supports-vr", "204360"]))
+            for bad in ([], ["1;x"], ["-1"], ["1", "2"]):
+                self.assertEqual(2, agent.main(["--steam-supports-vr"] + bad))
+
+    def test_idle_inhibit_command_reports_whether_steam_reached_the_state(self):
+        with patch.dict(os.environ, {"BL_LAUNCH_DIR": str(self.dir.parent)}):
+            for value, code in ((True, 0), (False, 1), (None, 1)):
+                with self.subTest(value=value), patch.object(agent, "cdp_eval", return_value={"value": value}) as ask:
+                    self.assertEqual(code, agent.main(["--steam-idle-inhibit", "on"]))
+                self.assertIn("toggle_idle_suspend_inhibit 1", ask.call_args.args[1])
+                self.assertTrue(ask.call_args.args[1].rstrip().endswith("(true)"))
+            with patch.object(agent, "cdp_eval", return_value={"value": True}) as ask:
+                self.assertEqual(0, agent.main(["--steam-idle-inhibit", "off"]))
+            self.assertTrue(ask.call_args.args[1].rstrip().endswith("(false)"))
+            with patch.object(agent, "cdp_eval", side_effect=agent.AgentError("NO_DEVTOOLS", "down")):
+                self.assertEqual(1, agent.main(["--steam-idle-inhibit", "on"]))
+            self.assertEqual(2, agent.main(["--steam-idle-inhibit", "maybe"]))
+
+    def test_idle_suspend_seconds_follow_the_power_source(self):
+        vpower = self.dir / "ac_status"
+        with patch.object(agent, "cdp_eval", return_value={"value": [3600, 900]}):
+            vpower.write_text("Connected\n")
+            self.assertEqual(3600, agent.steam_idle_suspend_seconds(self.dir, vpower))
+            vpower.write_text("Disconnected\n")
+            self.assertEqual(900, agent.steam_idle_suspend_seconds(self.dir, vpower))
+        with patch.object(agent, "cdp_eval", return_value={"value": None}):
+            self.assertIsNone(agent.steam_idle_suspend_seconds(self.dir, vpower))
+        with patch.dict(os.environ, {"BL_LAUNCH_DIR": str(self.dir.parent)}), \
+                patch.object(agent, "steam_idle_suspend_seconds", return_value=None):
+            self.assertEqual(1, agent.main(["--steam-idle-suspend-seconds"]))
+
     def test_cdp_exception(self):
         server = FakeDevTools({"result": {"result": {"type": "object"}, "exceptionDetails": {
             "text": "Uncaught", "exception": {"description": "ReferenceError: SteamClient is not defined"}}}})
@@ -380,6 +550,144 @@ class AgentTest(unittest.TestCase):
         self.addCleanup(lambda: (child.kill(), child.wait()))
         time.sleep(0.2)
         self.assertIn(child.pid, agent.game_pids(424242))
+
+
+class SteamKeyboardTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.dir = Path(self.temp.name)
+
+    def state(self):
+        try:
+            return json.loads((self.dir / "keyboard.json").read_text())
+        except (OSError, ValueError):
+            return None
+
+    def wait_for(self, check):
+        for _ in range(200):
+            if check():
+                return
+            time.sleep(0.02)
+        self.fail("timed out; keyboard.json is %s" % self.state())
+
+    def test_report_writes_only_changes(self):
+        watcher = agent.KeyboardWatcher(self.dir)
+        watcher.report(False)
+        self.assertEqual({"steamKeyboard": False, "seq": 1}, self.state())
+        watcher.report(False)
+        watcher.report(True)
+        self.assertEqual({"steamKeyboard": True, "seq": 2}, self.state())
+
+    def test_follows_the_clients_keyboard_and_rechecks_while_idle(self):
+        client = FakeSteamClient(False)
+        client.start()
+        self.addCleanup(client.server.close)
+        (self.dir / "cdp-port").write_text(str(client.port))
+        watcher = agent.KeyboardWatcher(self.dir)
+        failure = []
+        with patch.object(agent, "KEYBOARD_CHECK_SECONDS", 0.3):
+            thread = threading.Thread(target=lambda: failure.append(self.capture(watcher.watch)), daemon=True)
+            thread.start()
+            self.wait_for(lambda: self.state() == {"steamKeyboard": False, "seq": 1})
+            self.assertEqual("Runtime.addBinding", client.seen[0]["method"])
+            self.assertEqual(agent.KEYBOARD_BINDING, client.seen[0]["params"]["name"])
+            self.assertIn("IsShowingVirtualKeyboard", client.seen[1]["params"]["expression"])
+            self.assertIn(agent.KEYBOARD_BINDING, client.seen[1]["params"]["expression"])
+            self.assertNotIn("__BINDING__", client.seen[1]["params"]["expression"])
+            client.push("true")
+            self.wait_for(lambda: (self.state() or {}).get("steamKeyboard") is True)
+            client.push("false")
+            self.wait_for(lambda: (self.state() or {}).get("steamKeyboard") is False)
+            client.showing = True
+            self.wait_for(lambda: (self.state() or {}).get("steamKeyboard") is True)
+            self.assertGreaterEqual(len([m for m in client.seen if m["method"] == "Runtime.evaluate"]), 2)
+            client.drop()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(failure[0], OSError)
+
+    def test_any_loss_reports_the_keyboard_closed_and_backs_off(self):
+        watcher = agent.KeyboardWatcher(self.dir)
+        watcher.report(True)
+
+        def attached_then_lost():
+            watcher.attached = True
+            raise OSError("DevTools closed the connection")
+
+        steps = iter([agent.AgentError("NO_DEVTOOLS", "no port"), agent.AgentError("NO_DEVTOOLS", "no port"),
+                      attached_then_lost, KeyError("SteamUIStore")])
+
+        def watch():
+            step = next(steps, None)
+            if step is None:
+                raise SystemExit
+            if callable(step):
+                step()
+            raise step
+
+        with patch.object(watcher, "watch", side_effect=watch), patch.object(agent.time, "sleep") as sleep, \
+                patch.object(agent, "log") as log:
+            with self.assertRaises(SystemExit):
+                watcher.run()
+        self.assertEqual({"steamKeyboard": False, "seq": 2}, self.state())
+        self.assertEqual([2, 4, 2, 4], [c.args[0] for c in sleep.call_args_list])
+        self.assertFalse(watcher.attached)
+        self.assertEqual(3, log.call_count)
+
+    def test_no_shared_context_yet(self):
+        with patch.object(agent, "cdp_targets", return_value=[{"title": "Steam", "webSocketDebuggerUrl": "ws://127.0.0.1:1/x"}]):
+            with self.assertRaises(agent.AgentError) as caught:
+                agent.KeyboardWatcher(self.dir).watch()
+        self.assertEqual("NO_TARGET", caught.exception.code)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_page_script_watches_every_window_with_or_without_subscribe(self):
+        harness = r"""
+const assert = require('assert');
+globalThis.window = globalThis;
+const script = require('fs').readFileSync(process.argv[2], 'utf8');
+const calls = [];
+window.droiddeckSteamKeyboard = value => calls.push(value);
+const tick = ms => new Promise(done => setTimeout(done, ms));
+const value = subscribe => {
+  const v = { m_currentValue: false, m_callbacks: [] };
+  if (subscribe) v.Subscribe = cb => { v.m_callbacks.push(cb); return { Unsubscribe() {} }; };
+  v.set = next => { v.m_currentValue = next; for (const cb of v.m_callbacks) cb(next); };
+  return v;
+};
+(async () => {
+  assert.strictEqual(eval(script), false);
+  assert.deepStrictEqual(calls, ['false']);
+  const main = value(true), overlay = value(false);
+  globalThis.SteamUIStore = { WindowStore: { SteamUIWindows: [{ VirtualKeyboardManager: { IsShowingVirtualKeyboard: main } }] } };
+  assert.strictEqual(eval(script), false);
+  main.set(true);
+  await tick(20);
+  assert.deepStrictEqual(calls, ['false', 'true']);
+  main.set(false);
+  await tick(20);
+  SteamUIStore.WindowStore.SteamUIWindows.push({}, { VirtualKeyboardManager: { IsShowingVirtualKeyboard: overlay } });
+  overlay.m_currentValue = true;
+  await tick(700);
+  assert.deepStrictEqual(calls, ['false', 'true', 'false', 'true']);
+  assert.strictEqual(eval(script), true);
+  assert.strictEqual(main.m_callbacks.length, 1);
+  clearInterval(window.__droiddeckKeyboard.timer);
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+        (self.dir / "keyboard.js").write_text(agent.KEYBOARD_JS)
+        (self.dir / "harness.js").write_text(harness)
+        result = subprocess.run(["node", str(self.dir / "harness.js"), str(self.dir / "keyboard.js")],
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    @staticmethod
+    def capture(call):
+        try:
+            call()
+        except Exception as e:
+            return e
 
 
 class VrFocusTest(unittest.TestCase):

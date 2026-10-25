@@ -116,6 +116,50 @@ the timeline, then lessons and backlog. Companion to the README (what the app *d
 - **Org PR**: the draft #152 from 2026-10-02 (same branch name, 12 commits, conflicting with main) is
   refreshed as one commit on org main 45513c90 and marked ready, once the review of the translations
   is clean. Its old head is kept at `refs/backup/20261018/x86-64-steam-client-afa479ee`.
+- Korean: the review of the translations found `을(를)` left in the two uninstall strings; both client
+  names end in a vowel when read, so they take `를`. The next review was clean.
+- **Submitted**: #152 is one commit (a53fd117) on org main 45513c90, ready for review; Build APK passed.
+  Its `kwin` job (Build desktop package, KDE Plasma) failed for an unrelated reason: `build-kwin.sh`
+  requires Arch Linux ARM's `kwin-6.7.5`, which `extra` replaced with 6.8.0 on 2026-10-15; the job ran
+  only because refreshing the branch from its 2026-10-14 head spanned main's own `tools/desktop-kde`
+  changes. This branch changes nothing there.
+- **Org review** (CodeRabbit on #152, 7 points): the library cache is saved only by the newest scan; a
+  session records the client it ran (`steam-client.txt`) so an abandoned session's Steam logs come
+  from that client; two console logs with the same game and mod get distinct names in the VAC report;
+  CPU pinning also unwraps `FEXInterpreter`; the VAC hint names the game in pl, ru, uk, cs and bg.
+  Pinning `actions/download-artifact` to a SHA was left out: no workflow here pins one. Follow-up
+  commit eb8634ea.
+- Merged as ae94d9db.
+- **FEX r5** (report: a Galaxy S25 without the KDE desktop): the x86-64 client exited 127 at its first
+  FEX call, `error while loading shared libraries: libxxhash.so.0`. FEX, FEXServer, FEXRootFSFetcher
+  and FEXOfflineCompiler link libxxhash; linuxfs-r9 does not ship it, and the test device had it only
+  from the KDE desktop package. r5 bundles it in `usr/local/lib` with RUNPATH `$ORIGIN/../lib` on
+  those programs (the runtime has no ld.so.cache), and `build-in-arch.sh` now fails when a program
+  needs a library that is neither bundled nor listed in `tools/fex/runtime-libs.txt` (the r9 libraries
+  FEX uses). With the device's libxxhash hidden, r4 failed with the reported error and r5 loaded.
+  Mirrored in DroidDeck-Components (#5); the app moves to fex-2610-r5 and an installed r4 is replaced
+  at the next x86-64 start.
+- Merged as 7d21ba22.
+- **FEX from the catalog**: FEX builds may need to follow user reports faster than app builds, so the
+  app now reads Components' `fex.json` (directly, kept between starts) and passes it to the session; a
+  build is installed only once its sha256 matches and its programs load, the installed one stays while it
+  loads, and the build pinned in the script remains the first-start default. **Session logs** for the
+  x86-64 client now name the FEX build and its source, the rootfs and the client's builds, report the
+  rootfs download in tenths instead of a progress bar (one report's log ended in hundreds of bar lines),
+  and, when the web helper's GPU process keeps exiting (a report from an Adreno 840: the menus never
+  appeared), say so in one line with x86 `glxinfo`/`vulkaninfo` through FEX. Settings shows the FEX
+  build installed. FEX is now built and published by DroidDeck-Components' `build-fex.yml` from this
+  repository's `tools/fex`, replacing the archive on its single `fex` release and recording the version
+  in `fex.json`; this repository's `build-fex.yml` only checks the build. Tests: `test_fex_select.py`,
+  `FexCatalogTest`.
+  Components' first build there published `2610-r6` (run 39104443888). Device (Pocket FIT, r4
+  installed): the app read `fex.json`, and the next x86-64 start logged `downloading FEX (fex-2610-r6)`
+  then `FEX ready (fex-2610-r6, catalog)` a second later, with the rootfs and client lines; the client
+  came up on it.
+- Review of #1053: an install keeps the files it replaces aside until the installed copy loads and puts
+  them back otherwise (a failed copy could leave a partly replaced FEX marked as the new one;
+  `test_fex_install.py`), and the catalog is read on its own thread, not before the library scan, and
+  not in Offline Mode.
 
 ## 2026-10-15 - `feat/x86-64-steam-client`: SD card library, ARM parity, org main, Counter-Strike 2
 
@@ -313,6 +357,58 @@ stay as they were (`afa479ee`).
   direct runs it on the rootfs instead of the scout runtime.
 - **Open:** newer-runtime Linux games (sniper) untested; the arm64 client untested on this build; the
   Steam import watcher untested; an SD-card library for the x86 client deferred.
+
+## 2026-10-14 - `gog-library-listing`: the GOG library is drawn from the account listing, details follow
+
+- **The listing** (`GogLibrary`): the library came from `embed.gog.com/user/data/games`, which is the owned
+  ids and nothing else - no title, no art - so the tab stayed empty until every product had been asked about
+  one by one. It now comes from `account/getFilteredProducts` (`mediaType=1`, `hiddenFlag=0`, `sortBy=title`),
+  a hundred to a page, which carries the title, the category and the release date. Its `image` is a bare
+  hash the CDN serves only through Galaxy's own formatters, so a listing entry's card art is
+  `<hash>_glx_vertical_cover.webp` until the per-product fetch brings the wide background.
+- **The listing can fail** (`GogLibrary`): when it cannot be read the sync falls back to the older
+  owned-ids endpoint and keeps the old behaviour - there are no titles to draw, so nothing is painted
+  until the products come back.
+- **The tab paints first** (`GogLibrary.sync`): the whole library goes to `GogBackend` the moment the listing
+  is in, so the grid is on screen in seconds instead of after the last product.
+- **Each card fills itself in** (`GogLibrary.sync`, `GogBackend`): every product that comes back is handed
+  over on its own and only that entry is replaced, so a card swaps to its own art and title as soon as its
+  product has been asked about while the cards around it keep their objects - no list-wide repaint, no reset
+  of the scroll or the focus. A product this round finds uninstallable is dropped when the round ends, not in
+  the middle of it. The progress bar is gone once the grid has games, so a sync in progress no longer reads
+  as a list still loading.
+- **The art swap has no gap** (`GogLibrary.sync`, `StoresPage`): a card that swaps from the listing's cover to
+  the wide background keeps the cover while the new one decodes - the fetched record carries the cover the
+  card already shows, and the card's request names it as the memory-cache placeholder - so no card goes dark
+  in the middle of a sync.
+- **The per-product fetch stays** (`fetchGame`): `api.gog.com` is what has the description, the developer,
+  the publisher, the Galaxy portrait and the build generation, and the detail page reads all of those from
+  the library entry, so the listing alone cannot replace it.
+- **The cache keeps only what was fetched**: a listing entry that never got its details is asked about again
+  next sync rather than kept as a bare title, and a product the last sync found uninstallable stays out of
+  the list while it is re-checked. The cache's own entry stays on screen even while it is re-fetched, so a
+  forced refresh does not drop back to box art.
+- **A card patch adds what it brought** (`patchItems`, `GogBackend`): a product that comes back is patched into the
+grid where its title belongs, whether or not the grid already had that card. Replacing only the entries already
+there left a sync with nothing painted - the owned-ids fallback - showing an empty grid for the whole round. An
+empty listing is no longer posted either: that dropped the cards already on screen.
+- **A bar needs an empty tab** (`StoresPage`): the bar is drawn only for a sync line that carries a count ("25/55")
+  and only where the tab has nothing else on it - the storefront's shelves and the Installed tab's own cards are
+  content - so a library sync no longer creeps along above cards that are already there, and a line that only says
+  what it is doing leaves the empty state to say it.
+- **A page that fails keeps the pages that came** (`GogLibrary`): a listing page that cannot be read ends the
+listing instead of discarding it, so a page lost to a flaky request no longer costs the whole early paint. The
+cache is saved as the round goes, so a sync the user closes the app on still leaves a library to paint next launch.
+- **The hero waits under the card's art** (`StoresDetail`): the library's hero asked for the wide art with no
+  placeholder of its own, so a card that opened showed its own bitmap only for the length of the opening
+  animation and then fell back to the title's colour until 300-540KB had been decoded. It now builds the same
+  request a card does, naming the card's art as the memory-cache placeholder, so the cover stays under the hero
+  until the wide one lands.
+- **The listing says what it gave** (`GogLibrary`, `StoreNet`): one line per sync in the stores' log - how many
+  games the listing carried, or the page that could not be read - and every failed store GET, which used to
+  reach logcat only. A shared log can now show whether the account listing came back at all.
+- **Tests** (`GogListingTest`, `StoreCatalogPatchTest`): the filters - movies, other platforms, Galaxy's own entry, empty titles - the
+  fields a card needs, and a response that is not a listing.
 
 ## 2026-10-10 - `feat/wincomp-auto-sources`: Windows components picked by the game's source
 

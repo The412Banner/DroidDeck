@@ -10,7 +10,9 @@ Changes apply on the next game launch, including when Steam is already running.
 A running game must be restarted. Native Linux games and Steam itself are outside
 this editor's scope.
 
-The Components page also has a **Configuration** dropdown. **Default profile** owns the
+Opening **Components** from a game's launch settings selects that game's profile.
+Opening Components from the navigation rail selects **Default profile**. Use the
+**Configuration** dropdown to switch profiles explicitly. **Default profile** owns the
 default Proton and FEX preset. An installed game can inherit those defaults or
 choose its own Proton and FEX preset. Proton choices are applied through Steam's
 per-app compatibility mapping, including while Steam is running when its live
@@ -49,6 +51,12 @@ editor's **Clear environment overrides** action clears only the selected
 environment entries and is intentionally narrower than **Reset game profile**.
 Values are literal strings, with no shell expansion; quotes are only needed when
 the consuming program expects them.
+
+A Unity game under FEX (`UnityPlayer.dll` for Windows builds under Proton,
+`UnityPlayer.so` or `GameAssembly.so` for native Linux builds started by
+**Linux x86 (FEX)**) keeps FEX's TSO on when the Default profile's FEX preset
+turns it off: without TSO such games can deadlock or crash (seen with Megabonk
+and Crab Game). A FEX preset chosen for the game itself still applies.
 
 ## Defaults and available suggestions
 

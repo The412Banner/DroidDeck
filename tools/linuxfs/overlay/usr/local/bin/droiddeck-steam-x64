@@ -1,14 +1,14 @@
 #!/bin/bash
 set -eu
-FEX_TAG=fex-2610-r4
-FEX_SHA256=0b8b55b663390e35a85871bbd32985bf5ee4f9fbf3a70906255d914ad0257cdf
+FEX_TAG=fex-2610-r5
+FEX_SHA256=0fc1ca2ba13817ad70d1ea157119a75c9c02446b57d166e6d676cce0807c19c4
 FEX_URL=https://github.com/Droid-Deck/DroidDeck-Components/releases/download/$FEX_TAG/fex.tzst
 ROOTFS_URL=https://github.com/Droid-Deck/DroidDeck-Components/releases/download/fex-rootfs-ubuntu-24.04-2026-08-11/Ubuntu_24_04.sqsh
 ROOTFS_SHA256=2854b06d3ff1b8f6e526135bfb6dd5b7b30ab3ab73e79ae933a3d9fed959a178
 CDN=https://client-update.fastly.steamstatic.com
 # Must match the -clientbeta droiddeck-session starts this client with (steam_channel).
 X64_CHANNEL=steamdeck_publicbeta
-MANIFEST=steam_client_${X64_CHANNEL}_ubuntu12
+MANIFEST=steam_client_${X64_CHANNEL}_steamrt64
 
 REAL_HOME=${HOME:-/root}
 X64_HOME=${BL_X64_HOME:-$REAL_HOME/.droiddeck-x64}
@@ -37,17 +37,17 @@ x64_client_parts() {
     /^\t"/ && NF >= 3 && $4 == "" { block = $2 }
     $2 == "file" { file[block] = $4 }
     $2 == "sha2" { sha[block] = $4 }
-    END { for (b in file) if (b ~ /_all$/ || b ~ /_ubuntu12$/) print b, file[b], sha[b] }
+    END { for (b in file) if (b ~ /_all$/ || b ~ /_steamrt64$/) print b, file[b], sha[b] }
   ' "$1" | sort
 }
 
 x64_sync_client() {
   local chan cur version work total i block file sum old
   chan=$(cat "$STEAM_X64/package/beta" 2>/dev/null || echo "$X64_CHANNEL")
-  old=$STEAM_X64/package/steam_client_${chan}_ubuntu12.manifest
+  old=$STEAM_X64/package/steam_client_${chan}_steamrt64.manifest
   cur=$(awk -F'"' '$2 == "version" { print $4; exit }' "$old" 2>/dev/null || true)
   work=$(mktemp -d)
-  if ! curl -fsSL "$CDN/steam_client_${chan}_ubuntu12" -o "$work/manifest"; then
+  if ! curl -fsSL "$CDN/steam_client_${chan}_steamrt64" -o "$work/manifest"; then
     rm -rf "$work"; return 0
   fi
   version=$(awk -F'"' '$2 == "version" { print $4; exit }' "$work/manifest")
@@ -87,7 +87,7 @@ x64_map_direct() {
   [ -f "$STEAM_X64/config/config.vdf" ] || return 0
   if [ "$mode" = write ] && pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then return 0; fi
   python3 - "$mode" "$STEAM_X64/config/config.vdf" "$STEAM_X64/appcache/appinfo.vdf" "$X64_HOME/direct-auto.json" \
-    "$X64_HOME/direct-sniper" "$STEAM_X64/steamapps:/mnt/droiddeck-sd/x86-64/steamapps" "$(x64_default_tool)" \
+    "$X64_HOME/direct-sniper" "$STEAM_X64/steamapps:/mnt/droiddeck-sd/x86-64/steamapps:$X64_HOME/shared/arm64/steamapps" "$(x64_default_tool)" \
     "$REAL_HOME/.bl-compat-pending" ${BL_X64_DIRECT_APPS:-550} \
     <<'PY' || { [ "$mode" = live ] || step "could not map titles to DroidDeck direct"; }
 # Steam does not swap an installed build when the tool changes: a title installed for Windows stays on Proton.
@@ -319,24 +319,101 @@ print("droiddeck-steam-x64: %d Linux title(s) on DroidDeck direct (%d on the new
 PY
 }
 
-x64_prepare() {
-if [ ! -x /usr/local/bin/FEX ] || [ "$(cat /usr/local/share/fex-emu/.droiddeck-tag 2>/dev/null)" != "$FEX_TAG" ]; then
-  step "downloading FEX ($FEX_TAG)"
+# Whether every program in the FEX tree at $1 finds its libraries (r4 did not without libxxhash).
+fex_loads() {
+  local b out
+  for b in FEX FEXServer unsquashfs; do
+    out=$(/usr/lib/ld-linux-aarch64.so.1 --list "$1/usr/local/bin/$b" 2>&1) && ! grep -q "not found" <<<"$out" && continue
+    echo "== FEX check: $b: $(grep -E "not found|error" <<<"$out" | tr -s '\t ' ' ' | tr '\n' ';')" >&2
+    return 1
+  done
+}
+
+# Installs one FEX build only once its archive matches the sha256 and it loads. The files it replaces are kept
+# until the installed copy loads too, and put back otherwise; the tag is written last.
+fex_install() {
+  local tag=$1 sha=$2 urls=$3 dst=/ tmp u f
   tmp=$(mktemp -d)
-  curl -fL --progress-bar "$FEX_URL" -o "$tmp/fex.tzst"
-  if [ "$FEX_SHA256" != PENDING ]; then echo "$FEX_SHA256  $tmp/fex.tzst" | sha256sum -c --quiet; fi
-  zstd -dc "$tmp/fex.tzst" | tar -C / -x
+  for u in $urls; do
+    curl -fsSL --retry 2 "$u" -o "$tmp/fex.tzst" && echo "$sha  $tmp/fex.tzst" | sha256sum -c --quiet >/dev/null 2>&1 && break
+    rm -f "$tmp/fex.tzst"
+  done
+  if [ ! -s "$tmp/fex.tzst" ]; then
+    echo "== FEX $tag: no source gave the archive with sha256 ${sha:0:12}" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  if ! { mkdir "$tmp/root" && zstd -dc "$tmp/fex.tzst" | tar -C "$tmp/root" -x && fex_loads "$tmp/root"; }; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  (cd "$tmp/root" && find . ! -type d) > "$tmp/files"
+  mkdir "$tmp/old"
+  while IFS= read -r f; do
+    f=${f#./}
+    if [ -e "$dst$f" ] || [ -L "$dst$f" ]; then
+      cp -a --parents "$dst$f" "$tmp/old" || { echo "== FEX $tag: could not keep $dst$f aside" >&2; rm -rf "$tmp"; return 1; }
+    fi
+  done < "$tmp/files"
+  if tar -C "$tmp/root" -c . | tar -C "$dst" -x && fex_loads "$dst" &&
+     mkdir -p "${dst}usr/local/share/fex-emu" && echo "$tag" > "${dst}usr/local/share/fex-emu/.droiddeck-tag"; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  echo "== FEX $tag: the installed copy did not load or its tag was not written; putting the previous files back" >&2
+  while IFS= read -r f; do
+    f=${f#./}
+    [ -e "$tmp/old/$dst$f" ] || [ -L "$tmp/old/$dst$f" ] || rm -f "$dst$f"
+  done < "$tmp/files"
+  tar -C "$tmp/old$dst" -c . | tar -C "$dst" -x || echo "== FEX $tag: could not put the previous files back" >&2
   rm -rf "$tmp"
-  mkdir -p /usr/local/share/fex-emu && echo "$FEX_TAG" > /usr/local/share/fex-emu/.droiddeck-tag
-fi
-step "FEX ready ($FEX_TAG)"
+  return 1
+}
+
+# The build DroidDeck-Components' fex.json names (the app passes it as BL_FEX_*) comes first, then a working
+# installed one, then FEX_TAG above. Sets FEX_NOW and FEX_FROM.
+x64_fex() {
+  local have ok=
+  have=$(cat /usr/local/share/fex-emu/.droiddeck-tag 2>/dev/null || true)
+  [ -x /usr/local/bin/FEX ] && fex_loads / && ok=1
+  if [ -n "${BL_FEX_TAG:-}" ]; then
+    if [ -n "$ok" ] && [ "$have" = "$BL_FEX_TAG" ]; then FEX_NOW=$have FEX_FROM=catalog; return 0; fi
+    step "downloading FEX ($BL_FEX_TAG)"
+    if fex_install "$BL_FEX_TAG" "${BL_FEX_SHA256:-}" "${BL_FEX_URLS:-}"; then FEX_NOW=$BL_FEX_TAG FEX_FROM=catalog; return 0; fi
+    if [ -n "$ok" ]; then FEX_NOW=$have FEX_FROM="kept; $BL_FEX_TAG did not install"; return 0; fi
+  fi
+  if [ -n "$ok" ] && [ "$have" = "$FEX_TAG" ]; then FEX_NOW=$have FEX_FROM=built-in; return 0; fi
+  step "downloading FEX ($FEX_TAG)"
+  if fex_install "$FEX_TAG" "$FEX_SHA256" "$FEX_URL"; then FEX_NOW=$FEX_TAG FEX_FROM=built-in; return 0; fi
+  if [ -n "$ok" ]; then FEX_NOW=$have FEX_FROM="kept; $FEX_TAG did not install"; return 0; fi
+  return 1
+}
+
+# A resumable download that reports every tenth of its size as a step.
+x64_fetch() {
+  local url=$1 out=$2 label=$3 total pid rc=0 last=-1 pct
+  total=$(curl -fsSIL "$url" 2>/dev/null | tr -d '\r' | awk 'tolower($1) == "content-length:" { v = $2 } END { print v + 0 }')
+  curl -fL -sS -C - "$url" -o "$out" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 3
+    [ "$total" -gt 0 ] || continue
+    pct=$(( $(stat -c %s "$out" 2>/dev/null || echo 0) * 10 / total * 10 ))
+    if [ "$pct" -gt "$last" ]; then last=$pct; step "$label ($pct%)"; fi
+  done
+  wait "$pid" || rc=$?
+  return "$rc"
+}
+
+x64_prepare() {
+x64_fex || { step "FEX could not be installed; see $LOG"; exit 1; }
+step "FEX ready ($FEX_NOW, $FEX_FROM)"
 # The client's opt-in to its SteamRT3 build; without it, it re-executes through steam.sh, whose checks fail under proot.
 mkdir -p "$STEAM_X64" && : > "$STEAM_X64/.steam-enable-steamrt64-client"
 
 if [ ! -f "$ROOTFS/.droiddeck-complete" ]; then
-  step "downloading FEX's Ubuntu 24.04 x86 rootfs"
   # Resumes a part-done download; a finished one answers 416, which is not a failure here.
-  curl -fL --progress-bar -C - "$ROOTFS_URL" -o "$X64_HOME/rootfs.sqsh" || {
+  x64_fetch "$ROOTFS_URL" "$X64_HOME/rootfs.sqsh" "downloading FEX's Ubuntu 24.04 x86 rootfs" || {
     rc=$?
     [ "$rc" = 22 ] && [ -s "$X64_HOME/rootfs.sqsh" ] || { step "rootfs download failed (curl $rc)"; exit 1; }
   }
@@ -350,6 +427,7 @@ if [ ! -f "$ROOTFS/.droiddeck-complete" ]; then
   rm -f "$X64_HOME/rootfs.sqsh"
   touch "$ROOTFS/.droiddeck-complete"
 fi
+echo "== x86-64 rootfs: $(sed -n 's|.*/download/\([^/]*\)/.*|\1|p' <<<"$ROOTFS_URL") (sha256 ${ROOTFS_SHA256:0:12})" >&2
 # FEX falls back to the guest's own /etc/ld.so.preload (arm64 libraries) when the rootfs has none. The x86
 # session shim provides System V IPC, which Android kernels lack and the client's tier0 needs to start.
 : > "$ROOTFS/etc/ld.so.preload"
@@ -393,7 +471,7 @@ if [ ! -x "$STEAM_X64/steamrt64/steam" ] || [ ! -f "$STEAM_X64/package/droiddeck
     /^\t"/ && NF >= 3 && $4 == "" { block = $2 }
     $2 == "file" { file[block] = $4 }
     $2 == "sha2" { sha[block] = $4 }
-    END { for (b in file) if (b ~ /_all$/ || b ~ /_ubuntu12$/) print b, file[b], sha[b] }
+    END { for (b in file) if (b ~ /_all$/ || b ~ /_steamrt64$/) print b, file[b], sha[b] }
   ' "$work/manifest" | sort > "$work/parts"
   [ -s "$work/parts" ] || { step "no client components in $MANIFEST"; exit 1; }
   mkdir -p "$STEAM_X64/package"
@@ -442,39 +520,8 @@ ln -sfn "$STEAM_X64/ubuntu12_32" "$X64_HOME/.steam/bin32"
 ln -sfn "$STEAM_X64/ubuntu12_64" "$X64_HOME/.steam/bin64"
 ln -sfn "$STEAM_X64/linux32" "$X64_HOME/.steam/sdk32"
 ln -sfn "$STEAM_X64/linux64" "$X64_HOME/.steam/sdk64"
-# The client's bwrap probe (steam-runtime-check-requirements) needs user namespaces, which no Android app has.
-srt_real=$STEAM_X64/steamrt64/pv-runtime/steam-runtime-steamrt
-srt_shim=$X64_HOME/steamrt-shim
-if [ -d "$srt_real" ]; then
-  rm -rf "$srt_shim"
-  mkdir -p "$srt_shim/bin"
-  for e in "$srt_real"/* "$srt_real"/.[!.]*; do
-    [ -e "$e" ] || continue
-    [ "$(basename "$e")" = bin ] || ln -s "$e" "$srt_shim/$(basename "$e")"
-  done
-  for e in "$srt_real"/bin/*; do ln -s "$e" "$srt_shim/bin/$(basename "$e")"; done
-  rm -f "$srt_shim/bin/steam-runtime-check-requirements"
-  printf '#!/bin/sh
-exit 0
-' > "$srt_shim/bin/steam-runtime-check-requirements"
-  chmod 755 "$srt_shim/bin/steam-runtime-check-requirements"
-  rm -f "$srt_shim/bin/steam-runtime-launch-client"
-  cat > "$srt_shim/bin/steam-runtime-launch-client" <<'LAUNCH'
-#!/bin/sh
-while [ $# -gt 0 ]; do
-  case $1 in
-    --) shift; break ;;
-    --directory=*) cd "${1#--directory=}" || exit 127 ;;
-    --env=*) export "${1#--env=}" ;;
-    --unset-env=*) unset "${1#--unset-env=}" ;;
-  esac
-  shift
-done
-[ $# -gt 0 ] || exit 0
-exec "$@"
-LAUNCH
-  chmod 755 "$srt_shim/bin/steam-runtime-launch-client"
-fi
+# Valve's Steam Runtime container needs user namespaces and a session-bus launcher; steamrt-shim stands in for both.
+droiddeck-steamrt-shim "$STEAM_X64/steamrt64" "$X64_HOME/steamrt-shim" || rm -rf "$X64_HOME/steamrt-shim"
 # Valve's platform libraries ship without soname links (pressure-vessel makes them); ldconfig adds them here.
 srt_libs=$X64_HOME/steamrt-libs
 rm -rf "$srt_libs"
@@ -563,6 +610,7 @@ RUN
     printf '"InstallConfigStore"\n{\n\t"Software"\n\t{\n\t\t"Valve"\n\t\t{\n\t\t\t"Steam"\n\t\t\t{\n\t\t\t\t"CompatToolMapping"\n\t\t\t\t{\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n' \
       > "$STEAM_X64/config/config.vdf"
   fi
+  x64_share x86-64
   x64_map_direct
   # Each wrapper execs droiddeck-x64-arm-proton through an arm64 binary, which FEX hands straight to the CPU.
   arm_tools=$ARM_STEAM/compatibilitytools.d
@@ -612,9 +660,9 @@ VDF
   # Each client keeps its own libraries; written only while no x86 client runs, as it rewrites these on exit.
   if ! pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1; then
     listing_ok=0
-    if python3 - "$STEAM_X64" "${BL_X64_STEAM_LIBRARIES:-}" "$STEAM_X64/config/libraryfolders.vdf" "$STEAM_X64/steamapps/libraryfolders.vdf" <<'PY'; then
+    if BL_X64_SHARED=$X64_HOME/shared/arm64 python3 - "$STEAM_X64" "${BL_X64_STEAM_LIBRARIES:-}" "$STEAM_X64/config/libraryfolders.vdf" "$STEAM_X64/steamapps/libraryfolders.vdf" <<'PY'; then
 import json, os, re, sys
-keep = {os.path.realpath(sys.argv[1])}
+keep = {os.path.realpath(sys.argv[1]), os.path.realpath(os.environ["BL_X64_SHARED"])}
 # Without the session's list nothing is known about the card: leave the folders as they are.
 if not sys.argv[2]:
     sys.exit(3)
@@ -792,6 +840,37 @@ export STEAM_STEAMRT_RECURSION_GUARD=1
 export BL_WEBHELPER_HIDE_TRACER=1
 }
 
+x64_manifest_version() {
+  local chan
+  chan=$(cat "$STEAM_X64/package/beta" 2>/dev/null || echo "$X64_CHANNEL")
+  awk -F'"' '$2 == "version" { print $4; exit }' "$STEAM_X64/package/steam_client_${chan}_$1.manifest" 2>/dev/null || echo "?"
+}
+
+# What x86 GL and Vulkan look like through FEX's thunks, for a session whose menus failed on the GPU.
+x64_gpu_probe() {
+  local fex=${BL_FEX:-/usr/local/bin/FEX}
+  echo "== x86-64 GPU probe (x86 glxinfo and vulkaninfo through FEX):"
+  (
+    unset LD_LIBRARY_PATH
+    export DISABLE_GAMESCOPE_WSI=1 vk_xwayland_wait_ready=true LIBGL_KOPPER_DISABLE=true
+    timeout 30 "$fex" /usr/bin/glxinfo -B 2>&1 | grep -E "OpenGL (renderer|core profile version|version) string|direct rendering|rror" | head -5
+    timeout 30 "$fex" /usr/bin/vulkaninfo --summary 2>&1 | grep -E "deviceName|driverName|driverInfo|apiVersion|rror" | head -6
+  ) | sed 's/^/   /'
+}
+
+# Steam's menus come from the web helper; when its GPU process keeps exiting, Chromium gives up on the GPU and
+# the menus never appear. Says so once in the session log, with the probe above.
+x64_gpu_watch() {
+  local log=$STEAM_X64/logs/console-linux.txt from n codes
+  from=$(( $(wc -l 2>/dev/null < "$log" || echo 0) + 1 ))
+  tail -n0 -F --pid=$$ "$log" 2>/dev/null | grep -q -m1 "GPU process isn't usable" || return 0
+  n=$(tail -n +"$from" "$log" | grep -c "GPU process exited unexpectedly" || true)
+  codes=$(tail -n +"$from" "$log" | grep -oE "GPU process exited unexpectedly: exit_code=[0-9]+" | sed 's/.*=//' |
+    sort | uniq -c | awk '{ printf "%s%s x%s", s, $2, $1; s = ", " }')
+  echo "== x86-64: Steam's menu renderer gave up on the GPU after $n GPU process exits (exit code ${codes:-?}); the menus stay blank. See steam/console-linux.txt and steam/webhelper_gpu.txt"
+  x64_gpu_probe
+}
+
 x64_exec() {
   x64_env
   cd "$STEAM_X64"
@@ -801,7 +880,7 @@ x64_exec() {
      [ -x "$ARM_STEAM/steamrtarm64/steamwebhelper" ]; then
     local chan x86_build arm_build
     chan=$(cat "$STEAM_X64/package/beta" 2>/dev/null || echo "$X64_CHANNEL")
-    x86_build=$(awk -F'"' '$2 == "version" { print $4; exit }' "$STEAM_X64/package/steam_client_${chan}_ubuntu12.manifest" 2>/dev/null || true)
+    x86_build=$(awk -F'"' '$2 == "version" { print $4; exit }' "$STEAM_X64/package/steam_client_${chan}_steamrt64.manifest" 2>/dev/null || true)
     arm_build=$(awk -F'"' '$2 == "version" { print $4; exit }' "$ARM_STEAM/package/steam_client_${chan}_linuxarm64.manifest" 2>/dev/null || true)
     if [ -n "$x86_build" ] && [ "$x86_build" = "$arm_build" ]; then
       export BL_X64_ARM_WEBHELPER=/usr/local/bin/droiddeck-x64-arm-webhelper
@@ -828,7 +907,17 @@ x64_exec() {
   touch "$STEAM_X64/logs/bootstrap_log.txt"
   ( tail -n0 -F --pid=$$ "$STEAM_X64/logs/bootstrap_log.txt" 2>/dev/null |
       grep --line-buffered -oE 'Downloading update \([0-9,]+ of [0-9,]+ KB\)' | sed -u 's/,//g' >&2 ) &
+  echo "== x86-64 client: steamrt64 $(x64_manifest_version steamrt64) (the client may update itself)" >&2
+  x64_webhelper_gpu && { x64_gpu_watch >&2 & }
   exec "${BL_FEX:-/usr/local/bin/FEX}" "$STEAM_X64/steamrt64/steam" "$@"
+}
+
+x64_share() {
+  pgrep -f 'steamrt64/steam( |$)' >/dev/null 2>&1 && return 0
+  pgrep -f 'steamrtarm64/steam( |$)' >/dev/null 2>&1 && return 0
+  [ -d "$STEAM_X64/steamapps" ] && [ -d "$ARM_STEAM/steamapps" ] || return 0
+  droiddeck-steam-share "$1" "$ARM_STEAM" "$STEAM_X64" /mnt/droiddeck-sd/x86-64 "$X64_HOME/shared" ||
+    step "could not share the games between the clients"
 }
 
 # Steam renews its token every few days and refuses old copies: copy the newest every start, never while a client runs.
@@ -839,6 +928,76 @@ x64_sync_login() {
 import os, re, shutil, sys
 arm, x64, arm_reg, x64_reg = sys.argv[1:5]
 FILES = ("config/loginusers.vdf", "local.vdf")
+
+
+def read(path):
+    try:
+        return open(path, encoding="utf-8", errors="surrogateescape").read()
+    except OSError:
+        return None
+
+
+def write(path, text):
+    open(path, "w", encoding="utf-8", errors="surrogateescape").write(text)
+
+
+def block(text, name):
+    m = re.search(r'"%s"\s*\{' % name, text)
+    if not m:
+        return None
+    depth, k = 1, m.end()
+    while depth and k < len(text):
+        depth += text[k] == "{"
+        depth -= text[k] == "}"
+        k += 1
+    return m, k
+
+
+def accounts(root):
+    text = read(os.path.join(root, "config/config.vdf")) or ""
+    found = block(text, "Accounts")
+    if not found:
+        return {}
+    return dict(re.findall(r'"([^"]+)"\s*\{\s*"SteamID"\s*"(\d+)"', text[found[0].end():found[1]]))
+
+
+def add_accounts(root, wanted):
+    path = os.path.join(root, "config/config.vdf")
+    text = read(path)
+    if text is None:
+        return
+    have = accounts(root)
+    missing = {name: sid for name, sid in wanted.items() if name not in have}
+    if not missing:
+        return
+    entries = "".join('\n\t\t\t\t\t"%s"\n\t\t\t\t\t{\n\t\t\t\t\t\t"SteamID"\t\t"%s"\n\t\t\t\t\t}' % item for item in missing.items())
+    found = block(text, "Accounts")
+    if found:
+        text = text[:found[0].end()] + entries + text[found[0].end():]
+    else:
+        steam = re.search(r'"Valve"\s*\{\s*"Steam"\s*\{', text)
+        if not steam:
+            return
+        text = text[:steam.end()] + '\n\t\t\t\t"Accounts"\n\t\t\t\t{' + entries + '\n\t\t\t\t}' + text[steam.end():]
+    write(path, text)
+
+
+def set_keys(src_reg, dst_reg, force):
+    st, dt = read(src_reg), read(dst_reg)
+    if st is None or dt is None:
+        return
+    for key in ("AutoLoginUser", "RememberPassword"):
+        v = re.search(r'"%s"\s*"([^"]*)"' % key, st)
+        if not v:
+            continue
+        if re.search(r'"%s"\s*"' % key, dt):
+            if force:
+                dt = re.sub(r'("%s"\s*")[^"]*(")' % key, lambda m: m.group(1) + v.group(1) + m.group(2), dt, count=1)
+            continue
+        hkcu = re.search(r'"HKCU"\s*\{\s*"Software"\s*\{\s*"Valve"\s*\{\s*"Steam"\s*\{\n', dt)
+        if hkcu:
+            dt = dt[:hkcu.end()] + '\t\t\t\t\t"%s"\t\t"%s"\n' % (key, v.group(1)) + dt[hkcu.end():]
+    write(dst_reg, dt)
 
 
 def stamp(root):
@@ -852,36 +1011,32 @@ def stamp(root):
 
 
 a, x = stamp(arm), stamp(x64)
-if a is None and x is None:
-    sys.exit(0)
-if a is not None and x is not None and abs(a - x) < 1:
-    sys.exit(0)
-if x is None or (a is not None and a > x):
-    src, dst, sreg, dreg, who = arm, x64, arm_reg, x64_reg, "arm64"
-else:
-    src, dst, sreg, dreg, who = x64, arm, x64_reg, arm_reg, "x86-64"
-for f in FILES:
-    os.makedirs(os.path.dirname(os.path.join(dst, f)), exist_ok=True)
-    # copy2 keeps the time stamp, so both match until one client signs in again.
-    shutil.copy2(os.path.join(src, f), os.path.join(dst, f))
-if os.path.isfile(sreg):
-    st = open(sreg, encoding="utf-8", errors="surrogateescape").read()
-    if not os.path.isfile(dreg):
-        os.makedirs(os.path.dirname(dreg), exist_ok=True)
-        shutil.copy2(sreg, dreg)
+if a is not None or x is not None:
+    if x is None or (a is not None and a > x):
+        src, dst, sreg, dreg, who = arm, x64, arm_reg, x64_reg, "arm64"
     else:
-        dt = open(dreg, encoding="utf-8", errors="surrogateescape").read()
-        for key in ("AutoLoginUser", "RememberPassword"):
-            v = re.search(r'"%s"\s*"([^"]*)"' % key, st)
-            if v and re.search(r'"%s"\s*"' % key, dt):
-                dt = re.sub(r'("%s"\s*")[^"]*(")' % key, lambda m: m.group(1) + v.group(1) + m.group(2), dt, count=1)
-        open(dreg, "w", encoding="utf-8", errors="surrogateescape").write(dt)
-print("droiddeck-steam-x64: sign-in shared from the %s client (the newer one)" % who)
+        src, dst, sreg, dreg, who = x64, arm, x64_reg, arm_reg, "x86-64"
+    copy = a is None or x is None or abs(a - x) >= 1
+    if copy:
+        for f in FILES:
+            os.makedirs(os.path.dirname(os.path.join(dst, f)), exist_ok=True)
+            # copy2 keeps the time stamp, so both match until one client signs in again.
+            shutil.copy2(os.path.join(src, f), os.path.join(dst, f))
+        if os.path.isfile(sreg) and not os.path.isfile(dreg):
+            os.makedirs(os.path.dirname(dreg), exist_ok=True)
+            shutil.copy2(sreg, dreg)
+    set_keys(sreg, dreg, copy)
+    set_keys(dreg, sreg, False)
+    add_accounts(dst, accounts(src))
+    add_accounts(src, accounts(dst))
+    if copy:
+        print("droiddeck-steam-x64: sign-in shared from the %s client (the newer one)" % who)
 PY
 }
 
 case "${1:-}" in
   --sync-login) x64_sync_login; exit 0 ;;
+  --share) x64_share arm64; exit 0 ;;
   --prepare) x64_prepare; exit 0 ;;
   --exec) shift; x64_exec "$@" ;;
   --gpu) x64_gpu; exit $? ;;

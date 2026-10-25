@@ -52,6 +52,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,6 +70,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -101,6 +103,7 @@ internal fun DesktopPage(s: FrontEndState, a: FrontEndActions, modifier: Modifie
     val ctx = LocalContext.current
     val density = LocalDensity.current
     val narrow = LocalNarrowPane.current
+    val short = compactDesktop()
     val colors = MaterialTheme.colorScheme
     LaunchedEffect(Unit) { UserAppsState.refresh(ctx) }
     LaunchedEffect(s.ready) { com.droiddeck.launcher.store.StoreState.refresh(ctx) }
@@ -119,7 +122,7 @@ internal fun DesktopPage(s: FrontEndState, a: FrontEndActions, modifier: Modifie
         key = "desktop", tabs = tabs,
         onOpen = a.onDesktopSettings, onPrimary = a.onDesktop,
         modifier = modifier.clipToBounds(),
-        start = if (narrow) 20.dp else 44.dp, bottom = if (narrow) 20.dp else 44.dp,
+        start = if (narrow) 20.dp else 44.dp, bottom = 44.dp,
         background = {
             DesktopWall(installed.map { it.iconRes } + apps.mapNotNull { it.icon })
         },
@@ -131,8 +134,8 @@ internal fun DesktopPage(s: FrontEndState, a: FrontEndActions, modifier: Modifie
         },
         words = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    stringResource(R.string.rail_desktop), fontSize = if (narrow) 30.sp else 42.sp, lineHeight = if (narrow) 34.sp else 46.sp,
+                if (LocalConfiguration.current.screenHeightDp >= 400) Text(
+                    stringResource(R.string.rail_desktop), fontSize = if (short) 30.sp else 42.sp, lineHeight = if (short) 34.sp else 46.sp,
                     fontWeight = FontWeight.Black, color = colors.onBackground,
                 )
                 BusyChip(s)
@@ -142,8 +145,14 @@ internal fun DesktopPage(s: FrontEndState, a: FrontEndActions, modifier: Modifie
             PrimaryButton(open, enabled = !s.busy, main = true, large = true, icon = Icons.Outlined.DesktopWindows, onClick = click)
         },
         beside = {
-            HeroIconButton(Icons.Outlined.Storefront, stringResource(R.string.flathub_name), FlathubTeal, "desktop:flathub") { at -> openFrom(at, null, "store") }
-            HeroIconButton(Icons.Filled.Add, stringResource(R.string.user_apps_add), null, "desktop:add") { if (!s.busy) adding = true }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
+                HeroIconButton(Icons.Outlined.Storefront, stringResource(R.string.flathub_name), FlathubTeal, "desktop:flathub") { at -> openFrom(at, null, "store") }
+                HeroIconButton(Icons.Filled.Add, stringResource(R.string.user_apps_add), null, "desktop:add") { if (!s.busy) adding = true }
+                if (s.desktopPresent) UninstallDesktop(enabled = !s.runtimeActionsBlocked, onUninstall = a.onRemoveDesktop)
+            }
         },
         rows = { tab ->
             if (tab == SheetTab.FILES) DesktopFiles(s, a)
@@ -152,6 +161,9 @@ internal fun DesktopPage(s: FrontEndState, a: FrontEndActions, modifier: Modifie
     )
     if (adding && !s.busy) AddAppDialog(s.ready, onDismiss = { adding = false }) { request, label -> UserAppsState.add(ctx, request, label) }
 }
+
+@Composable
+private fun compactDesktop() = LocalNarrowPane.current || LocalConfiguration.current.screenHeightDp < 600
 
 @Composable
 private fun DesktopDock(
@@ -171,7 +183,7 @@ private fun DesktopDock(
     LaunchedEffect(Unit) { mounted[0] = true }
     val scroll = rememberScrollState()
     if (keys.isEmpty() && available.isEmpty() && UserAppsState.working == null && UserAppsState.lastError == null) return
-    Column(Modifier.fillMaxWidth().padding(top = if (narrow) 14.dp else 22.dp)) {
+    Column(Modifier.fillMaxWidth().padding(top = if (compactDesktop()) 14.dp else 22.dp)) {
         Text(
             stringResource(R.string.user_apps_section).uppercase(), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp,
             color = colors.onSurfaceVariant, modifier = Modifier.padding(start = if (narrow) 20.dp else 44.dp, bottom = 8.dp),
@@ -366,6 +378,7 @@ private fun DesktopFiles(s: FrontEndState, a: FrontEndActions) {
 
 @Composable
 private fun UninstallDesktop(enabled: Boolean, onUninstall: () -> Unit) {
+    val canUninstall by rememberUpdatedState(enabled)
     val colors = MaterialTheme.colorScheme
     val label = stringResource(R.string.common_uninstall)
     val title = stringResource(R.string.desktop_uninstall_title)
@@ -383,7 +396,7 @@ private fun UninstallDesktop(enabled: Boolean, onUninstall: () -> Unit) {
                 Text(note, fontSize = 13.sp, color = colors.onSurfaceVariant, modifier = Modifier.stepItem(1).padding(start = 4.dp, bottom = 12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), modifier = Modifier.fillMaxWidth().stepItem(2)) {
                     StepChoice(keep, enabled = open, modifier = Modifier.focusRequester(first)) { Steps.fold() }
-                    StepChoice(label, danger = true, enabled = open) { Steps.fold(); onUninstall() }
+                    StepChoice(label, danger = true, enabled = open && canUninstall) { Steps.fold(); onUninstall() }
                 }
             })
         }

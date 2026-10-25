@@ -44,6 +44,19 @@ object SessionDisplay {
     fun unfoldedGameHeight(width: Int, height: Int): Int =
         minOf(width * 9 / 16, (height * UNFOLDED_MAX_GAME_SHARE).toInt()) and 1.inv()
 
+    fun unfoldedControlsWanted(
+        enabled: Boolean,
+        foldable: Boolean,
+        controllerConnected: Boolean,
+        keepWithController: Boolean,
+        steamDeckPad: Boolean,
+        pip: Boolean,
+        width: Int,
+        height: Int,
+        smallestWidthDp: Int,
+    ): Boolean = enabled && foldable && (keepWithController || !controllerConnected) && steamDeckPad &&
+        !pip && width > 0 && height > 0 && smallestWidthDp >= UNFOLDED_MIN_DP
+
 
     fun panelSize(context: Context): Pair<Int, Int> {
         val manager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -66,5 +79,5 @@ object SessionDisplay {
     }
 
     fun canStretch16x9(size: Pair<Int, Int>): Boolean =
-        (size.second * 16 + 4) / 9 / 2 * 2 > size.first
+        (size.second * 16 + 4) / 9 / 2 * 2 > size.first || (size.first * 9 + 8) / 16 / 2 * 2 > size.second
 }

@@ -21,7 +21,11 @@ FEX_LAUNCHER = "droiddeck-fex-tool"
 FEX_FILES = ("toolmanifest.vdf", "compatibilitytool.vdf", FEX_LAUNCHER)
 FEX_APPID = "3127680"
 SNIPER_APPID = "1628350"
-FEX_DEPENDENCIES = (FEX_APPID, SNIPER_APPID)
+SLR4_APPID = "4183110"
+FEX_DEPENDENCIES = (FEX_APPID, SNIPER_APPID, SLR4_APPID)
+REQUIRED_TOOLS = (PROTON_ARM64_APPID,) + FEX_DEPENDENCIES
+FULLY_INSTALLED = 4
+UPDATE_REQUIRED = 2
 REQUEST_HANDOFF_SECONDS = 30
 PLAYABLE_TYPES = frozenset(("game", "demo", "application", "beta"))
 COMPAT_DIR = os.path.join(os.environ.get("HOME", "/root"), ".local", "share", "droiddeck-compat")
@@ -65,11 +69,17 @@ bl_store_launch() {
   fi
   [ -x /usr/local/bin/droiddeck-store-launch ] || return 0
   /usr/local/bin/droiddeck-store-launch "$@"
-  [ $? -eq 10 ] && BL_STORE_EXIT=1
+  rc=$?
+  [ $rc -eq 10 ] && BL_STORE_EXIT=1
+  [ $rc -eq 11 ] && exit 0
+  [ $rc -eq 12 ] && exit 1
   return 0
 }
 
 bl_run() {
+  if [ -x /usr/local/bin/droiddeck-steamvr-flat ] && /usr/local/bin/droiddeck-steamvr-flat "${verb:-}"; then
+    set -- /usr/local/bin/droiddeck-steamvr-game "$@"
+  fi
   if [ -n "${BL_STORE_EXIT:-}" ]; then
     "$@"
     rc=$?
@@ -239,10 +249,32 @@ bl_vacdiag() {
 """
 
 BL_DIRECTAUDIO_SETUP = """
+bl_is_steam_installscript_target() {
+  local target=${1:-}
+  local steam_root=${STEAM_COMPAT_CLIENT_INSTALL_PATH:-${XDG_DATA_HOME:-$HOME/.local/share}/Steam}
+  local helper="$steam_root/legacycompat/iscriptevaluator.exe"
+  [ -f "$helper" ] && [[ -n "$target" && "$target" -ef "$helper" ]]
+}
+
 bl_directaudio() {
+  case "${verb:-}" in
+    run|waitforexitandrun|runinprefix) ;;
+    *) return 0 ;;
+  esac
   base=$1
   [ -n "${BL_DIRECTAUDIO:-}" ] || return 0
   [ -d "$BL_DIRECTAUDIO" ] || return 0
+  if bl_is_steam_installscript_target "${2:-}"; then
+    echo "droiddeck-proton: DirectAudio skipped for Steam's install-script evaluator" >&2
+    return 0
+  fi
+  streamer=$(cat "${XDG_RUNTIME_DIR:-/tmp}/droiddeck-remote-play" 2>/dev/null)
+  if [ -n "$streamer" ] && kill -0 "$streamer" 2>/dev/null; then
+    WINE_AUDIO_DRIVER=pulse
+    export WINE_AUDIO_DRIVER
+    echo "droiddeck-proton: a Remote Play client is connected - game audio goes through PulseAudio so the stream carries it" >&2
+    return 0
+  fi
   version=$("$base/files/bin-arm64/wine" --version 2>/dev/null)
   major=${version#wine-}
   major=${major%%.*}
@@ -330,7 +362,7 @@ for name in %s; do
 done
 if [ -n "$depot" ]; then
   bl_components "$depot"
-  bl_directaudio "$depot"
+  bl_directaudio "$depot" "$@"
   bl_game_cpus
   bl_idtech3 "$@"
   bl_vacdiag "$@"
@@ -385,7 +417,7 @@ if [ -n "${PROOT_FP_KEY:-}" ] && [ -f "$audit" ]; then
   esac
 fi
 bl_components "$here"
-bl_directaudio "$here"
+bl_directaudio "$here" "$@"
 bl_game_cpus
 bl_idtech3 "$@"
 bl_vacdiag "$@"
@@ -437,7 +469,12 @@ verb=$1; shift
 case $verb in
   getcompatpath | getnativepath) printf '%s\\n' "$1"; exit 0 ;;
 esac
-exec /usr/local/bin/droiddeck-fex steam "$verb" "$@"
+""" + BL_GAME_CPUS_SETUP + """
+bl_game_cpus
+if [ -x /usr/local/bin/droiddeck-steamvr-flat ] && /usr/local/bin/droiddeck-steamvr-flat "$verb"; then
+  exec /usr/local/bin/droiddeck-steamvr-game ${BL_TASKSET:-} /usr/local/bin/droiddeck-fex steam "$verb" "$@"
+fi
+exec ${BL_TASKSET:-} /usr/local/bin/droiddeck-fex steam "$verb" "$@"
 """
 
 
@@ -850,6 +887,36 @@ def native_targets(steam_root, apps):
     return targets
 
 
+def app_manifest(steam_root, app):
+    for library in libraries(steam_root):
+        try:
+            with open(os.path.join(library, "steamapps", "appmanifest_%s.acf" % app), encoding="utf-8", errors="replace") as f:
+                return tokenize(f.read())
+        except OSError:
+            continue
+    return None
+
+
+def manifest_flags(tokens):
+    for i in range(len(tokens) - 1):
+        if tokens[i].lower() == '"stateflags"':
+            value = tokens[i + 1].strip('"')
+            return int(value) if value.isdigit() else 0
+    return 0
+
+
+def tool_downloads(steam_root):
+    """(app, "install" or "update") for each tool the client has yet to install or bring up to date."""
+    wanted = []
+    for app in REQUIRED_TOOLS:
+        tokens = app_manifest(steam_root, app)
+        if tokens is None:
+            wanted.append((app, "install"))
+        elif not manifest_flags(tokens) & FULLY_INSTALLED or manifest_flags(tokens) & UPDATE_REQUIRED:
+            wanted.append((app, "update"))
+    return wanted
+
+
 def fex_missing(steam_root):
     missing = []
     for app in FEX_DEPENDENCIES:
@@ -863,24 +930,33 @@ def fex_wanted_marker():
     return os.path.join(os.environ.get("HOME", "/root"), ".config", "droiddeck", "fex-wanted")
 
 
-def request_fex(steam_root, asked):
+def request_app(steam_root, app):
     import subprocess
+    client = os.path.join(steam_root, "steamrtarm64", "steam")
+    if not os.access(client, os.X_OK):
+        return []
+    try:
+        process = subprocess.Popen([client, "steam://install/%s" % app], stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return []
+    try:
+        process.wait(timeout=REQUEST_HANDOFF_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    return [app]
+
+
+def request_fex(steam_root, asked):
     client = os.path.join(steam_root, "steamrtarm64", "steam")
     missing = fex_missing(steam_root)
     if not os.access(client, os.X_OK) or any(app in asked for app in missing):
         return []
     for app in missing:
         asked.add(app)
-        try:
-            process = subprocess.Popen([client, "steam://install/%s" % app], stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, start_new_session=True)
-        except OSError:
-            continue
-        try:
-            process.wait(timeout=REQUEST_HANDOFF_SECONDS)
-        except subprocess.TimeoutExpired:
-            pass
-        return [app]
+        requested = request_app(steam_root, app)
+        if requested:
+            return requested
     return []
 
 
@@ -984,6 +1060,16 @@ def plan_mapping(current, installed, runnable, default, auto, native=None, picks
     return changes, kept
 
 
+def picked_apps(state):
+    picked = state.get("picked", ())
+    return {app for app in picked if isinstance(app, str)} if isinstance(picked, list) else set()
+
+
+def picked_after(current, changes):
+    return sorted(({app for app, tool in current.items() if tool} - set(changes) |
+                   {app for app, tool in changes.items() if tool}) - {"0"}, key=app_order)
+
+
 def followers(state, current):
     if "auto" in state:
         return state["auto"]
@@ -1030,10 +1116,89 @@ def requested_tool(request, catalog):
 
 
 def game_requests(directory=None):
-    value = read_json(state_path("games.json", directory))
-    if value.get("version") != 1 or not isinstance(value.get("games"), dict):
-        return {}
-    return value["games"]
+    return read_game_requests(directory)[0]
+
+
+def read_game_requests(directory=None):
+    try:
+        with open(state_path("games.json", directory), encoding="utf-8") as f:
+            text = f.read()
+        value = json.loads(text)
+    except (OSError, ValueError):
+        return {}, None
+    if not isinstance(value, dict) or value.get("version") != 1 or not isinstance(value.get("games"), dict):
+        return {}, text
+    return value["games"], text
+
+
+def write_game_requests(requests, original, directory=None):
+    path = state_path("games.json", directory)
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() != original:
+                return False
+    except OSError:
+        if original is not None:
+            return False
+    return write_json(path, {"version": 1, "games": requests})
+
+
+def valid_game_request(app, request):
+    return (isinstance(app, str) and re.fullmatch(r"[1-9][0-9]*", app) is not None and int(app) <= 0xFFFFFFFF and
+            (request is None or isinstance(request, dict) and isinstance(request.get("dir"), str) and
+             request["dir"] != "" and isinstance(request.get("valve"), bool)))
+
+
+def settle_game_requests(requests, state, current, catalog, missing_is_cleared=False):
+    recorded = state.get("games_applied")
+    if isinstance(recorded, dict):
+        applied = dict(recorded)
+    else:
+        applied = dict(requests) if "tools" in state else {}
+    by_name = {t["name"]: t for t in catalog}
+    out = dict(requests)
+    for app, request in requests.items():
+        if not valid_game_request(app, request) or app not in applied or applied[app] != request:
+            continue
+        if request is None:
+            del out[app]
+            continue
+        wanted = requested_tool(request, catalog)
+        if wanted is None:
+            continue
+        if app in current:
+            picked = current[app]
+        elif missing_is_cleared:
+            picked = ""
+        else:
+            continue
+        if picked == wanted:
+            continue
+        tool = by_name.get(picked)
+        if tool and tool["dir"]:
+            out[app] = {"valve": tool["valve"], "dir": tool["dir"]}
+        else:
+            del out[app]
+    return out, out != requests
+
+
+def settled_game_requests(state, current, catalog, missing_is_cleared=False, directory=None):
+    for _ in range(2):
+        requests, text = read_game_requests(directory)
+        settled, moved = settle_game_requests(requests, state, current, catalog, missing_is_cleared)
+        if not moved or write_game_requests(settled, text, directory):
+            return settled
+    return None
+
+
+def applied_game_requests(requests, overrides, state):
+    recorded = state.get("games_applied")
+    before = recorded if isinstance(recorded, dict) else {}
+    if requests is None:
+        return dict(before)
+    return {app: request if app in overrides and overrides[app] is not DEFERRED_GAME_TOOL else before[app]
+            for app, request in requests.items()
+            if app in overrides and overrides[app] is not DEFERRED_GAME_TOOL or app in before}
 
 
 def requested_games(requests, catalog, runnable=None):
@@ -1055,6 +1220,32 @@ def requested_games(requests, catalog, runnable=None):
         else:
             resolved[app] = tool
     return resolved
+
+
+OWN_PROTON = "DroidDeck-Proton"
+ARCH_WORDS = re.compile(r"(?i)aarch64|arm64|x86_64|x86-64|amd64")
+
+
+def own_builds(tools):
+    return [t for t in tools if isinstance(t, dict) and not t.get("valve") and
+            isinstance(t.get("dir"), str) and t["dir"].startswith(OWN_PROTON) and t.get("name")]
+
+
+def build_key(name):
+    return [int(n) for n in re.findall(r"\d+", ARCH_WORDS.sub(" ", name))]
+
+
+def own_proton_moves(state, catalog):
+    names = {t["name"] for t in catalog}
+    before = state.get("tools") if isinstance(state.get("tools"), list) else ()
+    seen = state.get("own_builds") if isinstance(state.get("own_builds"), list) else []
+    known = {n for n in seen if isinstance(n, str)} | {t["name"] for t in own_builds(before)} | {t["name"] for t in own_builds(catalog)}
+    state["own_builds"] = sorted(known)
+    builds = own_builds(catalog)
+    if not builds:
+        return None, set()
+    newest = max(builds, key=lambda t: (build_key(t["dir"]), t["dir"]))["name"]
+    return newest, known - names
 
 
 def now_ms():
@@ -1174,6 +1365,21 @@ def steam_running():
     return False
 
 
+def game_running():
+    try:
+        pids = [p for p in os.listdir("/proc") if p.isdigit()]
+    except OSError:
+        return False
+    for pid in pids:
+        try:
+            with open("/proc/%s/cmdline" % pid, "rb") as f:
+                if b"\0SteamLaunch\0AppId=" in f.read():
+                    return True
+        except OSError:
+            continue
+    return False
+
+
 def live_helper_running(directory=None):
     try:
         with open(state_path("live.pid", directory)) as f:
@@ -1202,28 +1408,49 @@ def register_default(config_path, apps=(), protect=(), default=None, catalog=Non
             catalog = tool_catalog(os.path.dirname(os.path.dirname(os.path.abspath(config_path))),
                                    dict(protect) if isinstance(protect, dict) else {name: name for name in protect})
         names = [t["name"] for t in catalog]
+        newest, gone = own_proton_moves(state, catalog)
+        previous, applied, chosen = state.get("default"), state.get("applied"), state.get("seq")
         if default is None:
             if settle:
                 default, state = choose_default(current.get("0", ""), state, read_json(state_path("request.json", directory)), catalog)
             else:
                 default = state.get("default") if state.get("default") in names else TOOL
+            if settle and newest and default == TOOL and state.get("applied") == applied and state.get("seq") == chosen and (
+                    previous in gone or not state.get("own_proton")):
+                default = newest
+                state.update(default=newest, seq=now_ms(), source="update")
+            if settle and newest:
+                state["own_proton"] = True
+        if newest:
+            for app, name in list(current.items()):
+                if app != "0" and name in gone:
+                    set_mapping(tokens, mapping, app, newest)
+                    current[app] = newest
+            if isinstance(state.get("auto"), dict):
+                state["auto"] = {app: newest if name in gone else name for app, name in state["auto"].items()}
         steam_root = os.path.dirname(os.path.dirname(os.path.abspath(config_path)))
-        overrides = requested_games(game_requests(directory), catalog)
-        native = native_targets(steam_root, set(apps) | set(picks))
+        requests = settled_game_requests(state, current, catalog, not steam_running(), directory)
+        overrides = requested_games(requests or {}, catalog)
+        managed = state.get("auto", {}).keys() if isinstance(state.get("auto"), dict) else ()
+        native_choices = state.get("native_choices", ())
+        native = native_targets(steam_root, set(apps) | set(picks) | set(managed) | set(native_choices))
         if linux_tool != FEX_TOOL:
             native = {app: linux_tool if tool == FEX_TOOL else tool for app, tool in native.items()}
+        for app in picked_apps(state) & set(native):
+            current.setdefault(app, "")
         changes, auto = plan_mapping(
-            current, apps, names, default, followers(state, current),
-            native, picks,
-            overrides, state.get("auto", {}).keys() if isinstance(state.get("auto"), dict) else (),
-            state.get("native", ()))
+            current, apps, names, default, followers(state, current), native, picks,
+            overrides, managed, native_choices)
         for app, tool in changes.items():
             set_mapping(tokens, mapping, app, tool)
         text = serialize(tokens)
         if text != serialize(tokenize(original)):
             write_changed(config_path, text)
         state["auto"] = {app: tool for app, tool in auto.items() if tool is not NATIVE_CHOICE}
-        state["native"] = sorted(app for app, tool in auto.items() if tool is NATIVE_CHOICE)
+        state["native_choices"] = sorted(app for app, tool in auto.items() if tool is NATIVE_CHOICE)
+        state["picked"] = picked_after(current, changes)
+        state["games_applied"] = applied_game_requests(requests, overrides, state)
+        state.pop("native", None)
         state["tools"] = catalog
         state.setdefault("default", default)
         write_json(state_path("state.json", directory), state)

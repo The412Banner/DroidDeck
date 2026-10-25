@@ -3,7 +3,7 @@
 Valve's x86-64 Linux Steam client, run unchanged under FEX beside the default arm64 client. It is
 opt-in: Steam settings, **Steam client: x86-64** (`steamClientArch`, passed to the
 session as `BL_STEAM_CLIENT_ARCH=x86_64`, applies from the next session), or the desktop menu entry
-**Steam x86-64 (FEX, experimental)**. The Games tab lists the active client's games and tags its
+**Steam x86-64 (FEX, experimental)**. The Library lists the active client's games and tags its
 header "x86-64" while that client's list is shown. This page records why each workaround exists and what was seen
 on devices. The timeline is in `docs/progress-log.md`.
 
@@ -39,6 +39,11 @@ arm64 client down first.
   standalone launcher honours up to five times, as `steam.sh` does).
 - Before each start `x64_sync_client` brings the client to Valve's current build, downloading only the
   changed parts (9 of 28 on a device). If that fails, the client updates itself.
+- The client is the `steamrt64` platform (`steamrt64/steam`, the manifest it checks for updates), so
+  the install, the sync and the web-helper build check read `steam_client_<channel>_steamrt64`. The
+  `ubuntu12` manifest lags it (device: 1792108788 against 1792192922): an install from it was always
+  one build behind the arm64 client, so the arm64 web helper was never used, and the client updated
+  itself in place at its first start (506 MB) after the helper had already been chosen.
 - `.steam-enable-steamrt64-client` in the client folder opts into the SteamRT3 build
   (`steamrt64/steam`). Without it the client re-executes itself in the scout environment through
   `steam.sh`, whose start-up checks need what proot cannot give; the session stalled before the
@@ -48,7 +53,8 @@ arm64 client down first.
   ("Steam now requires user namespaces") when `steam-runtime-check-requirements`' bwrap probe cannot
   create a user namespace, which no Android app can. `STEAM_RUNTIME_STEAMRT` points at
   `steamrt-shim`: Valve's runtime linked file by file with only the probe replaced (`exit 0`). proot
-  is the container, as for the arm64 client.
+  is the container, as for the arm64 client. `droiddeck-steamrt-shim` builds it, and builds the same
+  shim for the arm64 client if that one is containerized too ([arm64-steam-client.md](arm64-steam-client.md)).
 - **Re-exec after an update.** The client re-executes itself inside the SteamRT container through
   `pressure-vessel-wrap` (bwrap). `STEAM_STEAMRT_RECURSION_GUARD=1` says it is already inside one; the
   FEX rootfs with the client's `steamrt64` libraries is that container.
@@ -119,6 +125,11 @@ The client's web helper draws its whole UI. There are two:
   backend through FEX's GL thunk to zink and Turnip. On ANGLE's Vulkan backend the x86 compositor
   thread was the bottleneck (16 fps against 60). Never `--in-process-gpu`, the preload's default: a
   GPU crash there took the whole helper down (102 restarts). `BL_X64_CEF_GPU=0` keeps it in software.
+  Its GPU process loads libpci, which exits when `/sys/bus/pci/devices` lists a device whose files
+  the app may not read (a RedMagic's PCIe root ports): every GPU process exited with status 1 in about
+  50 ms, software ones too, until Chromium gave up ("GPU process isn't usable") and the menus stayed
+  blank. `LinuxRuntime` binds an empty folder over `/sys/bus/pci/devices` on such devices; device:
+  0 GPU process exits, ANGLE on zink and Turnip.
 
 The session shim (`preload/net.c`) turns `steamrt64/steamwebhelper.sh`'s exec of `./steamwebhelper`
 into `BL_X64_ARM_WEBHELPER`. Nothing in the client's folder is edited: the client checksums its files
@@ -186,24 +197,42 @@ alone would then read as an installed client.
     restarted from the top forever (found with `perf_event_open` IP sampling, since proot holds
     ptrace). Such a range is now skipped whole and a second exhausted scan returns `-ENOMEM`, as the
     kernel does (`fex-2610-r3`).
-- **`build-fex.yml`.** The build job runs third-party images and toolchains with a read-only token,
-  and inputs reach the shell as environment variables. A separate publish job (contents: write) runs
-  only on a dispatch with a tag, host thunks on and no extra `cxxflags` (diagnostic builds such as
-  `-DDEBUG_STRACE` stay artifacts). `droiddeck-steam-x64` pins each tag's sha256 and the archive is not
-  reproducible, so a tag is never rebuilt over. The release is never the repo's Latest nor a
-  pre-release: it is a component fetched by tag, not something users install.
+- **Building and publishing.** Droid-Deck/DroidDeck-Components' `build-fex.yml` builds `tools/fex` from
+  this repository at a chosen ref (default `main`) with host thunks, in the same Arch Linux ARM container
+  with a read-only token, then a separate job replaces `fex.tzst` on Components' single `fex` release,
+  checks the digest GitHub stored, and records the build's version, sha256 and size in its `fex.json`
+  (in that order: a device that reads the old `fex.json` meanwhile gets a mismatching archive and keeps
+  its FEX). This repository's `build-fex.yml` only builds `tools/fex` when it changes (and on dispatch,
+  for diagnostic builds such as `-DDEBUG_STRACE`); nothing is published from it.
 - Releases so far: `fex-2609-r2` (no thunks), `fex-2609-r3` (thunks), `fex-2610-r1`, `fex-2610-r2`,
-  `fex-2610-r3`, `fex-2610-r4` (current: in-root resolution when openat2 is missing, exact MAP_32BIT
-  marking). They were built and published in The412Banner/DroidDeck; up to r3 their tags point at that
-  repository's `main`, from r4 at the commit each was built from.
+  `fex-2610-r3`, `fex-2610-r4` (in-root resolution when openat2 is missing, exact MAP_32BIT
+  marking), `fex-2610-r5` (current: bundles libxxhash, which the Linux runtime does not ship; the
+  build fails when a program in the package needs a library that is neither bundled nor listed in
+  `tools/fex/runtime-libs.txt`). They were built and published in The412Banner/DroidDeck; up to r3 their tags point at that
+  repository's `main`, from r4 at the commit each was built from. Later builds are versions on the single
+  `fex` release; `fex-2610-r5` stays published as the build `droiddeck-steam-x64` pins.
 - **Where the app gets it.** The app downloads FEX from Droid-Deck/DroidDeck-Components, where nothing is
-  uploaded by hand: a new tag is published by `build-fex.yml`, recorded in that repository's `fex.json`
-  (sha256 and size), and brought in by its `mirror-release.yml`, which refuses an archive that does not
-  match. `FEX_TAG` and `FEX_SHA256` in `droiddeck-steam-x64` then move to the new tag. The rootfs is
+  uploaded by hand. The app follows its `fex.json`: while the x86-64 client is selected it reads it from
+  Components' `main` (directly, at most every ten minutes) and keeps the last copy, and a session passes
+  that build to `droiddeck-steam-x64` (`BL_FEX_TAG`, `BL_FEX_SHA256`, `BL_FEX_URLS` with the download
+  source's mirrors). The script installs a build only after its archive matches the sha256 and every
+  program in it loads (`ld-linux --list`); the files it replaces are kept aside until the installed copy
+  loads too and put back otherwise, and the tag is written last. Otherwise it keeps the installed one while that still loads,
+  then falls back to `FEX_TAG`/`FEX_SHA256` built in, which stay the first-start default when no copy
+  of `fex.json` has been read. Publishing a FEX build therefore takes a Components run only; a
+  replaced archive cannot be pointed back to, so undoing a build means building an earlier ref. The rootfs is
   FEX-Emu's own image, unmodified: `fex-rootfs.json` there names its rootfs.fex-emu.gg link, sha256 and
   size, and `mirror-upstream.yml` fetches it into the catalog's release only when both match. A newer
   image is a new catalog release; `ROOTFS_URL` and `ROOTFS_SHA256` then move to it, and a device that
   already unpacked one keeps it.
+
+- **What a session log shows.** `FEX ready (<tag>, <source>)` names the build and where it came from
+  (`catalog`, `built-in`, or `kept` when a newer one did not install, with the reason a line above);
+  `x86-64 rootfs:` names the image; `x86-64 client:` the client's steamrt64 build at start
+  (it may update itself after). The rootfs download reports every tenth of its size as a step. When the
+  web helper's GPU process keeps exiting until Chromium gives up on the GPU (the menus then never appear),
+  one line says so with the exit codes, followed by x86 `glxinfo -B` and `vulkaninfo --summary` through
+  FEX's thunks.
 
 ## DroidDeck direct for Linux games and runtimes
 
@@ -262,13 +291,29 @@ alone would then read as an installed client.
 
 ## Libraries, SD card and sharing between clients
 
-- **Separate libraries.** With folders shared, each client could update, verify or switch the
-  other's games. A title with a Linux build runs as that in the x86 client and as the Windows build in
-  the arm64 one, so opening it in the other client switched the files and the first client downloaded
-  its version again (Left 4 Dead 2, 8.6 GB). Hard links do not help: switching platform makes Steam
-  download depot 551 anyway. A game wanted in both clients is installed in both. Folders an earlier
-  version shared are taken out of the x86 client's lists (written only while no x86 client runs); the
-  games stay in the arm64 library.
+- **Shared games.** Before either client starts, `droiddeck-steam-share` gives it a view of the games
+  the other client installed: `~/.droiddeck-x64/shared/arm64` for the x86 client ("ARM64 client
+  games") and `shared/x86-64` for the arm64 one ("x86-64 client games"). A view holds a copy of each
+  finished game's manifest and links to its `common` folder and `compatdata`, so the game shows as
+  installed in both clients, runs from the same files and keeps one prefix and one set of saves.
+  Runtimes, Proton and FEX are not shared. Device: the x86 client listed the 14 arm64 games as
+  installed (13 ready to launch, Valheim fetching its shader cache) and started Stardew Valley from the
+  arm64 files with no game data downloaded; the arm64 client listed Spacewar installed only in the x86
+  client.
+- **Same build in both.** A title with a Linux build ran as that in the x86 client and as the Windows
+  build in the arm64 one, so opening it in the other client switched the files and the first client
+  downloaded its version again (Left 4 Dead 2, 8.6 GB; hard links do not help, switching platform makes
+  Steam download depot 551 anyway). A shared game gets the tool its own client uses: `droiddeck-fex`
+  there becomes `droiddeck-direct` here and the other way round, a Proton build keeps its Proton. Only
+  an automatic choice that would switch the build is replaced; any other choice, including another
+  Proton, stays.
+- **Updates and uninstall.** The newer manifest wins: an update made through a view is written back to
+  the client that owns the game. Uninstalling a shared game removes it from that client only; its files
+  stay with the client that installed it (Steam does not delete through the link) and it stays hidden
+  there until that client updates or reinstalls it. A game installed in both clients is each client's
+  own and is not shared. A view with nothing in it is not offered as an install location. Views are
+  written only while no client runs. Shader pre-caching stays each client's own: the x86 client may
+  fetch a shared game's shader cache into its own folder (Valheim, 1.8 GB).
 - **SD card.** The x86 client's card library is a folder inside the arm64 one (`/mnt/droiddeck-sd/x86-64`,
   `GameStorage.X64_CARD_DIR`, passed as `BL_X64_STEAM_LIBRARIES`), so the install dialog offers Internal
   Storage and SD card. compatdata, shadercache and runtime tools stay private, as in the arm64 card
@@ -283,22 +328,33 @@ alone would then read as an installed client.
   in 51 s.
 - **Sign-in.** Before either client starts, the newer sign-in (`config/loginusers.vdf`, the login token
   in `local.vdf`, `AutoLoginUser` and `RememberPassword` in `registry.vdf`) is copied to the other, so
-  signing in or switching accounts in one counts for both. Steam renews its token every few days and
-  refuses an old copy (a 3-day-old one asked for the password), so the newest is copied at every start,
-  never while either client runs, since each rewrites these files. A client that refused its token
-  rewrites `local.vdf` with an empty `ConnectCache`: newest, but copied over the other it would sign
-  that one out too (seen after the x86 client's "Invalid Password"), so it is never the source. The copy keeps
-  the time stamp, so both match until one client signs in again. The rest of `registry.vdf`
-  (language, skin) stays each client's.
+  signing in or switching accounts in one counts for both; never while either client runs, since each
+  rewrites these files. A client that refused its token rewrites `local.vdf` with an empty
+  `ConnectCache`, so it is never the source. The copy keeps the time stamp, so both match until one
+  client signs in again. The rest of `registry.vdf` (language, skin) stays each client's.
+- **Account IDs.** A client logs on with the token only once it knows the account's SteamID, which it
+  takes from `Accounts` in `config/config.vdf`. The x86 client's `config.vdf` is made by this script
+  without one, so it logged on as `[U:1:0]` with the arm64 token and Steam answered "Invalid Password"
+  (and the client then dropped the token and `AutoLoginUser`): every switch asked for the password.
+  Each start adds the accounts either client knows to the other's `Accounts`, and an `AutoLoginUser` or
+  `RememberPassword` one client has and the other lacks. Device: the x86 client signed in with the
+  arm64 token (`RecvMsgClientLogOnResponse ... 'OK'`).
 - **App side.** The library, art picker, grid sync and boot movie follow the running client, else the
-  selected one; a changed client applies from the next session. Offline Mode is written to both
+  selected one; a changed client applies from the next session. A game is listed once per client: an added game
+  whose folder a Steam install already covers (its `DroidDeck-<appid>` import) is shown as that Steam
+  game only, and a client switch drops the old client's imported entries with its Steam games. In
+  Steam, an import stays one when its ownership cannot be confirmed that session instead of gaining a
+  shortcut beside it, and only the client's own library folders count as an install (the arm64 card
+  library made the x86 client skip a game's import and its shortcut). Offline Mode is written to both
   clients' `loginusers.vdf`; until the x86 client's first start its sign-in is the arm64 one. The log
   redactor learns account names from both clients. The startup movie is staged into the x86 client's
   config only once its first start has created it; `--prepare` links the arm64 `config/uioverrides`
   and copies the `StartupMovie` choice.
-- **Storage page.** It lists both clients' games, the x86 ones labelled; a game can be installed in
-  both and an id left over in several libraries. `steam://uninstall` reaches only the session's client,
-  so the other client's copy is uninstalled after switching clients. Tools in the x86 client's
+- **Storage page.** It lists both clients' games, the x86 ones labelled, each where its files are, so a
+  shared game is counted once; a game can be installed in both and an id left over in several
+  libraries. The Games page of each client lists the games shared with it. `steam://uninstall`
+  reaches only the session's client, so the other client's own copy is uninstalled after switching
+  clients. Tools in the x86 client's
   libraries are shown as required (it runs its Linux games with Valve's runtimes). Proton tool files
   live only in the arm64 root; the x86 client has wrappers. An x86 client without `config.vdf` has
   never mapped a game.

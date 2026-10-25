@@ -36,7 +36,7 @@ object BwrapSpawner {
             return
         }
         server = socket
-        FileUtils.delete(File(app.cacheDir, "bwrap"))
+        FileUtils.delete(File(LinuxRuntime.liveDir(app), "bwrap"))
         Thread({
             while (true) {
                 val client = try { socket.accept() } catch (e: IOException) { Log.e(TAG, "accept", e); break }
@@ -47,7 +47,7 @@ object BwrapSpawner {
 
     private fun serve(context: Context, client: LocalSocket) {
         val id = seq.incrementAndGet()
-        val dir = File(context.cacheDir, "bwrap/$id")
+        val dir = File(LinuxRuntime.liveDir(context), "bwrap/$id")
         client.use {
             val out = DataOutputStream(client.outputStream)
             try {
@@ -181,6 +181,7 @@ object BwrapSpawner {
         request.optJSONObject("env")?.let { e -> e.keys().forEach { k -> env[k] = e.getString(k) } }
         if (binds.any { it.guest == "/dev" }) gpu(rootfs, root, env)?.forEach { addBind(it) }
         preload(session, rootfs, env).forEach { addBind(it) }
+        zypakShims(binds, root, dir).forEach { addBind(it) }
         browserSandboxes(env)
         return Plan(root, binds, request.optString("cwd", "/").ifEmpty { "/" }, argv, env)
     }
@@ -219,6 +220,7 @@ object BwrapSpawner {
         val binds = ArrayList<Bind>()
         val paths = libs.map { lib -> "$PRELOAD_DIR/${lib.substringAfterLast('/')}".also { binds.add(Bind(rootfs + lib, it)) } }
         env["LD_PRELOAD"] = (paths + listOfNotNull(env["LD_PRELOAD"]?.takeIf { it.isNotBlank() })).joinToString(":")
+        File(rootfs, NET_LINK).takeIf { it.isFile }?.let { binds.add(Bind(it.path, "/$NET_LINK")) }
         env["FAKE_EVDEV_DIR"]?.let { File(it).parent }?.let { dev ->
             binds.addAll(bindsFor(session, rootfs, dev, dev))
         }
@@ -226,6 +228,21 @@ object BwrapSpawner {
     }
 
     private const val PRELOAD_DIR = "/run/droiddeck-preload"
+    private const val NET_LINK = "etc/droiddeck-net"
+
+    private const val ZYPAK_SHIM = "#!/bin/sh\nprogram=\$1\nshift\nexec \"\$program\" --no-sandbox \"\$@\"\n"
+
+    private fun zypakShims(binds: List<Bind>, root: File, dir: File): List<Bind> {
+        val wrappers = listOf("/app/bin/zypak-wrapper.sh", "/app/bin/zypak-wrapper").filter { guest ->
+            val host = File(hostPath(binds, root.path, guest))
+            host.isFile && !Files.isSymbolicLink(host.toPath())
+        }
+        if (wrappers.isEmpty()) return emptyList()
+        val shim = File(dir, "zypak-wrapper")
+        shim.writeText(ZYPAK_SHIM)
+        chmod(shim, 0x1ed)
+        return wrappers.map { Bind(shim.path, it) }
+    }
 
     private fun browserSandboxes(env: MutableMap<String, String>) {
         env.putIfAbsent("ZYPAK_ZYGOTE_STRATEGY_SPAWN", "0")
@@ -239,12 +256,12 @@ object BwrapSpawner {
     }
 
     private fun genericCpuinfo(context: Context): File? = try {
-        val out = File(context.cacheDir, "cpuinfo-generic")
+        val out = File(LinuxRuntime.liveDir(context), "cpuinfo-generic")
         val text = File("/proc/cpuinfo").readLines()
             .filterNot { it.startsWith("CPU implementer") || it.startsWith("CPU part") || it.startsWith("CPU variant") || it.startsWith("CPU revision") }
             .joinToString("\n", postfix = "\n")
         if (!out.isFile || out.readText() != text) {
-            val staged = File.createTempFile("cpuinfo", null, context.cacheDir)
+            val staged = File.createTempFile("cpuinfo", null, LinuxRuntime.liveDir(context))
             staged.writeText(text)
             if (!staged.renameTo(out)) staged.delete()
         }
@@ -290,7 +307,7 @@ object BwrapSpawner {
         builder.environment().apply {
             clear()
             put("PROOT_LOADER", LinuxRuntime.prootLoader(context).path)
-            put("PROOT_TMP_DIR", context.cacheDir.path)
+            put("PROOT_TMP_DIR", LinuxRuntime.prootTempDir(context).path)
             if (SessionPrefs.prootNoSeccomp(context)) put("PROOT_NO_SECCOMP", "1")
             LinuxRuntime.prootLibraryPath(context).takeIf { it.isNotEmpty() }?.let { put("LD_LIBRARY_PATH", it) }
         }

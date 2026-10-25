@@ -55,6 +55,13 @@ Added for Flatpak:
   `linkat` fails with `EACCES` and Flatpak could not create its repo (`Creating repo: linkat:
   Permission denied`). `O_TMPFILE` answers `EOPNOTSUPP`, so libglnx writes a named temporary file
   and renames it, and a denied link answers `EPERM`, on which ostree's checkout copies instead.
+- `0017-android-execstack-denial.patch` - the same policy denies apps executable stacks, so the
+  `mprotect(PROT_READ | PROT_WRITE | PROT_EXEC | PROT_GROWSDOWN)` with which `ld.so` makes the main
+  stack executable for an object whose `PT_GNU_STACK` asks for it fails with `EACCES`, and the
+  program stops before `main` ("cannot enable executable stack as shared object requires:
+  Permission denied", `libQt5Gui.so.5` in ONLYOFFICE's Flatpak). The filter traces `mprotect` only
+  for that exact request, and a denied one answers success: the stack stays non-executable, as
+  Android keeps it anyway, and objects that only carry the flag load.
 Added by DroidDeck:
 
 - `0011-kompat-utsname-only.patch` - `--kernel-release` (the guest's `DroidDeck` hostname) loads
@@ -117,3 +124,11 @@ Old kernel fixes:
   by the kernel instead. The original clone flags are preserved. When the kernel supplies a valid
   ID in the notification, normal setup is unchanged. No timers or background polling are added.
   Completely missing notifications and ambiguous matches for separate processes are not recovered.
+
+Development diagnostics:
+
+- `0018-syscall-handler-profile.patch` - `PROOT_PROFILE=1` enables per-syscall entry/exit handler
+  counts, wall/CPU time, periodic cumulative JSON totals, and bounded slow-handler samples on
+  stderr. `profile.h` is copied into the source tree by `build.sh`. It adds no ptrace stops;
+  handler timing excludes tracee kernel time and scheduling before handler entry. See
+  `docs/development/proot-performance.md` for the capture and library-override workflow.

@@ -276,6 +276,9 @@ public final class WaylandCompositor {
                                                  float lensInset, float chroma, boolean mono, float displayHz);
 
     public static native void nativeSetCardboardPose(float[] rotation, boolean live);
+    public static native void nativeSetCardboardSpatialPose(float[] rotation, float[] position, boolean live);
+    public static native boolean nativeSetSpatialFile(String path);
+    public static native void nativePublishSpatial(java.nio.ByteBuffer snapshot);
 
     public static native void nativeSetCardboardPoseFile(String path);
 
@@ -287,7 +290,7 @@ public final class WaylandCompositor {
 
     public static native void nativeSendSceneInput(int type, int a, int b);
 
-    public static final int FG_ENGINE_LSFG = 0, FG_ENGINE_WINFG = 1;
+    public static final int FG_ENGINE_LSFG = 0, FG_ENGINE_DDFG = 1;
 
     public static native void nativeSetFrameGenEngine(int kind);
 
@@ -297,12 +300,19 @@ public final class WaylandCompositor {
 
     public static native void nativeSetFrameGenTuning(float flowScale, float refreshHz);
 
-    public static native void nativeSetWinFgTuning(int model, int perfPreset);
+    public static native void nativeSetDdFgTuning(int model, int perfPreset);
 
     public static native int nativeFrameGenProblem();
     public static native String nativeFrameGenCapsReason();
 
     public static native float[] nativeFrameGenStats();
+
+    /** Stream mode: the scene is the Xbox Cloud Gaming native player's picture, handed over frame by frame. */
+    public static native void nativeStreamMode(boolean on);
+
+    public static native void nativeStreamFrame(android.hardware.HardwareBuffer buffer);
+
+    public static native int nativeStreamFrames();
 
     public static void sendPointerDelta(int dx, int dy) {
         if (dx == 0 && dy == 0) return;

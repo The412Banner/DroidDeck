@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Proxy;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -54,7 +55,12 @@ public final class Downloader {
                                        java.util.function.Consumer<Float> progress) {
         if (expectedSha256 != null && !expectedSha256.matches("(?i)[0-9a-f]{64}"))
             throw new IllegalArgumentException("Expected SHA-256 must be 64 hex characters");
-        return downloadCandidates(url, DownloadSource.INSTANCE.candidates(url), destination, resume, expectedSha256, progress);
+        return downloadCandidates(url, sources(url, expectedSha256), destination, resume, expectedSha256, progress);
+    }
+
+    /** A third-party mirror may only serve bytes that can be checked against a digest from a direct source. */
+    static List<String> sources(String url, String expectedSha256) {
+        return expectedSha256 == null ? java.util.Collections.singletonList(url) : DownloadSource.INSTANCE.candidates(url);
     }
 
     // Package-private for the local multi-source HTTP test.
@@ -272,7 +278,10 @@ public final class Downloader {
     }
 
     private static HttpURLConnection open(String url, int readTimeoutMs) throws java.io.IOException {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        // An explicit Proxy routes the connection through the app setting instead of the system-wide proxy.
+        Proxy proxy = DownloadSource.INSTANCE.httpProxy();
+        HttpURLConnection connection = (HttpURLConnection) (proxy != null
+                ? new URL(url).openConnection(proxy) : new URL(url).openConnection());
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(readTimeoutMs);
         connection.setInstanceFollowRedirects(true);

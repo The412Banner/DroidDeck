@@ -103,6 +103,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -110,6 +111,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -191,16 +193,25 @@ private class DrawerFocus {
 
 class DrawerActions(
     val steam: Boolean,
+    val direct: Boolean = false,
     val title: String? = null,
     val isHomeApp: Boolean,
     val androidApps: List<HomeApp.LaunchableApp>,
     val hudOn: Boolean,
+    val hudFps: Boolean = true,
+    val hudBattery: Boolean = true,
+    val hudGraph: Boolean = true,
+    val hudColor: String = SessionPrefs.HUD_COLOR_MINT,
+    val hudOpacity: Int = SessionPrefs.HUD_OPACITY_DEFAULT,
     val frameGen: FrameGen.Mode,
     val lossless: Lossless.State,
     val oscMode: String,
     val onScreenButtonsVisible: Boolean,
     val suspendPolicy: String,
     val steamDownloadsInBackground: Boolean = false,
+    val micAvailable: Boolean = false,
+    val micEnabled: Boolean = false,
+    val onMicEnabled: (Boolean) -> Unit = {},
     val backActionsInverted: Boolean,
     val padType: String? = null,
     val onPadType: (String) -> Unit = {},
@@ -222,6 +233,11 @@ class DrawerActions(
     val secondScreenDisplays: List<SecondScreenDisplay>,
     val selectedSecondScreenDisplay: Int,
     val onHud: (Boolean) -> Unit,
+    val onHudFps: (Boolean) -> Unit = {},
+    val onHudBattery: (Boolean) -> Unit = {},
+    val onHudGraph: (Boolean) -> Unit = {},
+    val onHudColor: (String) -> Unit = {},
+    val onHudOpacity: (Int) -> Unit = {},
     val onFrameGenPick: (FrameGen.Mode) -> Unit,
     val onImportLossless: () -> Unit,
     val onKeyboard: () -> Unit,
@@ -245,6 +261,11 @@ class DrawerActions(
     val onLowLatencyController: (Boolean) -> Unit = {},
     val onLowLatencyTouch: (Boolean) -> Unit = {},
     val onTouch: (String) -> Unit,
+    val onGestureSettings: () -> Unit = {},
+    val onScreenKeys: (() -> Unit)? = null,
+    val onScreenLayouts: (() -> Unit)? = null,
+    val screenKeysShown: Boolean = true,
+    val onScreenKeysShown: (Boolean) -> Unit = {},
     val onFexPreset: (String) -> Unit,
     val onUpscaler: (Int) -> Unit = {},
     val onUpscaleSharpness: (Int) -> Unit = {},
@@ -265,6 +286,8 @@ class DrawerActions(
     val onPipAutoEnter: (Boolean) -> Unit = {},
     val unfoldedControls: Boolean? = null,
     val onUnfoldedControls: (Boolean) -> Unit = {},
+    val unfoldedControlsWithController: Boolean = false,
+    val onUnfoldedControlsWithController: (Boolean) -> Unit = {},
     val onShareLogs: () -> Unit,
     val onStop: () -> Unit,
     val onStopFrom: ((androidx.compose.ui.geometry.Rect?) -> Unit)? = null,
@@ -300,12 +323,16 @@ class DrawerActions(
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, controllerActive: Boolean, onPageChange: (SessionDrawerPage) -> Unit, a: DrawerActions) {
-    val pages = sessionDrawerPages(a.steam && a.secondScreenDisplays.isNotEmpty(), a.glassesPresent)
+    val pages = sessionDrawerPages(a.secondScreenDisplays.isNotEmpty(), a.glassesPresent)
     val page = requestedPage.takeIf { it in pages } ?: SessionDrawerPage.CONTROLLER
     LaunchedEffect(requestedPage, pages) { if (page != requestedPage) onPageChange(page) }
     val colors = MaterialTheme.colorScheme
     val pal = LocalPalette.current
     val host = rememberMenuHost()
+    val (glasses, glassesSettings) = rememberGlasses()
+    val glassesPages = glassesTabs(glasses) + (GlassesTab.CONTROLLERS to stringResource(R.string.vr_controllers_tab))
+    var selectedGlassesTab by rememberSaveable { mutableStateOf(GlassesTab.DISPLAY) }
+    val glassesTab = selectedGlassesTab.takeIf { key -> glassesPages.any { it.first == key } } ?: GlassesTab.DISPLAY
     var androidAppsExpanded by rememberSaveable { mutableStateOf(false) }
     var advancedEffectsExpanded by rememberSaveable { mutableStateOf(false) }
     var appToChooseDisplay by remember { mutableStateOf<HomeApp.LaunchableApp?>(null) }
@@ -313,6 +340,10 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
     var sheetCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var stopCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val pageScroll = remember { SessionDrawerPage.entries.associateWith { ScrollState(0) } }
+    LaunchedEffect(glassesTab) {
+        if (page == SessionDrawerPage.GLASSES) host.open = null
+        pageScroll.getValue(SessionDrawerPage.GLASSES).scrollTo(0)
+    }
     val veil by animateFloatAsState(if (open) 1f else 0f, Motion.tw(260), label = "veil")
     val focus = remember { DrawerFocus() }
     val inputModeManager = LocalInputModeManager.current
@@ -339,7 +370,7 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
         if (open && !controllerActive) focusManager.clearFocus(force = true)
     }
     var focusedPage by remember { mutableStateOf(page) }
-    LaunchedEffect(open, page, controllerActive, host.open, appToChooseDisplay, confirmStop) {
+    LaunchedEffect(open, page, glassesTab, controllerActive, host.open, appToChooseDisplay, confirmStop) {
         if (!open) {
             host.open = null
             confirmStop = false
@@ -348,7 +379,11 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
             if (host.open != null || appToChooseDisplay != null || confirmStop) return@LaunchedEffect
             val turned = page != focusedPage
             focusedPage = page
-            val first = if (page == SessionDrawerPage.SESSION && a.isHomeApp) "apps" else page.firstControl
+            val first = when {
+                page == SessionDrawerPage.GLASSES -> "glasses-tab-$glassesTab"
+                page == SessionDrawerPage.SESSION && a.isHomeApp -> "apps"
+                else -> page.firstControl
+            }
             if (turned) focus.forget(page)
             val target = focus.target(page) ?: first
             repeat(24) {
@@ -360,10 +395,15 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
             focus.request(first)
         }
     }
-    if (open || veil > 0.01f) Box(
-        modifier = Modifier.fillMaxSize()
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { host.open = null; a.onClose() },
-    )
+    if (open || veil > 0.01f) {
+        val closeLabel = stringResource(R.string.common_close)
+        Box(
+            modifier = Modifier.fillMaxSize()
+                .focusProperties { canFocus = false }
+                .semantics { contentDescription = closeLabel }
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = closeLabel) { host.open = null; a.onClose() },
+        )
+    }
     androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize().exposeTestTags(), contentAlignment = Alignment.CenterEnd) {
         val short = maxHeight < 440.dp
         val sheetWidth = minOf(360.dp, maxWidth * 0.92f)
@@ -377,7 +417,7 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                 modifier = Modifier
                     .fillMaxSize()
                     .background(pal.background.copy(alpha = 0.97f))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                    .blockTouches()
                     .focusGroup()
                     .controllerBack {
                         if (host.open != null) host.open = null else a.onClose()
@@ -391,7 +431,10 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                 ) {
                     Text(a.title ?: if (a.steam) stringResource(R.string.drawer_steam) else stringResource(R.string.drawer_desktop), fontSize = if (short) 18.sp else 20.sp, fontWeight = FontWeight.Bold,
                         color = colors.onBackground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    if (a.onSteamMenu != null && a.onQam != null) {
+                    if (a.pipSupported) SteamActionPill(
+                        stringResource(R.string.pip_title), Icons.Outlined.PictureInPictureAlt, focus.track(page, "pip"),
+                    ) { host.open = null; a.onPip() }
+                    if (a.steam && a.onSteamMenu != null && a.onQam != null) {
                         val qamInteraction = remember { MutableInteractionSource() }
                         var qamStartedOnPress by remember { mutableStateOf(false) }
                         LaunchedEffect(qamInteraction) {
@@ -403,13 +446,13 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                                 }
                             }
                         }
-                        SteamActionPill(stringResource(R.string.drawer_steam_menu), Icons.Outlined.Home, focus.track(page, "steam")) {
+                        SteamActionPill(stringResource(R.string.drawer_steam_menu), Icons.Outlined.Home, focus.track(page, "steam"), shortcut = "⧉") {
                             host.open = null
                             a.onSteamMenu.invoke()
                         }
                         SteamActionPill(
                             stringResource(R.string.drawer_open_qam), Icons.Outlined.MoreHoriz, focus.track(page, "qam"),
-                            interactionSource = qamInteraction,
+                            interactionSource = qamInteraction, shortcut = "☰",
                             onConfirm = { host.open = null; a.onQam.invoke() },
                         ) {
                             host.open = null
@@ -437,6 +480,10 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                         host.open = null; onPageChange(pages.step(page, 1))
                     }
                 }
+                if (page == SessionDrawerPage.GLASSES) SegmentedTabs(
+                    glassesPages, glassesTab, modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    tabModifier = { key -> focus.track(page, "glasses-tab-$key").testTag("glasses-tab-$key") },
+                ) { selectedGlassesTab = it }
                 Column(
                     modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(pageScroll.getValue(page)),
                 ) { CompositionLocalProvider(LocalChipMinWidth provides 120.dp) {
@@ -445,6 +492,30 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                             SettingsGroup(stringResource(R.string.drawer_page_display)) {
                                 ToggleRow(host, "hud", stringResource(R.string.drawer_hud), null, a.hudOn,
                                     chipModifier = focus.track(page, "hud"), onChange = a.onHud)
+                                if (a.hudOn) {
+                                    ToggleRow(host, "hud-fps", stringResource(R.string.drawer_hud_fps), null, a.hudFps,
+                                        chipModifier = focus.track(page, "hud-fps"), onChange = a.onHudFps)
+                                    ToggleRow(host, "hud-battery", stringResource(R.string.drawer_hud_battery), null, a.hudBattery,
+                                        chipModifier = focus.track(page, "hud-battery"), onChange = a.onHudBattery)
+                                    ToggleRow(host, "hud-graph", stringResource(R.string.drawer_hud_graph), null, a.hudGraph,
+                                        chipModifier = focus.track(page, "hud-graph"), onChange = a.onHudGraph)
+                                    ChoiceRow(
+                                        host, "hud-color", stringResource(R.string.drawer_hud_color), null,
+                                        listOf(
+                                            SessionPrefs.HUD_COLOR_MINT to stringResource(R.string.drawer_hud_color_mint),
+                                            "white" to stringResource(R.string.drawer_hud_color_white),
+                                            "sky" to stringResource(R.string.drawer_hud_color_sky),
+                                            "amber" to stringResource(R.string.drawer_hud_color_amber),
+                                            "violet" to stringResource(R.string.drawer_hud_color_violet),
+                                        ),
+                                        a.hudColor, chipModifier = focus.track(page, "hud-color"), onPick = a.onHudColor,
+                                    )
+                                    SliderRow(
+                                        stringResource(R.string.drawer_hud_opacity), null, a.hudOpacity,
+                                        SessionPrefs.HUD_OPACITY_RANGE, step = 10, format = { "$it%" },
+                                        modifier = focus.track(page, "hud-opacity"), onChange = a.onHudOpacity,
+                                    )
+                                }
                                 val fgOpen = host.open == "fg"
                                 val fgLabel = FrameGen.label(LocalContext.current, a.frameGen)
                                 SettingsRow(stringResource(R.string.frame_gen_title), null, highlighted = fgOpen) {
@@ -484,8 +555,28 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                                         type, chipModifier = focus.track(page, "pad-type"), onPick = a.onPadType)
                                 }
                                 ChoiceRow(host, "touch", stringResource(R.string.mode_touch), null,
-                                    listOf(SessionPrefs.TOUCH_AUTO to stringResource(R.string.drawer_touch_auto, a.touchAuto), SessionPrefs.TOUCH_PAD to stringResource(R.string.mode_touch_touchpad), SessionPrefs.TOUCH_DIRECT to stringResource(R.string.mode_touch_direct), SessionPrefs.TOUCH_OFF to stringResource(R.string.widgets_off)),
+                                    listOf(SessionPrefs.TOUCH_AUTO to stringResource(R.string.drawer_touch_auto, a.touchAuto), SessionPrefs.TOUCH_PAD to stringResource(R.string.mode_touch_touchpad), SessionPrefs.TOUCH_DIRECT to stringResource(R.string.mode_touch_direct), SessionPrefs.TOUCH_GESTURES to stringResource(R.string.mode_touch_gestures), SessionPrefs.TOUCH_OFF to stringResource(R.string.widgets_off)),
                                     a.touchMode, chipModifier = focus.track(page, "touch"), onPick = a.onTouch)
+                                ActionRow(stringResource(R.string.gesture_settings), stringResource(R.string.gesture_settings_hint),
+                                    stringResource(R.string.ctrl_edit), a.onGestureSettings,
+                                    modifier = focus.track(page, "gesture-settings"))
+                                if (a.onScreenKeys != null) {
+                                    SettingsRow(stringResource(R.string.screen_keys), null) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        ) {
+                                            SecondaryButton(stringResource(R.string.ctrl_edit),
+                                                modifier = focus.track(page, "screen-keys"), onClick = a.onScreenKeys)
+                                            a.onScreenLayouts?.let { open ->
+                                                SecondaryButton(stringResource(R.string.screen_key_layout),
+                                                    modifier = focus.track(page, "screen-key-layouts"), onClick = open)
+                                            }
+                                            ToggleSwitch(a.screenKeysShown, true,
+                                                modifier = focus.track(page, "screen-keys-shown"), onChange = a.onScreenKeysShown)
+                                        }
+                                    }
+                                }
                                 ChoiceRow(host, "osc", stringResource(R.string.mode_osc), null,
                                     if (a.steam) listOf(SessionPrefs.OSC_AUTO to stringResource(R.string.common_auto), SessionPrefs.OSC_ALWAYS to stringResource(R.string.common_always), SessionPrefs.OSC_STEAM_TOUCH to stringResource(R.string.osc_steam_touch), SessionPrefs.OSC_STEAM_QAM to stringResource(R.string.mode_osc_qam), SessionPrefs.OSC_NEVER to stringResource(R.string.common_never))
                                     else listOf(SessionPrefs.OSC_AUTO to stringResource(R.string.common_auto), SessionPrefs.OSC_ALWAYS to stringResource(R.string.common_always), SessionPrefs.OSC_NEVER to stringResource(R.string.common_never)),
@@ -514,6 +605,11 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                                 if (a.steam && a.unfoldedControls != null) ToggleRow(host, "unfolded-controls", stringResource(R.string.unfolded_controls),
                                     stringResource(R.string.unfolded_controls_hint), a.unfoldedControls,
                                     chipModifier = focus.track(page, "unfolded-controls"), onChange = a.onUnfoldedControls)
+                                if (a.steam && a.unfoldedControls == true) ToggleRow(host, "unfolded-controls-with-controller",
+                                    stringResource(R.string.unfolded_controls_with_controller),
+                                    stringResource(R.string.unfolded_controls_with_controller_hint), a.unfoldedControlsWithController,
+                                    chipModifier = focus.track(page, "unfolded-controls-with-controller"),
+                                    onChange = a.onUnfoldedControlsWithController)
                             }
                             SettingsGroup(stringResource(R.string.drawer_latency)) {
                                 ToggleRow(host, "low-latency-controller", stringResource(R.string.drawer_low_latency_controller),
@@ -537,18 +633,19 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                         SessionDrawerPage.SECOND_SCREEN -> {
                             SecondScreenGroup(host, a) { key -> focus.track(page, key) }
                         }
-                        SessionDrawerPage.GLASSES -> {
-                            val (g, s) = rememberGlasses()
-                            GlassesGroups(host, g, s, { key -> focus.track(page, key) }, onRecenter = a.onGlassesRecenter,
-                                outputActive = a.glassesOutput, steamVrRunning = a.steamVr == SteamVr.Status.RUNNING,
+                        SessionDrawerPage.GLASSES -> if (glassesTab == GlassesTab.CONTROLLERS) {
+                            VrControllerGroups(host) { key -> focus.track(page, key) }
+                        } else {
+                            GlassesGroups(host, glasses, glassesSettings, { key -> focus.track(page, key) }, onRecenter = a.onGlassesRecenter,
+                                tab = glassesTab, outputActive = a.glassesOutput, steamVrRunning = a.steamVr == SteamVr.Status.RUNNING,
                                 steamVr = { SteamVrRow(a) })
                         }
                         SessionDrawerPage.GAMES -> {
-                            if (a.steam) SelectedGameProfileGroup(host, a) { key -> focus.track(page, key) }
+                            if (a.steam || a.direct) SelectedGameProfileGroup(host, a) { key -> focus.track(page, key) }
                             Text(stringResource(R.string.fex_next_launch), fontSize = 12.sp,
                                 color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
                             TextureFilteringGroup(host, a) { key -> focus.track(page, key) }
-                            if (a.steam) SettingsGroup(stringResource(R.string.game_settings_title)) {
+                            if (a.steam || a.direct) SettingsGroup(stringResource(R.string.game_settings_title)) {
                                 DrawerFexPresetRow(host, a, focus.track(page, "fex"))
                                 DrawerNoSteamRow(host, a, focus.track(page, "no-steam"))
                                 GameEnvironmentRow(
@@ -600,6 +697,9 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                                 }
                             }
                             SettingsGroup(stringResource(R.string.drawer_session_behavior)) {
+                                if (a.micAvailable) ToggleRow(host, "microphone", stringResource(R.string.mode_mic),
+                                    stringResource(R.string.drawer_mic_hint), a.micEnabled,
+                                    chipModifier = focus.track(page, "microphone"), onChange = a.onMicEnabled)
                                 ChoiceRow(
                                     host, "suspend", stringResource(R.string.mode_suspend),
                                     null,
@@ -636,8 +736,6 @@ internal fun SessionDrawer(open: Boolean, requestedPage: SessionDrawerPage, cont
                                     a.pipAutoEnter, onChange = a.onPipAutoEnter)
                             }
                             Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (a.pipSupported) DrawerActionButton(stringResource(R.string.pip_title), Icons.Outlined.PictureInPictureAlt,
-                                    modifier = focus.track(page, "pip")) { host.open = null; a.onPip() }
                                 if (!a.isHomeApp) DrawerActionButton(stringResource(R.string.drawer_background), Icons.AutoMirrored.Outlined.ExitToApp,
                                     modifier = focus.track(page, "background")) { host.open = null; a.onBackground() }
                             }
@@ -692,7 +790,7 @@ private fun DrawerActionButton(text: String, icon: androidx.compose.ui.graphics.
         modifier = modifier.fillMaxWidth().heightIn(min = 52.dp).clip(shape)
             .background(if (hot) pal.signal.copy(alpha = 0.16f) else colors.surfaceVariant)
             .glideBorder(hot, shape, pal.signal)
-            .hoverable(source).clickable(interactionSource = source, indication = LocalIndication.current, onClick = onClick)
+            .hoverable(source).clickable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = source, indication = LocalIndication.current, onClick = onClick)
             .controllerConfirm(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Icon(icon, contentDescription = null, tint = colors.onBackground, modifier = Modifier.size(22.dp))
@@ -729,7 +827,7 @@ private fun StopSessionButton(modifier: Modifier = Modifier, onClick: () -> Unit
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = modifier.heightIn(min = 44.dp).semantics { contentDescription = stopDescription }.testTag("drawer-stop")
             .clip(shape).background(fill).glideBorder(hot, shape, colors.error.copy(alpha = 0.9f), colors.error.copy(alpha = 0.55f))
-            .hoverable(src).clickable(interactionSource = src, indication = LocalIndication.current, onClick = onClick)
+            .hoverable(src).clickable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = src, indication = LocalIndication.current, onClick = onClick)
             .controllerConfirm(onClick = onClick)
             .padding(start = 12.dp, end = 14.dp),
     ) {
@@ -743,6 +841,7 @@ private fun SteamActionPill(
     description: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     onConfirm: (() -> Unit)? = null,
+    shortcut: String? = null,
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -751,14 +850,18 @@ private fun SteamActionPill(
     val shape = RoundedCornerShape(22.dp)
     Box(
         contentAlignment = Alignment.Center,
-        modifier = modifier.size(width = 52.dp, height = 44.dp).semantics { contentDescription = description }
+        modifier = modifier.size(44.dp).semantics { contentDescription = description }
             .clip(shape).background(if (hot) pal.signal.copy(alpha = 0.14f) else Color.Transparent)
             .glideBorder(hot, shape, pal.signal, pal.line)
             .hoverable(interactionSource)
-            .clickable(interactionSource = interactionSource, indication = LocalIndication.current, onClick = onClick)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = interactionSource, indication = LocalIndication.current, onClick = onClick)
             .controllerConfirm(onClick = onConfirm ?: onClick),
     ) {
         Icon(icon, contentDescription = null, tint = if (hot) pal.signal else colors.onBackground, modifier = Modifier.size(20.dp))
+        if (shortcut != null) Text(
+            shortcut, fontSize = 8.sp, lineHeight = 9.sp, color = colors.onSurfaceVariant,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 6.dp),
+        )
     }
 }
 
@@ -774,7 +877,7 @@ private fun DrawerBumper(label: String, description: String, modifier: Modifier 
         contentAlignment = Alignment.Center,
         modifier = modifier.size(44.dp).clip(ring)
             .glideBorder(hot, ring, pal.signal)
-            .hoverable(src).clickable(interactionSource = src, indication = null, onClick = onClick)
+            .hoverable(src).clickable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = src, indication = null, onClick = onClick)
             .controllerConfirm(onClick = onClick)
             .semantics { contentDescription = description },
     ) {
@@ -795,7 +898,7 @@ private fun DrawerPageTabs(page: SessionDrawerPage, pages: List<SessionDrawerPag
     val motion = Motion.tw<Float>(340, easing = FastOutSlowInEasing)
     androidx.compose.foundation.layout.BoxWithConstraints(
         contentAlignment = Alignment.Center,
-        modifier = modifier.height(if (compact) 44.dp else 64.dp).clipToBounds(),
+        modifier = modifier.height(if (compact) 44.dp else 64.dp).clipToBounds().selectableGroup(),
     ) {
         val tab = if (compact) 36f else 44f
         val spacing = ((maxWidth.value - tab) / ((count - 1) * (1f + DRAWER_TAB_LEAN_DP / DRAWER_TAB_SPACING_DP))).coerceIn(24f, DRAWER_TAB_SPACING_DP)
@@ -828,7 +931,7 @@ private fun DrawerPageTabs(page: SessionDrawerPage, pages: List<SessionDrawerPag
                         .semantics { contentDescription = pageDescription }
                         .testTag("drawer-tab-${item.name.lowercase()}")
                         .hoverable(source)
-                        .clickable(interactionSource = source, indication = LocalIndication.current, onClick = select)
+                        .selectable(selected = selected, role = androidx.compose.ui.semantics.Role.Tab, interactionSource = source, indication = LocalIndication.current, onClick = select)
                         .controllerConfirm(onClick = select),
                 ) {
                     Icon(item.icon, contentDescription = null, tint = tint, modifier = Modifier.size(if (compact) 22.dp else 30.dp))
@@ -1360,6 +1463,7 @@ internal fun ComponentDownloadsDrawerGroup(
 ) {
     val colors = MaterialTheme.colorScheme
     val installed = packages.map { it.file }.toSet()
+    val nightlyPicked = remember { mutableStateMapOf<String, Boolean>() }
     SettingsGroup(stringResource(R.string.drawer_component_downloads)) {
         Text(stringResource(R.string.drawer_component_downloads_hint), fontSize = 12.sp,
             color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
@@ -1383,21 +1487,40 @@ internal fun ComponentDownloadsDrawerGroup(
                     }
                     AnchoredMenu(open, onDismiss = { if (host.open == key) host.open = null },
                         title = ComponentsManager.LABEL.getValue(comp)) { firstItemFocus ->
-                        val firstAvailable = items.firstOrNull { ComponentsManager.safeName(it.file) !in installed && it.file !in downloads }
-                        items.forEach { item ->
+                        // A nightly paired with a stable build rides on that row; Stable/Nightly tabs beside the row pick which one.
+                        val pairs = ComponentsManager.nightlyPairs(items)
+                        val rows = items.filter { it !in pairs.values }
+                        fun shown(row: ComponentsManager.CatalogItem) = pairs[row]?.takeIf { nightlyPicked[row.file] == true } ?: row
+                        val firstAvailable = rows.firstOrNull { shown(it).let { s -> ComponentsManager.safeName(s.file) !in installed && s.file !in downloads } }
+                        rows.forEach { row ->
+                            val item = shown(row)
+                            val nightly = pairs[row]
                             val stored = ComponentsManager.safeName(item.file) in installed
                             val progress = downloads[item.file]
-                            MenuItem(item.file.removeSuffix(".wcp"), checked = stored,
-                                enabled = !stored && progress == null,
-                                detail = when {
-                                    stored -> stringResource(R.string.wincomp_downloaded)
-                                    progress != null -> if (progress < 0) stringResource(R.string.wincomp_downloading, item.file.removeSuffix(".wcp")) else "$progress%"
-                                    else -> item.release + " · " + stringResource(R.string.common_size_mb, item.size / 1048576.0)
-                                },
-                                focusRequester = if (item == firstAvailable) firstItemFocus else null,
-                            ) {
-                                onDownload(item)
-                                host.open = null
+                            val choose = @Composable { rowModifier: Modifier ->
+                                MenuItem(item.file.removeSuffix(".wcp"), checked = stored,
+                                    enabled = !stored && progress == null,
+                                    detail = when {
+                                        stored -> stringResource(R.string.wincomp_downloaded)
+                                        progress != null -> if (progress < 0) stringResource(R.string.wincomp_downloading, item.file.removeSuffix(".wcp")) else "$progress%"
+                                        else -> item.release + " · " + stringResource(R.string.common_size_mb, item.size / 1048576.0)
+                                    },
+                                    focusRequester = if (row == firstAvailable) firstItemFocus else null,
+                                    modifier = rowModifier,
+                                ) {
+                                    onDownload(item)
+                                    host.open = null
+                                }
+                            }
+                            if (nightly == null) choose(Modifier)
+                            else Row(verticalAlignment = Alignment.CenterVertically) {
+                                choose(Modifier.weight(1f))
+                                TabStrip(
+                                    listOf(stringResource(R.string.comp_channel_stable), stringResource(R.string.comp_channel_nightly)),
+                                    selected = if (item === nightly) 1 else 0,
+                                    onSelect = { nightlyPicked[row.file] = it == 1 },
+                                    bumpers = false, compact = true, modifier = Modifier.padding(start = 6.dp, end = 4.dp),
+                                )
                             }
                         }
                     }
@@ -1622,7 +1745,7 @@ private fun ConfirmChoice(label: String, danger: Boolean, enabled: Boolean, modi
             .background(if (hot) accent.copy(alpha = if (danger) 0.18f else 0.14f) else Color.Transparent)
             .glideBorder(hot, shape, accent)
             .hoverable(src)
-            .clickable(interactionSource = src, indication = LocalIndication.current, enabled = enabled, onClick = onClick)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, interactionSource = src, indication = LocalIndication.current, enabled = enabled, onClick = onClick)
             .controllerConfirm(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp),
     ) {

@@ -54,6 +54,7 @@ class FakeSocket {
       state.authed = dec.decode(h[40][0]) === "secret" && dec.decode(body[1][0]) === "secret";
       result = state.authed ? 1 : 5;
     } else if (!state.authed) result = 5;
+    else if (method === "CompatManager.GetCompatTools#1" && ["16", "128"].includes(String(body[1][0]))) result = Number(body[1][0]);
     else if (method === "CompatManager.GetCompatTools#1") {
       const app = String(body[1] ? body[1][0] : 0n);
       for (const name of state.known) { const t = []; lenField(1, enc.encode(name), t); lenField(2, enc.encode(name + " shown"), t); lenField(1, t, out); }
@@ -79,17 +80,19 @@ const install = require("fs").readFileSync(process.argv[4], "utf8");
   const before = await c.get(0);
   await c.set(0, "droiddeck-proton-11-arm64");
   await c.set(42, "");
-  const after = await c.many(["0", "42", "43"]);
+  const after = await c.many(["0", "42", "43", "128"]);
+  const timedOut = await c.many(["0", "16"]).then(() => null, (e) => e.eresult);
   await new Promise((r) => setTimeout(r, 10));
-  console.log(JSON.stringify({ before, after, log: state.log, notify: state.notify, url: state.socket.url }));
+  console.log(JSON.stringify({ before, after, timedOut, log: state.log, notify: state.notify, url: state.socket.url }));
 })().catch((e) => { console.error(e.stack || String(e)); process.exit(1); });
 """
 
 
 class FakePage:
-    def __init__(self, mapping, known):
+    def __init__(self, mapping, known, refused=()):
         self.mapping = dict(mapping)
         self.known = list(known)
+        self.refused = set(refused)
         self.sets = []
 
     def compat(self, call):
@@ -98,8 +101,10 @@ class FakePage:
         if name == "get":
             return {"selected": self.mapping.get(str(args[0]), ""), "fallback": "proton_experimental", "tools": self.known}
         if name == "many":
-            return {app: self.mapping.get(app, "") for app in args[0]}
+            return {app: self.mapping.get(app, "") for app in args[0] if app not in self.refused}
         if name == "set":
+            if str(args[0]) in self.refused:
+                raise RuntimeError("SpecifyCompatTool %s failed (128)" % args[0])
             self.mapping[str(args[0])] = args[1]
             self.sets.append((str(args[0]), args[1]))
             return True
@@ -115,6 +120,47 @@ class PageScriptTest(unittest.TestCase):
             harness = Path(__file__).with_name("steam_vr_launch_harness.js")
             result = subprocess.run(["node", str(harness), str(script)],
                                     capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_tool_installs_skip_only_their_own_install_dialog(self):
+        harness_source = r"""
+const assert = require('assert');
+globalThis.window = globalThis;
+const script = require('fs').readFileSync(process.argv[2], 'utf8');
+globalThis.SteamClient = { Installs: {}, Downloads: {} };
+assert.throws(() => eval(script), /install calls are not ready/);
+const opened = [], queued = [];
+let wizard = null, continued = 0;
+globalThis.SteamClient = {
+  Installs: {
+    OpenInstallWizard(apps, client) { opened.push([apps, client]); },
+    RegisterForShowInstallWizard(callback) { assert.strictEqual(wizard, null); wizard = callback; return { unregister() {} }; },
+    ContinueInstall() { continued++; },
+  },
+  Downloads: { QueueAppUpdate(app, client) { queued.push([app, client]); } },
+};
+assert.strictEqual(eval(script), 'installed');
+assert.strictEqual(eval(script), 'present');
+const tools = window.__droiddeckTools;
+wizard({ eInstallState: 7, currentAppID: 4183110 });
+assert.strictEqual(continued, 0);
+tools.install(4183110);
+assert.deepStrictEqual(opened, [[[4183110], '0']]);
+wizard({ eInstallState: 8, currentAppID: 4183110 });
+wizard({ eInstallState: 7, currentAppID: 892970 });
+assert.strictEqual(continued, 0);
+wizard({ eInstallState: 7, currentAppID: 4183110 });
+wizard({ eInstallState: 7, currentAppID: 4183110 });
+assert.strictEqual(continued, 1);
+tools.update(4427310);
+assert.deepStrictEqual(queued, [[4427310, '0']]);
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "tools.js"
+            script.write_text(LIVE["TOOLS_JS"])
+            harness = Path(tmp) / "harness.js"
+            harness.write_text(harness_source)
+            result = subprocess.run(["node", str(harness), str(script)], capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_steamvr_library_launch_uses_binding_and_other_games_pass_through(self):
@@ -161,6 +207,7 @@ assert.deepStrictEqual(calls, [['611670', 'custom args', -1, 100], ['2508200', '
             self.assertEqual(out["url"], "ws://127.0.0.1:4242/transportsocket/")
             self.assertEqual(out["before"], {"selected": TOOL, "fallback": "proton_experimental", "tools": [TOOL, TOOL_11, "proton_experimental"]})
             self.assertEqual(out["after"], {"0": TOOL_11, "42": "", "43": ""})
+            self.assertEqual(out["timedOut"], 16)
             self.assertEqual(out["log"], ["0=" + TOOL_11, "42="])
             self.assertEqual(out["notify"], ["1", "2"])
 
@@ -222,6 +269,21 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(state["auto"], {"10": TOOL, "11": TOOL})
         self.assertTrue(state["live"])
         self.assertEqual(self.helper.installed, ["10", "11"])
+
+    def test_an_app_the_client_refuses_is_dropped_instead_of_failing_the_sync(self):
+        page = FakePage({"0": TOOL, "10": TOOL, "11": "proton_experimental"}, [TOOL, TOOL_11], refused={"1628350"})
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {"10": TOOL, "1628350": TOOL}}))
+        (self.state / "games.json").write_text(json.dumps({"version": 1, "games": {"1628350": {"valve": True, "dir": "Proton 11.0 (ARM64)"}}}))
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [("11", TOOL)])
+        self.assertEqual(state["auto"], {"10": TOOL, "11": TOOL})
+
+    def test_a_refused_apps_native_choice_is_kept(self):
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11], refused={"20"})
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {"10": TOOL, "11": TOOL}, "native_choices": ["20"]}))
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native_choices"], ["20"])
 
     def test_app_request_moves_the_default_and_followers(self):
         page = FakePage({"0": TOOL, "10": TOOL, "11": "GE-Proton11-7"}, [TOOL, TOOL_11])
@@ -334,19 +396,19 @@ class ReconcileTest(unittest.TestCase):
             state = self.reconcile(page)
             self.assertEqual(page.sets, [])
             self.assertEqual(state["auto"], {})
-            self.assertEqual(state["native"], [app])
+            self.assertEqual(state["native_choices"], [app])
             self.assertEqual(COMPAT["read_config_mapping"](str(config)), {"0": TOOL})
 
             page.sets.clear()
             state = self.reconcile(page)
             self.assertEqual(page.sets, [])
-            self.assertEqual(state["native"], [app])
+            self.assertEqual(state["native_choices"], [app])
             restarted = LIVE["Helper"](str(self.steam), 1)
             restarted.page = page
             restarted.reconcile()
             state = json.loads((self.state / "state.json").read_text())
             self.assertEqual(page.sets, [])
-            self.assertEqual(state["native"], [app])
+            self.assertEqual(state["native_choices"], [app])
 
             config.write_text(
                 '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
@@ -356,13 +418,13 @@ class ReconcileTest(unittest.TestCase):
             state = self.reconcile(page)
             self.assertEqual(page.mapping[app], "GE-Proton11-7")
             self.assertEqual(page.sets, [])
-            self.assertEqual(state["native"], [])
+            self.assertEqual(state["native_choices"], [])
 
             for choice in ("steamlinuxruntime", COMPAT["FEX_TOOL"], TOOL_11):
                 (self.state / "state.json").write_text(json.dumps({
                     "default": TOOL,
                     "auto": {},
-                    "native": [app],
+                    "native_choices": [app],
                 }))
                 config.write_text(
                     '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
@@ -373,7 +435,7 @@ class ReconcileTest(unittest.TestCase):
                 state = self.reconcile(page)
                 self.assertEqual(page.mapping[app], choice)
                 self.assertEqual(page.sets, [])
-                self.assertEqual(state["native"], [], choice)
+                self.assertEqual(state["native_choices"], [], choice)
         finally:
             COMPAT["native_targets"] = original_native_targets
 
@@ -387,7 +449,7 @@ class ReconcileTest(unittest.TestCase):
         (self.state / "state.json").write_text(json.dumps({
             "default": TOOL,
             "auto": {},
-            "native": [app],
+            "native_choices": [app],
         }))
 
         original_native_targets = COMPAT["native_targets"]
@@ -396,14 +458,14 @@ class ReconcileTest(unittest.TestCase):
             page = FakePage({"0": TOOL, app: "proton"}, [TOOL, TOOL_11])
             state = self.reconcile(page)
             self.assertNotIn(app, self.helper.installed)
-            self.assertEqual(state["native"], [app])
+            self.assertEqual(state["native_choices"], [app])
             self.assertNotIn(app, state["auto"])
             self.assertNotIn((app, TOOL), page.sets)
             self.assertEqual(COMPAT["read_config_mapping"](str(config)), {"0": TOOL})
 
             config.write_text('"InstallConfigStore" { "Software" { "Other" {} } }')
             state = self.reconcile(page)
-            self.assertEqual(state["native"], [app])
+            self.assertEqual(state["native_choices"], [app])
             self.assertNotIn((app, TOOL), page.sets)
 
             config.write_text(
@@ -412,11 +474,135 @@ class ReconcileTest(unittest.TestCase):
                 '"%s" { "name" "GE-Proton11-7" } } } } } }' % (TOOL, app))
             page.mapping[app] = "proton"
             state = self.reconcile(page)
-            self.assertEqual(state["native"], [])
+            self.assertEqual(state["native_choices"], [])
             self.assertNotIn((app, TOOL), page.sets)
             self.assertEqual(COMPAT["read_config_mapping"](str(config))[app], "GE-Proton11-7")
         finally:
             COMPAT["native_targets"] = original_native_targets
+
+    def dual_platform_game(self, state):
+        app = "892970"
+        (self.steam / ("steamapps/appmanifest_%s.acf" % app)).write_text("")
+        config = self.steam / "config/config.vdf"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+            '"CompatToolMapping" { "0" { "name" "%s" } } } } } }' % TOOL)
+        (self.state / "state.json").write_text(json.dumps(state))
+        patcher = mock.patch.dict(COMPAT, {"native_targets": lambda _root, apps: {
+            app: COMPAT["NATIVE_CHOICE"]
+        } if app in apps else {}})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return app, FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11])
+
+    def test_unmapped_dual_platform_game_gets_the_default_live(self):
+        app, page = self.dual_platform_game({"default": TOOL, "auto": {"10": TOOL, "11": TOOL}})
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [(app, TOOL)])
+        self.assertEqual(state["auto"][app], TOOL)
+        self.assertEqual(state["native_choices"], [])
+
+        page.mapping[app] = ""
+        page.sets.clear()
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native_choices"], [app])
+
+    def test_clearing_a_tool_picked_in_steam_keeps_the_native_build(self):
+        app, page = self.dual_platform_game({"default": TOOL, "auto": {"10": TOOL, "11": TOOL}})
+        page.known.append(COMPAT["FEX_TOOL"])
+        page.mapping[app] = COMPAT["FEX_TOOL"]
+        config = self.steam / "config/config.vdf"
+        config.write_text(
+            '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+            '"CompatToolMapping" { "0" { "name" "%s" } "%s" { "name" "%s" } } } } } }' % (TOOL, app, COMPAT["FEX_TOOL"]))
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertNotIn(app, state["auto"])
+
+        page.mapping[app] = ""
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        config.write_text(
+            '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+            '"CompatToolMapping" { "0" { "name" "%s" } } } } } }' % TOOL)
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native_choices"], [app])
+
+        restarted = LIVE["Helper"](str(self.steam), 1)
+        restarted.page = page
+        restarted.reconcile()
+        self.assertEqual(page.sets, [])
+
+    def test_a_new_tool_for_a_picked_game_is_kept_before_the_client_writes_its_config(self):
+        app, page = self.dual_platform_game({"default": TOOL, "auto": {"10": TOOL, "11": TOOL}, "picked": ["892970"]})
+        page.mapping[app] = TOOL_11
+        with mock.patch.dict(COMPAT, {"native_targets": lambda _root, apps: {app: COMPAT["FEX_TOOL"]} if app in apps else {}}):
+            state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(page.mapping[app], TOOL_11)
+        self.assertIn(app, state["picked"])
+
+    def test_a_cleared_picked_game_showing_a_stale_inherited_tool_stays_native(self):
+        app, page = self.dual_platform_game({"default": TOOL, "auto": {"10": TOOL, "11": TOOL}, "picked": ["892970"]})
+        page.mapping[app] = "proton"
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["native_choices"], [app])
+
+    def test_a_clear_saved_after_the_helper_stopped_is_kept_at_the_next_start(self):
+        app, page = self.dual_platform_game({"default": TOOL, "auto": {"10": TOOL, "11": TOOL}})
+        page.known.append(COMPAT["FEX_TOOL"])
+        page.mapping[app] = COMPAT["FEX_TOOL"]
+        config = self.steam / "config/config.vdf"
+        config.write_text(
+            '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+            '"CompatToolMapping" { "0" { "name" "%s" } "%s" { "name" "%s" } } } } } }' % (TOOL, app, COMPAT["FEX_TOOL"]))
+        state = self.reconcile(page)
+        self.assertIn(app, state["picked"])
+
+        config.write_text(
+            '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+            '"CompatToolMapping" { "0" { "name" "%s" } } } } } }' % TOOL)
+        with mock.patch.dict(COMPAT["register_default"].__globals__, {"native_targets": COMPAT["native_targets"]}):
+            COMPAT["register_default"](str(config), ["10", "11", app], settle=True, directory=str(self.state))
+        self.assertNotIn(app, COMPAT["read_config_mapping"](str(config)))
+        state = json.loads((self.state / "state.json").read_text())
+        self.assertEqual(state["native_choices"], [app])
+        self.assertNotIn(app, state["picked"])
+
+    def test_unmapped_dual_platform_game_gets_the_default_without_a_readable_config(self):
+        app, page = self.dual_platform_game({"default": TOOL, "auto": {"10": TOOL}, "native_choices": ["11"]})
+        (self.steam / "config/config.vdf").unlink()
+        page.mapping["11"] = ""
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [(app, TOOL)])
+        self.assertEqual(state["auto"][app], TOOL)
+        self.assertEqual(state["native_choices"], ["11"])
+
+    def test_a_tool_set_live_is_kept_before_the_client_writes_its_config(self):
+        app, page = self.dual_platform_game({"default": TOOL, "auto": {"10": TOOL, "11": TOOL, "892970": TOOL}})
+        page.known.append(COMPAT["FEX_TOOL"])
+        page.mapping[app] = TOOL
+        config = self.steam / "config/config.vdf"
+        config.write_text(
+            '"InstallConfigStore" { "Software" { "Valve" { "Steam" { '
+            '"CompatToolMapping" { "0" { "name" "%s" } "%s" { "name" "%s" } } } } } }' % (TOOL, app, TOOL))
+        with mock.patch.dict(COMPAT, {"native_targets": lambda _root, apps: {app: COMPAT["FEX_TOOL"]} if app in apps else {}}):
+            state = self.reconcile(page)
+            self.assertEqual(page.sets, [(app, COMPAT["FEX_TOOL"])])
+            state = self.reconcile(page)
+        self.assertEqual(page.sets, [(app, COMPAT["FEX_TOOL"])])
+        self.assertEqual(state["auto"][app], COMPAT["FEX_TOOL"])
+
+    def test_native_list_from_earlier_builds_is_not_trusted(self):
+        app, page = self.dual_platform_game({"default": TOOL, "auto": {"10": TOOL, "11": TOOL}, "native": ["892970"]})
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [(app, TOOL)])
+        self.assertNotIn("native", state)
+        self.assertEqual(state["native_choices"], [])
 
     def test_factorio_without_prior_auto_state_uses_the_default_proton(self):
         app = "427520"
@@ -436,7 +622,7 @@ class ReconcileTest(unittest.TestCase):
             state = self.reconcile(page)
             self.assertEqual(page.sets, [(app, TOOL)])
             self.assertEqual(state["auto"], {app: TOOL})
-            self.assertEqual(state["native"], [])
+            self.assertEqual(state["native_choices"], [])
             self.assertEqual(COMPAT["read_config_mapping"](str(config)), {"0": TOOL})
         finally:
             COMPAT["native_targets"] = original_native_targets
@@ -454,6 +640,114 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(page.sets, [("11", TOOL)])
         self.assertEqual(page.mapping["10"], "GE-Proton9-1")
         self.assertEqual(state["auto"], {"11": TOOL})
+
+    def games(self):
+        return json.loads((self.state / "games.json").read_text())["games"]
+
+    def write_games(self, games):
+        (self.state / "games.json").write_text(json.dumps({"version": 1, "games": games}))
+
+    def test_a_steam_pick_after_the_app_choice_is_kept_live(self):
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11, COMPAT["FEX_TOOL"]])
+        self.write_games({"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [("10", TOOL_11)])
+        self.assertEqual(state["games_applied"], {"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+
+        page.sets.clear()
+        page.mapping["10"] = COMPAT["FEX_TOOL"]
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(page.mapping["10"], COMPAT["FEX_TOOL"])
+        self.assertEqual(self.games(), {})
+        self.assertEqual(state["games_applied"], {})
+
+        self.write_games({"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        self.reconcile(page)
+        self.assertEqual(page.sets, [("10", TOOL_11)])
+
+    def test_a_steam_pick_of_our_proton_becomes_the_app_choice_live(self):
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11])
+        self.write_games({"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        self.reconcile(page)
+        page.sets.clear()
+        page.mapping["10"] = TOOL
+        state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(self.games(), {"10": {"valve": True, "dir": "Proton Experimental (ARM64)"}})
+        self.assertEqual(state["games_applied"], self.games())
+
+    def test_use_the_default_applies_once_then_steam_picks_stand_live(self):
+        page = FakePage({"0": TOOL, "10": TOOL_11, "11": TOOL}, [TOOL, TOOL_11, COMPAT["FEX_TOOL"]])
+        self.write_games({"10": None})
+        self.reconcile(page)
+        self.assertEqual(page.sets, [("10", TOOL)])
+
+        page.sets.clear()
+        self.reconcile(page)
+        self.assertEqual(self.games(), {})
+        page.mapping["10"] = COMPAT["FEX_TOOL"]
+        self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(page.mapping["10"], COMPAT["FEX_TOOL"])
+
+    def test_choices_an_earlier_build_applied_give_way_to_steam_picks_live(self):
+        (self.state / "state.json").write_text(json.dumps({"default": TOOL, "auto": {"11": TOOL}, "tools": []}))
+        self.write_games({"10": None, "11": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        page = FakePage({"0": TOOL, "10": COMPAT["FEX_TOOL"], "11": "steamlinuxruntime_sniper"},
+                        [TOOL, TOOL_11, COMPAT["FEX_TOOL"]])
+        self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(self.games(), {})
+
+    def test_an_app_choice_written_during_a_sync_is_not_overwritten(self):
+        self.write_games({"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        requests, text = COMPAT["read_game_requests"]()
+        self.write_games({"10": {"valve": True, "dir": "Proton Experimental (ARM64)"}})
+        self.assertFalse(COMPAT["write_game_requests"]({}, text))
+        self.assertEqual(self.games(), {"10": {"valve": True, "dir": "Proton Experimental (ARM64)"}})
+
+    def test_an_app_the_client_briefly_refuses_keeps_its_applied_choice_live(self):
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11, COMPAT["FEX_TOOL"]])
+        self.write_games({"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        self.reconcile(page)
+        page.refused = {"10"}
+        state = self.reconcile(page)
+        self.assertEqual(state["games_applied"], {"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        page.refused = set()
+        page.sets.clear()
+        page.mapping["10"] = COMPAT["FEX_TOOL"]
+        self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(page.mapping["10"], COMPAT["FEX_TOOL"])
+
+    def test_an_app_rewriting_its_choices_during_both_tries_applies_none_of_them_live(self):
+        page = FakePage({"0": TOOL, "10": TOOL, "11": TOOL}, [TOOL, TOOL_11, COMPAT["FEX_TOOL"]])
+        self.write_games({"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        self.reconcile(page)
+        page.sets.clear()
+        page.mapping["10"] = COMPAT["FEX_TOOL"]
+        self.write_games({"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}, "11": None})
+        with mock.patch.dict(COMPAT["settled_game_requests"].__globals__, write_game_requests=lambda *_: False):
+            state = self.reconcile(page)
+        self.assertEqual(page.sets, [])
+        self.assertEqual(state["games_applied"], {"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+
+    def test_a_steam_pick_is_kept_at_the_next_start(self):
+        config = self.steam / "config/config.vdf"
+        config.parent.mkdir(parents=True)
+        vdf = '"InstallConfigStore" { "Software" { "Valve" { "Steam" { "CompatToolMapping" { %s } } } } }'
+        entry = '"%s" { "name" "%s" "config" "" "priority" "250" }'
+        catalog = COMPAT["tool_catalog"](str(self.steam))
+        self.write_games({"10": {"valve": True, "dir": "Proton 11.0 (ARM64)"}})
+        config.write_text(vdf % (entry % ("0", TOOL) + entry % ("10", TOOL)))
+        with mock.patch.dict(COMPAT["register_default"].__globals__, steam_running=lambda: False):
+            COMPAT["register_default"](str(config), ["10"], catalog=catalog, directory=str(self.state), settle=True)
+            self.assertIn(entry % ("10", TOOL_11), " ".join(config.read_text().split()))
+            config.write_text(vdf % (entry % ("0", TOOL) + entry % ("10", COMPAT["FEX_TOOL"])))
+            COMPAT["register_default"](str(config), ["10"], catalog=catalog, directory=str(self.state), settle=True)
+        self.assertIn(entry % ("10", COMPAT["FEX_TOOL"]), " ".join(config.read_text().split()))
+        self.assertEqual(self.games(), {})
 
     def test_file_mode_defers_to_the_live_helper(self):
         (self.state / "live.pid").write_text("%d\n" % os.getpid())
@@ -483,6 +777,79 @@ ws.send(frame("SteamOSManager.SwitchToDesktop#1"));
 ws.send("SteamOSManager.SwitchToDesktop#1");
 console.log(JSON.stringify({ sent: sent.length, asked: asked.length }));
 """
+
+
+class ToolPage(FakePage):
+    def __init__(self, fail=False):
+        super().__init__({"0": TOOL}, [TOOL])
+        self.calls = []
+        self.fail = fail
+
+    def tools(self, call):
+        self.calls.append(call)
+        if self.fail:
+            raise RuntimeError("the client's install calls are not ready")
+        return True
+
+
+class ToolDownloadTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.steam = Path(tmp.name) / "Steam"
+        (self.steam / "steamapps").mkdir(parents=True)
+        self.helper = LIVE["Helper"](str(self.steam), 1)
+        self.now = [1000.0]
+        self.running = [False]
+        self.requested = []
+        patcher = mock.patch.dict(COMPAT, {
+            "game_running": lambda: self.running[0],
+            "request_fex": lambda root, asked: self.requested.append(root) or ["3127680"],
+        })
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        clock = mock.patch.object(LIVE["time"], "monotonic", lambda: self.now[0])
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def manifest(self, app, flags):
+        (self.steam / ("steamapps/appmanifest_%s.acf" % app)).write_text('"AppState" { "StateFlags" "%s" }' % flags)
+
+    def test_missing_tools_are_installed_and_deferred_ones_queued(self):
+        self.manifest("4427310", "6")
+        self.manifest("3127680", "4")
+        self.manifest("1628350", "1026")
+        self.helper.page = page = ToolPage()
+        self.helper.ensure_tools()
+        self.assertEqual(page.calls, ["update(4427310)", "update(1628350)", "install(4183110)"])
+        self.now[0] += 30
+        self.helper.ensure_tools()
+        self.now[0] += 60
+        self.helper.ensure_tools()
+        self.assertEqual(len(page.calls), 3)
+        self.now[0] += 300
+        self.manifest("4427310", "4")
+        self.helper.ensure_tools()
+        self.assertEqual(page.calls[3:], ["update(1628350)", "install(4183110)"])
+        self.assertEqual(self.requested, [])
+
+    def test_nothing_is_queued_while_a_game_runs(self):
+        self.running[0] = True
+        self.helper.page = page = ToolPage()
+        self.helper.ensure_tools()
+        self.assertEqual(page.calls, [])
+        self.running[0] = False
+        self.now[0] += 60
+        self.helper.ensure_tools()
+        self.assertEqual(len(page.calls), 4)
+
+    def test_an_install_falls_back_to_the_steam_url(self):
+        for app in ("4427310", "1628350", "4183110"):
+            self.manifest(app, "4")
+        self.helper.page = page = ToolPage(fail=True)
+        self.helper.ensure_tools()
+        self.assertEqual(page.calls, ["install(3127680)"])
+        self.assertEqual(self.requested, [str(self.steam)])
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -515,6 +882,14 @@ class AttachPage:
         return {"selected": "", "fallback": "", "tools": []}
 
 
+class TourFailurePage(AttachPage):
+    def evaluate(self, expression, timeout=30):
+        self.scripts.append(expression)
+        if expression == LIVE["TOUR_JS"]:
+            raise RuntimeError("SteamClient.Settings.SetSetting is unavailable")
+        return True
+
+
 class SwitchToDesktopTest(unittest.TestCase):
     def setUp(self):
         self.globals = LIVE["Helper"].attach.__globals__
@@ -538,6 +913,14 @@ class SwitchToDesktopTest(unittest.TestCase):
             helper.attach()
             self.assertIn(("Runtime.addBinding", LIVE["VR_BINDING"]), helper.page.calls)
             self.assertIn(LIVE["VR_JS"], helper.page.scripts)
+
+    def test_missing_optional_tour_setting_does_not_block_attach(self):
+        with mock.patch.dict(self.globals, {"shared_context": lambda port: "/devtools/page/1", "Page": TourFailurePage}):
+            helper = LIVE["Helper"]("/steam", 1)
+            self.assertTrue(helper.attach())
+            self.assertIn(LIVE["VR_JS"], helper.page.scripts)
+            self.assertIn(LIVE["TOUR_JS"], helper.page.scripts)
+            self.assertIsNotNone(helper.page)
 
     def test_vr_bridge_accepts_only_steamvr_and_coalesces_requests(self):
         helper = LIVE["Helper"]("/steam", 1)

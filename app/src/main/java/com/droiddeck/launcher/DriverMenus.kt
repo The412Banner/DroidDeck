@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import com.droiddeck.launcher.gpu.AutoDriverTrial
+import com.droiddeck.launcher.gpu.AutoPicks
 import com.droiddeck.launcher.gpu.DriverBundle
 import com.droiddeck.launcher.gpu.DriverPairs
 import com.droiddeck.launcher.gpu.GpuInfo
@@ -54,6 +55,8 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         private set
     private var runtimePending by mutableStateOf(false)
     private var sessionRunning by mutableStateOf(false)
+    var tpUbwcMode: String by mutableStateOf(SessionPrefs.TP_UBWC_AUTO)
+        private set
 
     val uiMode: String get() = when (mode) {
         SessionPrefs.GPU_DRIVERS_AUTO -> GPU_MODE_AUTO
@@ -72,7 +75,15 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         mode = uiMode, display = displaySlot(), runtime = runtimeSlot(),
         canRestart = !sessionRunning,
         checkedAt = TurnipReleases.cached(activity)?.checkedAt ?: 0L,
+        tpUbwcMode = tpUbwcMode.takeIf { gpu.model == 740 },
+        tpUbwcRestartRequired = com.droiddeck.launcher.gpu.TpUbwcHint.restartRequired(activity),
     )
+
+    fun chooseTpUbwcMode(mode: String) {
+        if (gpu.model != 740) return
+        SessionPrefs.setTpUbwcMode(activity, mode)
+        tpUbwcMode = mode
+    }
 
     private fun slotSource(chosenDefault: Boolean, defaultLabel: Int): String = activity.getString(when {
         uiMode == GPU_MODE_AUTO -> R.string.gpu_src_auto
@@ -123,6 +134,7 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
     var androidSelected by mutableStateOf("")
 
     fun refreshDrivers() {
+        tpUbwcMode = SessionPrefs.tpUbwcMode(activity)
         val lm = LinuxVulkanDriverManager(activity)
         fun origin(id: String) = if (TurnipReleases.isDownloaded(activity, id)) DriverRow.DOWNLOADED else DriverRow.IMPORTED
         val bundles = DriverBundle.all(activity)
@@ -179,7 +191,7 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         val lm = LinuxVulkanDriverManager(activity)
         val td = TurnipDriver(activity)
         val pairs = DriverPairs.from(TurnipReleases.cached(activity))
-        val recommended = if (QuestExperimental.isSupported()) null else DriverPairs.recommendedKey(gpu, pairs)
+        val recommended = if (QuestExperimental.isSupported()) null else recommendedKey(pairs)
         pairRows = pairs.map { p ->
             val bundle = p.bundle?.let { installedBundle(it) }
             val displayId = if (p.bundle != null) bundle?.androidId else p.display?.let { TurnipReleases.installedId(activity, it, td::isInstalled) }
@@ -195,6 +207,11 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
             )
         }.sortedByDescending { it.recommended }
     }
+
+    private fun recommendedKey(pairs: List<DriverPairs.DriverPair>) = DriverPairs.recommendedKey(
+        gpu, pairs, TurnipReleases.autoPicks(activity), AutoDriverTrial.bad(activity),
+        blob = AutoPicks.blobVersion(com.droiddeck.launcher.gpu.VulkanInfo.cachedOrNull()?.get("driver_version")),
+    )
 
     fun chooseMode(next: String) {
         pairModeOpen = next == GPU_MODE_PAIR
@@ -255,12 +272,13 @@ internal class DriverMenus(private val activity: Activity, private val ui: Handl
         Thread({
             val problem = if (force || releasesStale()) runCatching { TurnipReleases.refresh(activity) }.exceptionOrNull()?.message else null
             val holdBack = !force && com.droiddeck.launcher.frontend.AutoComponents.constrained(activity)
+            runCatching { com.droiddeck.launcher.gpu.VulkanInfo.query() }
             ui.post {
                 releaseChecking = false
                 refreshReleaseRows()
                 refreshPairs()
                 val pairs = DriverPairs.from(TurnipReleases.cached(activity))
-                val key = DriverPairs.recommendedKey(gpu, pairs)
+                val key = recommendedKey(pairs)
                 val pair = pairs.firstOrNull { it.key == key }
                 val row = pairRows.firstOrNull { it.key == key }
                 when {

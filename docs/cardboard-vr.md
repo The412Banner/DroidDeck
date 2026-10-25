@@ -162,6 +162,11 @@ Enable **3D (side-by-side)** manually or opt into **3D for VR games** in the gla
 switching waits until SteamVR reports that it is running; starting or installing it does not change
 the display mode. A saved **3D for VR games** preference is retained.
 
+While SteamVR runs, its side-by-side source takes priority over the glasses' saved picture mode,
+including **3DoF virtual screen**. SteamVR already applies head tracking; projecting its combined
+eye pair onto a virtual screen would show both images in each eye and apply head rotation again.
+The glasses still supply poses to SteamVR. The saved picture mode resumes when SteamVR stops.
+
 With **Game on glasses** off, SteamVR keeps the glasses' picture settings and IMU while Android
 mirrors the phone output to the glasses. Turning off the dedicated display must not turn off the
 renderer/HMD proximity flag: SteamVR otherwise reports the headset as taken off and enters standby,
@@ -182,6 +187,32 @@ graphics state across restarts is a hypothesis. Frame counters alone do not prov
 the presenter can keep presenting an old SteamVR image while the compositor reports device loss.
 
 ### Joy-Con controllers
+
+**Glasses → Tracking → Experimental → Luma Joy-Con tracking** is off by default. Enable
+positional tracking first, then this toggle. It uses the Luma Ultra primary stereo camera pair
+to locate each hand holding a Joy-Con, with the existing calibrated, capture-time head transform.
+Joy-Con IMU orientation, buttons, sticks, battery reporting and haptics remain in use. This mode
+also enables Joy-Con takeover for SteamVR even if the ordinary controller preference is off.
+Android 12+ and controller IMU support are still required.
+
+Stereo positions and the 6DoF head share the same recentered floor origin. If a hand is hidden,
+invalid, or its observation is older than 200 ms, that side blends to the arm model anchored to
+the current head position. Reacquisition also blends (180 ms time constant). No usable calibration
+or visible palm means arm-model-only positioning. Loss of head tracking beyond 100 ms invalidates
+the controllers and releases their inputs. Reconnects, origin changes and Joy-Con recentering discard
+old positional corrections. Point the Joy-Cons forward when connecting or recentering; camera
+positions do not correct IMU yaw drift. Position extrapolation is disabled in this mode.
+
+The camera observes the gripping **hand**, not the Joy-Con shell. Occluded palm landmarks, crossed
+hands, and handedness ambiguity can reduce tracking availability. This is an experimental hand
+position proxy with estimated fallback, not marker-based controller tracking. Controller grip offset,
+aiming, motion latency, and sustained performance still need physical validation with held Joy-Cons.
+
+Luma Joy-Con tracking and stereo bare-hand controllers are mutually exclusive. Either selected
+Luma controller mode pauses phone-camera inference. External VR controllers retain priority.
+Disable both Luma controller toggles to return to the upstream Joy-Con/device-camera modes,
+which retain their existing fixed head-position anchor. Positional tracking, stereo controllers,
+and phone-camera controls are grouped at the bottom of the glasses settings under **Experimental**.
 
 Nintendo Joy-Cons paired over Bluetooth become SteamVR hands while SteamVR runs, and stay an ordinary
 game pad otherwise. It needs Android 12 or later (motion sensors on an `InputDevice`) and a kernel whose
@@ -434,20 +465,31 @@ results, app recovery behavior, and the unverified powered-adapter design.
 
 ### Not done yet
 
-- **Controllers**: the driver adds two Vive-profile hands driven by the session's game pad. It reads
+- **Controllers**: the driver adds two hands driven by the session's game pad. It reads
   the absolute-state snapshot the app already publishes in fake input ring 0
-  (`FAKE_EVDEV_MEMFD_PATHS`), so the app needs no new plumbing. They rest low in front of each side and
-  point where the head looks. Each stick moves its hand sideways (40 cm), up (50 cm) and down (30 cm)
-  and turns it as if from an elbow 45 cm behind, so pointers and aim follow it too; the hand eases
-  back when the stick is let go. The d-pad's up and down move both hands in and out; while a hand's
-  trigger or grip is held they move only that hand (a slingshot or bow pulled back), and it eases back
-  on release. Clicking the left stick hands the sticks to the game as trackpads (walking, turning,
-  teleport) and back. Mapping, right hand: A/R3 = trackpad click, RT = trigger, RB = grip, Start = menu, guide =
-  system. Left hand: X, LT, LB, Select. Both hands activate in SteamVR and their laser shows on the
-  dashboard; guide, Start and A presses show up in the ring the driver reads. They are drawn as Index
-  controllers and switch off while another driver's controller is connected. A Joy-Con hand replaces
-  the pad hand on its side, and bare camera hands replace both while no controller is connected
-  (above).
+  (`FAKE_EVDEV_MEMFD_PATHS`), so the app needs no new plumbing. **Play SteamVR → Settings → Controllers**
+  chooses what they are; the app writes the choice to `/run/droiddeck/droiddeck-vr-controllers`
+  (`emulate=index|touch|vive|off`, `sticks=game|hands`). The same choice is in the session menu's glasses page
+  and on the phone while the picture is on the glasses. The driver checks the file every second and switches
+  while SteamVR runs: SteamVR fixes a device's input profile when it activates, so each type gets its own pair
+  of devices, added the first time it is chosen, and the pair it replaces is disconnected:
+  - **Valve Index** (default) and **Meta Quest 3** (Touch Plus) are thumbstick controllers with the
+    stock input profiles, so games use their own Index or Touch bindings. Triggers are triggers, bumpers
+    grip, A/B and X/Y are each hand's face buttons, stick clicks are thumbstick clicks and Guide is system.
+    Quest's left menu button is Start or Select.
+  - **HTC Vive wands** keep the older layout: the sticks are trackpads, A/X or a stick click presses them,
+    Start and Select are menu.
+  - **Regular game pad** adds no hands, for games that play with a game pad.
+
+  The hands rest low in front of each side and point where the head looks. By default the sticks move you
+  in the game; pressing both sticks in together switches them to moving the hands and back. Each stick then
+  moves its hand sideways (40 cm), up (50 cm) and down (30 cm) and turns it as if from an elbow 45 cm
+  behind, so pointers and aim follow it too; the hand eases back when the stick is let go. The d-pad's up
+  and down move both hands in and out; while a hand's trigger or grip is held they move only that hand
+  (a slingshot or bow pulled back), and it eases back on release. Both hands activate in SteamVR and their
+  laser shows on the dashboard. They switch off while another driver's controller is connected. A Joy-Con
+  hand replaces the pad hand on its side, and bare camera hands replace both while no controller is
+  connected (above).
 - **Layers**: only the first layer of each frame is drawn. SteamVR's compositor composites the
   dashboard into it, so this has not mattered yet.
 - **Timing**: no reprojection. The presenter blits the frame submitted last once `vrcompositor`'s GPU

@@ -121,7 +121,7 @@ class CompatLibrariesTest(unittest.TestCase):
         manifest(self.pc / "steamapps", 30)
         manifest(self.pc / "steamapps", 3127680, installdir="FEX")
         self.assertEqual(["20", "30"], COMPAT["installed_apps"](str(self.steam)))
-        self.assertEqual(["1628350"], COMPAT["fex_missing"](str(self.steam)))
+        self.assertEqual(["1628350", "4183110"], COMPAT["fex_missing"](str(self.steam)))
 
     def test_newest_proton_across_libraries_wins(self):
         for root, build in ((self.steam, "100"), (self.pc, "200")):
@@ -153,6 +153,8 @@ class DesktopGamesTest(unittest.TestCase):
             steam = root / "Steam"
             manifest(steam / "steamapps", 40, name="Game")
             manifest(steam / "steamapps", 1628350, name="Steam Linux Runtime 3.0 (sniper)", installdir="SteamLinuxRuntime_sniper")
+            manifest(steam / "steamapps", 1826330, name="Proton EasyAntiCheat Runtime", installdir="Proton EasyAntiCheat Runtime")
+            manifest(steam / "steamapps", 1161040, name="Proton BattlEye Runtime", installdir="Proton BattlEye Runtime")
             manifest(steam / "steamapps", 5000, name="Some Proton", installdir="Some Proton")
             (steam / "steamapps/common/Some Proton").mkdir(parents=True)
             (steam / "steamapps/common/Some Proton/toolmanifest.vdf").write_text('"manifest"\n{\n}\n')

@@ -21,7 +21,13 @@ data class CatalogItem(
     val sizeBytes: Long = 0L,
     val extra: Map<String, String> = emptyMap(),
     val mature: Boolean = false,
+    val subscription: Boolean = false,
+    val includedWith: String = "",
+    val logoUrl: String? = null,
 ) {
+    val accessible: Boolean get() = owned || subscription
+    /** Licensed now, or a supported package the account's subscription can install. */
+    val installable: Boolean get() = accessible || includedWith.isNotBlank()
     val isDiscounted: Boolean get() = discountPercent > 0 && originalPrice.isNotBlank()
     val key: String get() = "${store.id}:$id"
 }
@@ -49,44 +55,76 @@ fun installedCards(store: Store, installed: List<InstalledStoreGame>, library: L
     return installed.filter { it.sidecar.store == store }.map { game ->
         val s = game.sidecar
         byId[s.id] ?: byTitle[s.title.lowercase()]
-            ?: CatalogItem(store, s.id, s.title, imageUrl = s.hero ?: s.cover, tallImageUrl = s.cover ?: s.hero, owned = true)
+            ?: CatalogItem(store, s.id, s.title, imageUrl = s.hero ?: s.cover, tallImageUrl = s.cover ?: s.hero,
+                owned = s.store != Store.XBOX || s.extra["access"] == "owned",
+                subscription = s.store == Store.XBOX && s.extra["access"] == "gamepass")
     }.distinctBy { it.id }.sortedBy { it.title.lowercase() }
 }
 
-private fun releaseDateValue(item: CatalogItem): Long =
-    item.releaseDate.take(10).takeIf { it.length == 10 }?.let { raw ->
-        runCatching { java.time.LocalDate.parse(raw).toEpochDay() }.getOrDefault(0L)
+private fun releaseDateValue(raw: String): Long =
+    raw.take(10).takeIf { it.length == 10 }?.let { day ->
+        runCatching { java.time.LocalDate.parse(day).toEpochDay() }.getOrDefault(0L)
     } ?: 0L
 
-fun sortCatalogItems(
-    items: List<CatalogItem>,
+fun <T> sortGames(
+    items: List<T>,
     sort: String,
-    lastPlayed: (CatalogItem) -> Long = { 0L },
-    installedAt: (CatalogItem) -> Long = { 0L },
-    size: (CatalogItem) -> Long = { it.sizeBytes },
-): List<CatalogItem> = when (sort) {
-    "lastPlayed" -> items.sortedWith(compareByDescending(lastPlayed).thenBy { it.title.lowercase() })
-    "recentlyInstalled" -> items.sortedWith(compareByDescending(installedAt).thenBy { it.title.lowercase() })
-    "titleAsc" -> items.sortedBy { it.title.lowercase() }
-    "titleDesc" -> items.sortedByDescending { it.title.lowercase() }
-    "sizeDesc" -> items.sortedWith(compareByDescending(size).thenBy { it.title.lowercase() })
-    "sizeAsc" -> items.sortedWith(compareBy<CatalogItem> { size(it).takeIf { b -> b > 0 } ?: Long.MAX_VALUE }.thenBy { it.title.lowercase() })
-    "releaseDateDesc" -> items.sortedWith(compareByDescending(::releaseDateValue).thenBy { it.title.lowercase() })
-    else -> items
+    title: (T) -> String,
+    releaseDate: (T) -> String,
+    lastPlayed: (T) -> Long = { 0L },
+    installedAt: (T) -> Long = { 0L },
+    size: (T) -> Long = { 0L },
+): List<T> {
+    val byTitle = compareBy<T> { title(it).lowercase() }
+    return when (sort) {
+        "lastPlayed" -> items.sortedWith(compareByDescending(lastPlayed).then(byTitle))
+        "recentlyInstalled" -> items.sortedWith(compareByDescending(installedAt).then(byTitle))
+        "titleAsc" -> items.sortedWith(byTitle)
+        "titleDesc" -> items.sortedWith(byTitle.reversed())
+        "sizeDesc" -> items.sortedWith(compareByDescending(size).then(byTitle))
+        "sizeAsc" -> items.sortedWith(compareBy<T> { size(it).takeIf { b -> b > 0 } ?: Long.MAX_VALUE }.then(byTitle))
+        "releaseDateDesc" -> items.sortedWith(compareByDescending<T> { releaseDateValue(releaseDate(it)) }.then(byTitle))
+        else -> items
+    }
 }
 
-internal fun retainCatalogOrder(items: List<CatalogItem>, previous: List<CatalogItem>): List<CatalogItem> {
+internal fun <T> retainOrder(items: List<T>, previous: List<T>, key: (T) -> String): List<T> {
     if (items.size != previous.size) return items
-    val byKey = items.associateBy { it.key }
-    if (previous.any { it.key !in byKey }) return items
-    return previous.map { byKey.getValue(it.key) }
+    val byKey = items.associateBy(key)
+    if (previous.any { key(it) !in byKey }) return items
+    return previous.map { byKey.getValue(key(it)) }
 }
+
+/** A detail page opens for search results too; the library wins when it already knows the product. */
+fun detailCatalogItem(
+    store: Store,
+    id: String,
+    library: List<CatalogItem>,
+    found: List<CatalogItem>,
+    shelves: StoreShelves?,
+): CatalogItem? =
+    library.firstOrNull { it.store == store && it.id == id }
+        ?: found.firstOrNull { it.store == store && it.id == id }
+        ?: shelves?.all?.firstOrNull { it.store == store && it.id == id }
 
 fun mergeItems(old: List<CatalogItem>?, new: List<CatalogItem>): List<CatalogItem> {
     if (old.isNullOrEmpty()) return new
     val before = old.associateBy { it.key }
     val merged = new.map { n -> before[n.key]?.takeIf { it == n } ?: n }
     return if (merged.size == old.size && merged.indices.all { merged[it] === old[it] }) old else merged
+}
+
+/**
+ * [patched] over [old] by key, the way a store that fills its cards in one at a time needs it: a card
+ * already on screen keeps its very object and its place, one the grid does not have yet is added where
+ * its title belongs. Unlike [mergeItems] the rest of [old] is never dropped.
+ */
+fun patchItems(old: List<CatalogItem>?, patched: List<CatalogItem>): List<CatalogItem> {
+    if (old.isNullOrEmpty()) return patched
+    val byKey = patched.associateBy { it.key }
+    val kept = old.map { byKey[it.key] ?: it }
+    val added = patched.filter { n -> old.none { it.key == n.key } }
+    return if (added.isEmpty()) kept else (kept + added).sortedBy { it.title.lowercase() }
 }
 
 class InstalledStoreGame(val sidecar: StoreGameSidecar, val folder: java.io.File) {
