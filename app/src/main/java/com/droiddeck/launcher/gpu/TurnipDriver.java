@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -47,10 +48,16 @@ public final class TurnipDriver {
 
     private final Context context;
     private final File contentDir;
+    private final Supplier<GpuInfo> gpuDetector;
 
     public TurnipDriver(Context context) {
+        this(context, GpuInfo.Companion::detect);
+    }
+
+    TurnipDriver(Context context, Supplier<GpuInfo> gpuDetector) {
         this.context = context;
         this.contentDir = new File(context.getFilesDir(), "graphics_driver");
+        this.gpuDetector = gpuDetector;
     }
 
     public String driverPath(String driverId) {
@@ -256,7 +263,24 @@ public final class TurnipDriver {
     }
 
     private String choose() {
+        SessionPrefs.ensurePowerVrAutoDrivers(context);
         String chosen = SessionPrefs.androidDriver(context);
+        // Mali (Venus): the phone's own driver draws the screen, as Venus replays on it.
+        if (com.droiddeck.launcher.session.VenusComponent.wanted(context)) {
+            Log.i(TAG, "Mali (Venus): display on the system Vulkan loader");
+            return null;
+        }
+        // A Mali under Auto draws its display on Android's own Vulkan loader, whatever an earlier
+        // build set: a PanVK Android half fails on Mali gralloc. A manual pick is respected.
+        if (chosen != null && !chosen.isEmpty() && new File("/dev/mali0").exists()
+                && !com.droiddeck.launcher.core.DeviceSupport.INSTANCE.adreno()
+                && SessionPrefs.GPU_DRIVERS_AUTO.equals(SessionPrefs.INSTANCE.gpuDriverMode(context))) {
+            DriverBundle.Bundle bundle = DriverBundle.INSTANCE.containing(context, chosen, false);
+            if (bundle != null && DriverPairs.INSTANCE.isNonAdreno(bundle.getId())) {
+                Log.i(TAG, "Mali under Auto: display on the system Vulkan loader, not " + chosen);
+                return null;
+            }
+        }
         if (chosen != null && !chosen.isEmpty()) {
             if (BUNDLED.contains(chosen)) {
                 Log.i(TAG, "driver pinned by the user: " + chosen);
@@ -282,9 +306,19 @@ public final class TurnipDriver {
             if (forced.startsWith("a7")) return DRIVER_A7XX;
             if (forced.startsWith("a6")) return DRIVER_A6XX;
         }
+        if (SystemVulkanDriver.isPowerVr()) return null;
         String quest = QuestExperimental.INSTANCE.defaultAndroidDriver();
         if (quest != null) return quest;
-        int model = GpuInfo.Companion.detect().getModel();
+        if (com.droiddeck.launcher.core.DeviceSupport.INSTANCE.vkBridge(context)) {
+            Log.i(TAG, "Mali bridge: the compositor uses the system Vulkan driver");
+            return null;
+        }
+        GpuInfo gpu = gpuDetector.get();
+        if (gpu.getFamily() == GpuInfo.Family.NOT_ADRENO || gpu.getFamily().getMali()) {
+            Log.i(TAG, "not an Adreno GPU; leaving the display driver to the system");
+            return null;
+        }
+        int model = gpu.getModel();
         Log.i(TAG, "gpu model: " + (model == 0 ? "unknown" : model));
         return chooseByModel(model, android.os.Build.VERSION.SDK_INT);
     }

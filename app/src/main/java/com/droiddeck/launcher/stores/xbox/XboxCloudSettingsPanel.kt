@@ -1,5 +1,8 @@
 package com.droiddeck.launcher.stores.xbox
 
+import com.droiddeck.launcher.ui.glideBorder
+import androidx.compose.foundation.shape.CircleShape
+import com.droiddeck.launcher.ui.focusGlide
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -16,7 +19,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -50,18 +52,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-/** Shared by the Xbox cloud settings page and the in-player menu; [live] changes reach the running stream. */
 @Composable
 fun XboxCloudSettingsPanel(
     settings: XboxCloudSettings,
     regions: List<String>,
     live: Boolean,
-    /** "stream", "picture" or "overlay" shows that section only; null shows all. */
     section: String? = null,
-    /** The row to select when the panel opens (the last one used), or null for no initial selection. */
     restoreRow: Int? = null,
     onRowFocused: (Int) -> Unit = {},
-    /** The settings the running stream started with; rows that differ say they need a restart (null: no stream). */
     startedWith: XboxCloudSettings? = null,
     onChange: (XboxCloudSettings) -> Unit,
 ) {
@@ -76,7 +74,6 @@ fun XboxCloudSettingsPanel(
     }
 }
 
-/** Gives each settings row its place in the page, so the last-used row can be selected again. */
 private class PanelFocus {
     var next = 0
     var count = 0
@@ -97,7 +94,6 @@ private fun PanelContent(
     startedWith: XboxCloudSettings?,
     onChange: (XboxCloudSettings) -> Unit,
 ) {
-    // Stream-start settings changed during a stream wait for a restart; back at the starting value, no note.
     fun pending(differs: (XboxCloudSettings) -> Boolean) = startedWith != null && differs(startedWith)
 
     if (section == null || section == "stream") Section("Stream", if (live) "Applies to the next stream." else "Applies when a stream starts.") {
@@ -114,7 +110,6 @@ private fun PanelContent(
                 "apply to the web engine.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 8.dp, bottom = 6.dp))
         }
-        // The service picks the size from the reported device profile (the PC profile can send 1440p).
         Choice("Resolution", listOf("720p" to "720p (phone)", "1080p" to "Best (PC)", "1080p_hq" to "1080p HQ (TV)"),
             settings.resolution, pending { it.resolution != settings.resolution }) { onChange(settings.copy(resolution = it)) }
         Choice("Server region", listOf("" to "Automatic") + regions.map { it to it }, settings.region,
@@ -148,7 +143,7 @@ private fun PanelContent(
         Toggle("Toon", "Cartoon outlines.", settings.toon) { onChange(settings.copy(toon = it)) }
         Choice("Frame-rate cap", listOf(0 to "Off", 30 to "30 fps", 45 to "45 fps", 60 to "60 fps"), settings.maxFps) { onChange(settings.copy(maxFps = it)) }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { onChange(settings.withoutEffects()) }) { Text("Reset picture") }
+            OutlinedButton(onClick = { onChange(settings.withoutEffects()) }, modifier = Modifier.focusGlide(CircleShape)) { Text("Reset picture") }
         }
         Text("Effects cost a little GPU time; with none set the stream is shown directly.", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
@@ -174,7 +169,6 @@ private fun PanelContent(
             settings.zeroCopy) { onChange(settings.copy(zeroCopy = it)) }
     }
 
-    // "overlay-native": the native player's page (its sound has no volume boost).
     if (section == null || section == "overlay" || section == "overlay-native") Section("Overlay and sound", null) {
         Choice("Performance overlay", listOf(0 to "Off", 1 to "FPS only", 2 to "Basic", 3 to "Detailed", 4 to "Full"), settings.statsLevel) {
             onChange(settings.copy(statsLevel = it))
@@ -200,10 +194,6 @@ private fun Section(title: String, note: String?, content: @Composable ColumnSco
     }
 }
 
-/**
- * One settings row, driven by a controller: it takes focus as a whole (highlighted), Left / Right change its
- * value, A / Enter selects; the − / + buttons and switches inside stay for touch only.
- */
 @Composable
 private fun SettingRow(
     onLeft: (() -> Unit)?,
@@ -220,7 +210,7 @@ private fun SettingRow(
     Row(
         Modifier.fillMaxWidth().padding(vertical = 1.dp).clip(shape)
             .background(if (focused) cs.primary.copy(alpha = 0.16f) else Color.Transparent)
-            .border(2.dp, if (focused) cs.primary else Color.Transparent, shape)
+            .glideBorder(focused, shape, cs.primary, hotFillAlpha = 0f)
             .let { if (panel != null && index >= 0) it.focusRequester(panel.requester(index)) else it }
             .onFocusChanged { state -> focused = state.isFocused; if (state.isFocused && index >= 0) panel?.onFocused?.invoke(index) }
             .onKeyEvent { event ->
@@ -234,7 +224,6 @@ private fun SettingRow(
                 if (action != null) { action(); true } else false
             }
             .focusable()
-            // A tap selects too, without a second focus stop (a clickable would be one).
             .pointerInput(Unit) { detectTapGestures { currentSelect?.invoke() } }
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -255,7 +244,6 @@ private fun Step(label: String, value: String, onMinus: () -> Unit, onPlus: () -
     }
 }
 
-/** A value slider (touch) that a controller moves with Left / Right in steps of 1 (hold to repeat). */
 @Composable
 private fun SliderRow(label: String, value: Int, min: Int, max: Int, onValue: (Int) -> Unit) {
     SettingRow(onLeft = { onValue((value - 1).coerceAtLeast(min)) }, onRight = { onValue((value + 1).coerceAtMost(max)) }, onSelect = null) {
@@ -291,7 +279,6 @@ private fun Toggle(label: String, note: String, checked: Boolean, needsRestart: 
         color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
 }
 
-/** One entry of the cloud players' menu list (highlighted when selected; A or a tap opens it). */
 @Composable
 internal fun XboxMenuEntry(title: String, note: String?, focus: FocusRequester? = null, onFocused: () -> Unit = {}, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
@@ -299,8 +286,9 @@ internal fun XboxMenuEntry(title: String, note: String?, focus: FocusRequester? 
     val shape = RoundedCornerShape(10.dp)
     androidx.compose.material3.Surface(
         onClick = onClick, color = if (focused) cs.primary.copy(alpha = 0.2f) else cs.surfaceContainerHigh, shape = shape,
-        border = if (focused) androidx.compose.foundation.BorderStroke(2.dp, cs.primary) else null,
+        border = null,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp)
+            .glideBorder(focused, shape, cs.primary, hotFillAlpha = 0f)
             .let { if (focus != null) it.focusRequester(focus) else it }
             .onFocusChanged { state -> focused = state.isFocused; if (state.isFocused) onFocused() }
             .onKeyEvent { event -> if (event.type == KeyEventType.KeyDown && event.key == Key.ButtonA) { onClick(); true } else false },

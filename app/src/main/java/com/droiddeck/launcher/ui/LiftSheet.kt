@@ -460,7 +460,7 @@ internal fun LiftHero(
         scrim { sink.value }
         if (shown || open) Box(
             Modifier.fillMaxSize()
-                .graphicsLayer { alpha = sink.value }.background(Color.Black.copy(alpha = 0.42f))
+                .overhang().graphicsLayer { alpha = sink.value }.background(Color.Black.copy(alpha = 0.42f))
                 .focusProperties { canFocus = false }
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = open && !launching) { close() },
         )
@@ -641,7 +641,11 @@ internal fun LiftHero(
 }
 
 @Composable
-private fun handleBob(): Float {
+internal fun Handle(height: Dp, above: Boolean = false) {
+    val colors = MaterialTheme.colorScheme
+    val pal = LocalPalette.current
+    val shape = if (above) RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp) else RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+    val still = Motion.scale == 0f
     val bob = androidx.compose.animation.core.rememberInfiniteTransition(label = "handle")
     val lift by bob.animateFloat(
         0f, 0f,
@@ -656,16 +660,6 @@ private fun handleBob(): Float {
         ),
         label = "handleBob",
     )
-    return lift
-}
-
-@Composable
-internal fun Handle(height: Dp, above: Boolean = false) {
-    val colors = MaterialTheme.colorScheme
-    val pal = LocalPalette.current
-    val shape = if (above) RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp) else RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
-    val still = Motion.scale == 0f || !ambientAwake()
-    val lift = if (still) 0f else handleBob()
     Row(
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier.height(height).clip(shape).background(colors.surface)

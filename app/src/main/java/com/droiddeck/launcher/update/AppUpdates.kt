@@ -74,6 +74,12 @@ object AppUpdates {
         val updatable: Boolean,
         val committedAt: Long = 0L,
         val ciBuild: Boolean = BuildConfig.CI_BUILD,
+        /**
+         * A build of the non-Adreno test branch (Mali / Xclipse / PowerVR routes). The official
+         * channels carry the Adreno-only app: installing one over it drops those routes, so none is
+         * offered. Its updates are published on The412Banner/droiddeck-nonadreno-drivers.
+         */
+        val nonAdrenoTest: Boolean = false,
     )
 
     enum class PreviewHistoryKind { CURRENT, BEHIND, RECENT }
@@ -125,6 +131,7 @@ object AppUpdates {
         BuildConfig.VERSION_CODE,
         releaseSigned,
         BuildConfig.COMMIT_TIME,
+        nonAdrenoTest = BuildConfig.BUILD_LABEL.contains("non-adreno"),
     )
 
     fun release(catalog: Catalog, follow: Follow): Release? = when (follow.channel) {
@@ -191,6 +198,7 @@ object AppUpdates {
     }
 
     fun installBlock(r: Release, me: Installed = installed()): InstallBlock? = when {
+        me.nonAdrenoTest -> InstallBlock(R.string.upd_block_non_adreno_test)
         r.apk == null -> InstallBlock(R.string.upd_block_no_apk)
         r.apk.versionCode < me.versionCode -> InstallBlock(R.string.upd_block_version_code, r.apk.versionCode, me.versionCode)
         else -> null
@@ -200,18 +208,27 @@ object AppUpdates {
         fun message(context: Context): String = context.getString(text, *args)
     }
 
-    fun follow(context: Context, catalog: Catalog?): Follow {
+    fun follow(context: Context, catalog: Catalog?): Follow = follow(context, catalog, installed())
+
+    internal fun follow(context: Context, catalog: Catalog?, me: Installed): Follow {
         stored(context)?.let { return it }
-        val me = installed()
-        val inferred = when {
-            me.pr != 0 -> Follow(Channel.TEST, me.pr)
-            catalog == null -> return Follow(Channel.STABLE)
-            catalog.stable != null && isRunning(catalog.stable, me) -> Follow(Channel.STABLE)
-            me.updatable -> Follow(Channel.NIGHTLY)
-            else -> Follow(Channel.STABLE)
-        }
-        setFollow(context, inferred)
-        return inferred
+        val guess = guessFollow(catalog, me)
+        if (guess.certain) setFollow(context, guess.follow)
+        return guess.follow
+    }
+
+    internal class Guess(val follow: Follow, val certain: Boolean)
+
+    internal fun guessFollow(catalog: Catalog?, me: Installed): Guess {
+        if (me.pr != 0) return Guess(Follow(Channel.TEST, me.pr), true)
+        val stable = catalog?.stable
+        if (stable != null && isRunning(stable, me)) return Guess(Follow(Channel.STABLE), true)
+        val publishedPreview = catalog != null && me.updatable && (
+            catalog.preview?.let { isRunning(it, me) } == true ||
+                catalog.recentPreviews.any { matchesInstalledCommit(it.commit, me.commit) }
+            )
+        if (stable?.version?.let { compareVersions(me.version, it) < 0 } == true) return Guess(Follow(Channel.STABLE), !publishedPreview)
+        return Guess(Follow(if (publishedPreview) Channel.NIGHTLY else Channel.STABLE), false)
     }
 
     fun setFollow(context: Context, follow: Follow) {

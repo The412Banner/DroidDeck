@@ -39,17 +39,14 @@ object GuestCommand {
         if (linkDir != null) cmd.add(1, "--link2symlink")
         val binds = LinuxRuntime.binds(context, null, runtimeDir, Environment.getExternalStorageDirectory(), extraBinds)
         binds.forEach { cmd.add("-b"); cmd.add(it) }
-        // Fake root and link2symlink are emulated by proot, so their syscalls must stay on the traced path.
         val fastPathKey = if (fastPath && !fakeRoot && linkDir == null && ProotFastPath.enabled(context)) ProotFastPath.key(root, binds) else null
         cmd += listOf(
             "/usr/bin/env", "-i", "HOME=/root", "USER=root", "LANG=C.UTF-8",
-            "PATH=/usr/local/bin:/usr/bin:/bin", "XDG_RUNTIME_DIR=${LinuxRuntime.GUEST_RUNTIME_DIR}",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games", "XDG_RUNTIME_DIR=${LinuxRuntime.GUEST_RUNTIME_DIR}",
             "XDG_DATA_HOME=/root/.local/share", "FLATPAK_BWRAP=${FlatpakManager.BWRAP}",
             "DROIDDECK_BWRAP_SOCKET=${BwrapSpawner.socket(context)}",
             "XDG_DATA_DIRS=/root/.local/share/flatpak/exports/share:/usr/local/share:/usr/share",
         )
-        // The Steam client installer and the package tools inside the guest fetch over plain curl,
-        // so the app proxy has to reach them through the environment proot starts them with.
         DownloadSource.proxyHostPort(context).takeIf { it.isNotEmpty() }?.let { hostPort ->
             cmd += listOf(
                 "http_proxy=http://$hostPort", "https_proxy=http://$hostPort",
@@ -77,7 +74,6 @@ object GuestCommand {
                 try {
                     while (process.isAlive && !flag.get()) Thread.sleep(200)
                     if (flag.get()) {
-                        // PRoot ignores SIGTERM; SIGQUIT makes it kill its tracees and exit cleanly.
                         if (pid > 0) {
                             runCatching { android.system.Os.kill(pid, android.system.OsConstants.SIGQUIT) }
                         } else {

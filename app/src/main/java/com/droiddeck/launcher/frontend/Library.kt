@@ -5,6 +5,7 @@ import com.droiddeck.launcher.R
 import com.droiddeck.launcher.runtime.LinuxRuntime
 import com.droiddeck.launcher.session.GameStorage
 import com.droiddeck.launcher.session.SessionPrefs
+import com.droiddeck.launcher.session.SteamLibraries
 import com.droiddeck.launcher.session.SecondaryLibrary
 import java.io.File
 
@@ -17,11 +18,13 @@ object Library {
         val source: String = SOURCE_STEAM,
         val storeId: String? = null,
         val logo: File? = null,
+        val installedAt: Long = 0L,
     ) {
         fun withArt(art: File?, hero: File?, icon: File?, logo: File? = this.logo) =
-            SteamGame(appId, name, art, library, gameId, hero, lastPlayed, gameFiles, protonPrefix, icon, source, storeId, logo)
+            SteamGame(appId, name, art, library, gameId, hero, lastPlayed, gameFiles, protonPrefix, icon, source, storeId, logo, installedAt)
 
         val gameIdString: String get() = java.lang.Long.toUnsignedString(gameId)
+        val launchKey: String get() = if (storeId != null) "$source:$storeId" else gameIdString
         val profileKey: String get() = when {
             source == com.droiddeck.launcher.stores.Store.BATTLENET.id -> com.droiddeck.launcher.runtime.BattleNet.APP_ID.toString()
             library == ADDED -> java.lang.Integer.toUnsignedString(appId)
@@ -29,6 +32,7 @@ object Library {
         }
     }
     const val ADDED = "added"
+    private const val PLAYED = "added_games_played"
     const val EPIC_LAUNCHER = "epic-launcher"
     const val EPIC_LAUNCHER_NAME = "Epic Games Launcher"
     const val BATTLENET_LAUNCHER = "battlenet-launcher"
@@ -87,13 +91,14 @@ object Library {
 
     internal fun steamLibraries(context: Context, arch: String = SessionPrefs.activeSteamClientArch(context)): List<Pair<File, String>> {
         val root = SessionPrefs.steamRoot(context, arch)
-        // The session gives the x86-64 client only its card folder; the games folders stay the arm64 client's.
         val card = GameStorage.effective(context)
-        if (arch == "x86_64") return listOfNotNull(root to "internal", card?.let { File(it.path, GameStorage.X64_CARD_DIR) to it.label })
+        val added = SteamLibraries.list(context).filter { it.host.isDirectory }
+        if (arch == "x86_64") return listOfNotNull(root to "internal", card?.let { File(it.path, GameStorage.X64_CARD_DIR) to it.label }) +
+            added.map { it.x64Host to it.label }
         return listOfNotNull(
             root to "internal",
             card?.let { File(it.path) to it.label },
-        ) + GameStorage.gamesFolderLibraries(context).map { it.host to it.label }
+        ) + added.map { it.host to it.label } + GameStorage.gamesFolderLibraries(context).map { it.host to it.label }
     }
 
     fun protonPrefix(
@@ -101,15 +106,21 @@ object Library {
         libraries: List<File> = steamLibraries(context).map { it.first },
     ): File? {
         val ids = listOf(appId.toString(), java.lang.Integer.toString(appId.toInt())).distinct()
+        return prefixRoots(context, libraries, preferredLibrary).asSequence()
+            .flatMap { root -> ids.asSequence().map { id -> File(root, "steamapps/compatdata/$id/pfx") } }
+            .firstOrNull { it.isDirectory }
+    }
+
+    fun compatdataDirs(context: Context, libraries: List<File> = steamLibraries(context).map { it.first }): List<File> =
+        prefixRoots(context, libraries).map { File(it, "steamapps/compatdata") }.filter { it.isDirectory }
+
+    private fun prefixRoots(context: Context, libraries: List<File>, preferredLibrary: File? = null): List<File> {
         val secondary = libraries.drop(1).mapNotNull { runCatching { it.canonicalPath }.getOrNull() }.toSet()
         fun prefixRoot(root: File): File = if (runCatching { root.canonicalPath }.getOrNull() in secondary)
             SecondaryLibrary.privateRoot(context.filesDir, root).takeIf { File(it, "steamapps/compatdata").isDirectory } ?: root
             else root
-        val roots = (listOfNotNull(preferredLibrary) + libraries).map(::prefixRoot)
+        return (listOfNotNull(preferredLibrary) + libraries).map(::prefixRoot)
             .distinctBy { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
-        return roots.asSequence()
-            .flatMap { root -> ids.asSequence().map { id -> File(root, "steamapps/compatdata/$id/pfx") } }
-            .firstOrNull { it.isDirectory }
     }
 
     fun steamGames(
@@ -172,7 +183,6 @@ object Library {
         }
     }
 
-    /** Apps the user hid (the "hidden" collection) or marked private in Steam. */
     internal fun concealedSteamApps(root: File): Set<Long> {
         val config = AddedGames.accountConfig(root) ?: return emptySet()
         val hidden = runCatching {
@@ -213,7 +223,18 @@ object Library {
         return (steam + own.map { g -> addedGame(context, g, roots, played[g.appId] ?: 0L) }).distinctBy { it.gameId }
     }
 
-    /** Steam's LastPlayTime for each non-Steam shortcut, by its unsigned shortcut app id. */
+    fun recordPlayed(context: Context, game: SteamGame) {
+        if (game.library == ADDED) recordPlayed(context, game.gameIdString)
+    }
+
+    fun recordPlayed(context: Context, gameId: String) {
+        context.getSharedPreferences(PLAYED, Context.MODE_PRIVATE).edit()
+            .putLong(gameId, System.currentTimeMillis() / 1000).apply()
+    }
+
+    internal fun recordedPlay(context: Context, gameId: Long): Long =
+        context.getSharedPreferences(PLAYED, Context.MODE_PRIVATE).getLong(java.lang.Long.toUnsignedString(gameId), 0L)
+
     internal fun shortcutsLastPlayed(root: File): Map<Long, Long> = runCatching {
         val config = AddedGames.accountConfig(root) ?: return emptyMap()
         val bytes = File(config, "shortcuts.vdf").takeIf { it.isFile }?.readBytes() ?: return emptyMap()
@@ -242,12 +263,13 @@ object Library {
         AddedGameArt.resolve(context, g).let { art ->
             SteamGame(
                 g.steamAppId ?: g.appId.toInt(), g.name, art.portrait ?: art.header, ADDED, g.gameId,
-                hero = art.hero ?: art.header, lastPlayed = lastPlayed, gameFiles = g.folder,
+                hero = art.hero ?: art.header, lastPlayed = maxOf(lastPlayed, recordedPlay(context, g.gameId)), gameFiles = g.folder,
                 protonPrefix = if (g.source == com.droiddeck.launcher.stores.Store.BATTLENET.id) File(com.droiddeck.launcher.runtime.BattleNet.prefix(context), "pfx").takeIf { it.isDirectory }
                     else protonPrefix(context, g.steamAppId?.toLong() ?: g.appId, libraries = roots),
                 icon = art.icon?.takeIf { it.extension.lowercase() != "ico" },
                 source = g.source, storeId = g.storeId,
                 logo = art.logo,
+                installedAt = g.folder.lastModified(),
             )
         }
 
@@ -274,7 +296,7 @@ object Library {
         Spec("duckstation", "DuckStation", "PS1", "/opt/appimages/duckstation.AppImage", listOf("ps1", "psx"), setOf("cue", "chd", "pbp", "iso", "bin", "img", "ecm", "m3u")),
         Spec("melonds", "melonDS", "DS", "/opt/appimages/melonds.AppImage", listOf("ds", "nds"), setOf("nds", "dsi"), atPanel = true),
         Spec("cemu", "Cemu", "Wii U", "/opt/appimages/cemu.AppImage", listOf("wiiu", "wii u"), setOf("wua", "wud", "wux", "rpx")),
-        Spec("ppsspp", "PPSSPP", "PSP", "/usr/bin/PPSSPPSDL", listOf("psp"), setOf("iso", "cso", "pbp", "chd")),
+        Spec("ppsspp", "PPSSPP", "PSP", "/usr/local/bin/PPSSPPSDL", listOf("psp"), setOf("iso", "cso", "pbp", "chd")),
         Spec("retroarch", "RetroArch", "many systems", "/usr/bin/retroarch", emptyList(), emptySet()),
     )
     private fun displayTitle(name: String): String =

@@ -11,7 +11,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.window.Dialog
+import com.droiddeck.launcher.ui.GlideDialog as Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -200,22 +200,6 @@ internal fun AchievementRow(a: Achievement, compact: Boolean, modifier: Modifier
                 DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(a.unlockedAt * 1000)),
                 fontSize = 12.sp, fontWeight = FontWeight.Medium, color = pal.signal,
             )
-        }
-    }
-}
-
-@Composable
-internal fun StoreAchievementsCard(game: StoreAchievements.Game, title: String, modifier: Modifier = Modifier) {
-    val label = StoreAchievements.forSource(game.source)?.label ?: return
-    val state = rememberAchievements(game) ?: return
-    var open by remember { mutableStateOf(false) }
-    StoreAchievementsCardContent(label, state, modifier) { open = true }
-    if (open) {
-        VeilRing()
-        Dialog(onDismissRequest = { open = false }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-            CompositionLocalProvider(LocalFrontFocus provides null) {
-                SessionAchievementsPanel(label, state, title, veil = Color.Transparent, floating = true, onClose = { open = false })
-            }
         }
     }
 }
